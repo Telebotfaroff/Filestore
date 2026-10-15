@@ -23,3 +23,11 @@ test('rejects malformed payloads', () => {
   assert.equal(parsePayload('X_abcdefghijklmnopqrstuvwx'), null);
   assert.equal(parsePayload('F_../../not-a-token'), null);
 });
+
+test('parsePayload accepts post links', () => {
+  const token = 'A'.repeat(32);
+  const parsed = parsePayload('P_' + token);
+  assert.equal(parsed.type, 'P');
+  assert.equal(parsed.token, token);
+  assert.equal(parsed.tokenHash, hashToken(token));
+});
