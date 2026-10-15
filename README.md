@@ -47,7 +47,7 @@ Telegram's signed login data is verified on the server. The dashboard issues an 
 
 - **Stage 1:** secure login and overview.
 - **Stage 2:** searchable user management, owner-only ban/unban, paginated file/batch/post browsing, and soft-revocation of share links.
-- **Stage 3:** payment history, premium tools, promo/referral support where compatible with the existing schema, and settings management.
+- **Stage 3 (implemented):** searchable payment history, owner-only premium grants/removal from user management, and live settings for auto-delete, force subscription and posting channels. Stars price and premium duration remain environment-controlled (`STARS_PRICE`, `STARS_DAYS`).
 - **Stage 4:** audit events, activity logs, health monitoring, recovery tools and final security/test pass.
 
 Do not put `BOT_TOKEN`, `MONGODB_URI`, or any session secret in frontend code or a public repository. Configure all production variables through the hosting dashboard. The Telegram Login Widget requires the deployed domain to be configured in BotFather before login can work.
