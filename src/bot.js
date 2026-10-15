@@ -17,6 +17,7 @@ function mainMenu(ctx) {
     ...(isAdmin(ctx) ? [
       [Markup.button.callback('📤 Create file link', 'menu:file'), Markup.button.callback('📦 Create batch', 'menu:batch')],
       [Markup.button.callback('🔐 Password settings', 'menu:password')],
+      [Markup.button.callback('🖼 Create post', 'menu:post'), Markup.button.callback('📢 Posting channels', 'post:channels:manage')],
     ] : []),
     [Markup.button.callback('⭐ Premium', 'menu:premium'), Markup.button.callback('❔ Help', 'menu:help')],
     ...(isOwner(ctx) ? [[Markup.button.callback('🛠 Admin panel', 'menu:admin')]] : []),
@@ -176,6 +177,21 @@ async function guardUser(ctx, next) {
 
 bot.use(guardUser);
 
+bot.action('menu:post', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+  if (ctx.chat?.type !== 'private') return ctx.reply('Please create posts in a private chat with me.');
+  const user = await collection('users').findOne({ userId: ctx.from.id }, { projection: { postDraft: 1 } });
+  if (user?.postDraft?.storageMessageId) {
+    await ctx.telegram.deleteMessage(config.dbChannelId, user.postDraft.storageMessageId).catch(() => {});
+  }
+  await collection('users').updateOne(
+    { userId: ctx.from.id },
+    { $set: { postDraft: { step: 'thumbnail', createdAt: now() } }, $unset: { batchDraft: '', batchStartedAt: '' } },
+  );
+  return ctx.reply('🖼 Step 1/3: Send the thumbnail image for your post. Use /cancel to stop.');
+});
+
 bot.action(/^menu:(home|file|batch|password|premium|help|admin)$/, async (ctx) => {
   const action = ctx.match[1];
   await ctx.answerCbQuery().catch(() => {});
@@ -292,7 +308,7 @@ bot.action('check_sub', async (ctx) => {
 
 bot.command('help', async (ctx) => {
   const text = '📚 Filestore help\\n\\n/start — interactive menu or open a share link\\n/premium — buy premium with Stars\\n/help — show help\\n' +
-    (isAdmin(ctx) ? '/batch — start batch\\n/done — finish batch\\n/cancel — cancel batch\\n/setpassword PASSWORD — protect next link\\n/clearpassword — clear password\\n' : '') +
+    (isAdmin(ctx) ? '/batch — start batch\\n/done — finish batch\\n/cancel — cancel current action\\n/setpassword PASSWORD — protect next link\\n/clearpassword — clear password\\n/post — publish a free or paid video post\\n/channels — manage posting channels\\n' : '') +
     (isOwner(ctx) ? '/stats — statistics\\n/autodelete SECONDS — expiry setting\\n/broadcast MESSAGE — broadcast\\n' : '') +
     '\\nUse the buttons for guided actions.';
   return ctx.reply(text, mainMenu(ctx));
@@ -508,7 +524,14 @@ bot.command('batch', async (ctx) => {
 });
 
 bot.command('cancel', async (ctx) => {
-  await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { batchDraft: '', batchStartedAt: '', pendingPasswordPrompt: '', pendingBroadcast: '' } });
+  const user = await collection('users').findOne({ userId: ctx.from.id }, { projection: { postDraft: 1 } });
+  if (user?.postDraft?.storageMessageId) {
+    await ctx.telegram.deleteMessage(config.dbChannelId, user.postDraft.storageMessageId).catch(() => {});
+  }
+  await collection('users').updateOne(
+    { userId: ctx.from.id },
+    { $unset: { batchDraft: '', batchStartedAt: '', pendingPasswordPrompt: '', pendingBroadcast: '', pendingChannelAdd: '', postDraft: '' } },
+  );
   return ctx.reply('🛑 Current action cancelled.');
 });
 
@@ -711,10 +734,8 @@ bot.on('message', async (ctx) => {
   if (workflowUser?.postDraft) {
     const draft = workflowUser.postDraft;
     if (draft.step === 'thumbnail') {
-      const photo = ctx.message.photo?.at(-1);
-      const imageDocument = ctx.message.document?.mime_type?.startsWith('image/') ? ctx.message.document : null;
-      const image = photo || imageDocument;
-      if (!image) return ctx.reply('🖼 Please send the thumbnail as a photo or image document. Use /cancel to stop.');
+      const image = ctx.message.photo?.at(-1);
+      if (!image) return ctx.reply('🖼 Please send the thumbnail as a Telegram photo (not as a file/document). Use /cancel to stop.');
       await collection('users').updateOne(
         { userId: ctx.from.id },
         { $set: { 'postDraft.thumbnailFileId': image.file_id, 'postDraft.step': 'title' } },
