@@ -26,7 +26,7 @@ A **single-bot** Telegram file store. Files are copied to a private Telegram sto
 3. Set the channel ID (usually starts with `-100`) in `DB_CHANNEL_ID`.
 4. Set your numeric Telegram user ID in `OWNER_ID`. This account is always an admin.
 5. Optionally set `ADMIN_IDS` to a comma-separated list of additional numeric Telegram user IDs. Only these admins can create file links or batch links; other users can only open links shared with them.
-6. In the bot's private chat, run `/fsub` to enable force subscription and add multiple required channels. The bot must be an administrator in each channel. Public channels can be added with `@username`; private channels use `-1001234567890 | https://t.me/+inviteLink`.
+6. In the bot's private chat, run `/fsub` to enable force subscription and add multiple required channels. The bot must be an administrator in each channel. Add any channel using its `@username` or numeric channel ID. The bot automatically generates and stores a join invite link; make sure it has permission to invite users in each channel.
 
 ## MongoDB Atlas
 
@@ -47,7 +47,7 @@ Requires Node.js 20.11 or newer.
 
 ## Force subscription
 
-Use `/fsub` or **Admin panel → Force subscription** to enable or disable the gate, add required channels, and remove channels. When enabled, users must be members of **every** configured channel. The bot checks membership when users interact with it and offers join links plus a recheck button. The bot must be an administrator in every required channel so Telegram permits membership checks. Existing `FORCE_SUB_CHANNEL` and `FORCE_SUB_URL` environment variables remain supported as a legacy initial configuration; admin-managed settings are saved in MongoDB.
+Use `/fsub` or **Admin panel → Force subscription** to enable or disable the gate, add required channels, and remove channels. When enabled, users must be members of **every** configured channel. The bot checks membership when users interact with it and offers join links plus a recheck button. The bot must be an administrator in every required channel with permission to invite users, so it can generate invite links and Telegram permits membership checks. Existing `FORCE_SUB_CHANNEL` and `FORCE_SUB_URL` environment variables remain supported as a legacy initial configuration; admin-managed settings are saved in MongoDB.
 
 ## User commands
 
