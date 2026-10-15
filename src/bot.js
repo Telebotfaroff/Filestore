@@ -724,6 +724,10 @@ bot.on('message', async (ctx) => {
         { upsert: true },
       );
       await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { pendingChannelAdd: '' } });
+      if (workflowUser.postDraft?.step === 'channel') {
+        await ctx.reply('✅ Added channel: ' + channelRecord.title);
+        return promptPostChannels(ctx);
+      }
       return ctx.reply('✅ Added channel: ' + channelRecord.title, Markup.inlineKeyboard([[Markup.button.callback('📢 Manage channels', 'post:channels:manage')]]));
     } catch (error) {
       console.error('[post] Channel validation failed:', error.message);
