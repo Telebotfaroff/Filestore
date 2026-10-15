@@ -149,7 +149,7 @@ bot.command('help', (ctx) => ctx.reply(
   '/done — finish the current batch and get its link\n' +
   '/cancel — cancel batch creation\n' +
   '/setpassword PASSWORD — protect your next file or batch link\n' +
-  '/clearpasword — clear a pending password\n' +
+  '/clearpassword — clear a pending password\n' +
   '/premium — buy 30 days of premium with Telegram Stars\n' +
   '/help — show this help\n\n' +
   'Send a file or media message to create a permanent link. During batch mode, send the files you want included and use /done when finished.',
@@ -169,7 +169,7 @@ bot.command('setpassword', async (ctx) => {
   }
 });
 
-bot.command('clearpasword', async (ctx) => {
+bot.command('clearpassword', async (ctx) => {
   await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { pendingPasswordHash: '' } });
   return ctx.reply('Pending link password cleared.');
 });
@@ -249,7 +249,7 @@ bot.command('done', async (ctx) => {
   await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { batchDraft: '', batchStartedAt: '', pendingPasswordHash: '' } });
   const me = await ctx.telegram.getMe();
   const link = buildLink(me.username, 'B', tokenData.token);
-  return ctx.reply(`✅ Batch link created\n\nFiles: ${ids.length}\n\n${link}`, Markup.inlineKeyboard([[Markup.button.url('🔗 Open batch link', link)]]));
+  return ctx.reply(`${batchDoc.passwordHash ? '🔐 Password-protected batch link created' : '✅ Batch link created'}\n\nFiles: ${ids.length}\n\n${link}`, Markup.inlineKeyboard([[Markup.button.url('🔗 Open batch link', link)]]));
 });
 
 bot.command('stats', async (ctx) => {
