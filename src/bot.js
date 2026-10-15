@@ -41,7 +41,15 @@ async function showMainMenu(ctx, edit = false) {
 }
 async function sendPremiumInvoice(ctx) {
   const price = config.starsPrice, days = config.starsDays;
-  return ctx.replyWithInvoice(`Filestore Premium — ${days} days`, `Premium access for ${days} days. Premium users bypass configured shortener verification.`, `premium_${days}d_${ctx.from.id}`, '', 'XTR', [{ label: `Premium ${days} days`, amount: price }], { start_parameter: 'premium', provider_token: '' });
+  return ctx.replyWithInvoice({
+    title: `Filestore Premium — ${days} days`,
+    description: `Premium access for ${days} days. Premium users bypass configured shortener verification.`,
+    payload: `premium_${days}d_${ctx.from.id}`,
+    provider_token: '',
+    currency: 'XTR',
+    prices: [{ label: `Premium ${days} days`, amount: price }],
+    start_parameter: 'premium',
+  });
 }
 
 
@@ -197,15 +205,15 @@ async function sendPost(ctx, tokenHash) {
   const post = await collection('posts').findOne({ tokenHash });
   if (!post) return ctx.reply('❌ This post link is invalid or no longer available.');
   if (post.stars > 0 && !(post.paidUsers || []).includes(ctx.from.id)) {
-    return ctx.replyWithInvoice(
-      '🔒 ' + post.title.slice(0, 120),
-      'Pay ' + post.stars + ' Telegram Stars to unlock all videos in this post.',
-      'post_' + post.tokenHash,
-      '',
-      'XTR',
-      [{ label: 'Video access', amount: post.stars }],
-      { start_parameter: 'post', provider_token: '' },
-    );
+    return ctx.replyWithInvoice({
+      title: ('🔒 ' + post.title).slice(0, 32),
+      description: 'Pay ' + post.stars + ' Telegram Stars to unlock all videos in this post.',
+      payload: 'post_' + post.tokenHash,
+      provider_token: '',
+      currency: 'XTR',
+      prices: [{ label: 'Video access', amount: post.stars }],
+      start_parameter: 'post',
+    });
   }
   return sendPostVideos(ctx, post);
 }
