@@ -21,6 +21,8 @@ export async function connectDatabase() {
     database.collection('batches').createIndex({ tokenHash: 1 }, { unique: true }),
     database.collection('batches').createIndex({ ownerId: 1, createdAt: -1 }),
     database.collection('batches').createIndex({ expiresAt: 1 }),
+    database.collection('posts').createIndex({ tokenHash: 1 }, { unique: true }),
+    database.collection('posts').createIndex({ channelId: 1, createdAt: -1 }),
     database.collection('bans').createIndex({ userId: 1 }, { unique: true }),
     database.collection('settings').createIndex({ key: 1 }, { unique: true }),
     database.collection('payments').createIndex({ telegramPaymentChargeId: 1 }, { unique: true }),
