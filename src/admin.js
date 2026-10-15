@@ -95,6 +95,7 @@ async function getAdmin(req) {
     username: session.username || '',
     photoUrl: session.photoUrl || '',
     expiresAt: session.expiresAt,
+    isOwner: Number(session.userId) === config.ownerId,
   };
 }
 
@@ -196,4 +197,160 @@ export function registerAdminRoutes(app, bot) {
       return res.status(500).json({ ok: false, error: 'overview_unavailable' });
     }
   });
+
+  const authorize = async (req, res) => {
+    const admin = await getAdmin(req);
+    if (!admin) {
+      res.status(401).json({ ok: false, error: 'authentication_required' });
+      return null;
+    }
+    return admin;
+  };
+  const parsePage = (value) => {
+    const parsed = Number(value || 1);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? Math.min(parsed, 100000) : 1;
+  };
+  const parseLimit = (value) => {
+    const parsed = Number(value || 10);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? Math.min(parsed, 25) : 10;
+  };
+  const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\
+}
+');
+  const queryText = (value) => String(value || '').trim().slice(0, 80);
+  const pagination = (page, limit, total) => ({ page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) });
+
+  app.get('/admin/api/users', async (req, res) => {
+    try {
+      if (!await authorize(req, res)) return;
+      const page = parsePage(req.query.page), limit = parseLimit(req.query.limit), q = queryText(req.query.q);
+      const filter = q ? { $or: [
+        { username: { $regex: escapeRegex(q), $options: 'i' } },
+        { firstName: { $regex: escapeRegex(q), $options: 'i' } },
+        { lastName: { $regex: escapeRegex(q), $options: 'i' } },
+        ...( /^\d+$/.test(q) ? [{ userId: Number(q) }] : []),
+      ] } : {};
+      const [total, users] = await Promise.all([
+        collection('users').countDocuments(filter),
+        collection('users').find(filter, { projection: { userId: 1, firstName: 1, lastName: 1, username: 1, createdAt: 1, lastSeenAt: 1, premiumUntil: 1 } }).sort({ lastSeenAt: -1, createdAt: -1 }).skip((page - 1) * limit).limit(limit).toArray(),
+      ]);
+      const ids = users.map((user) => user.userId);
+      const banned = ids.length ? await collection('bans').find({ userId: { $in: ids } }, { projection: { userId: 1 } }).toArray() : [];
+      const bannedIds = new Set(banned.map((item) => Number(item.userId)));
+      const now = new Date();
+      return res.json({ ok: true, pagination: pagination(page, limit, total), users: users.map((user) => ({
+        userId: user.userId, firstName: user.firstName || '', lastName: user.lastName || '', username: user.username || '',
+        createdAt: user.createdAt || null, lastSeenAt: user.lastSeenAt || null,
+        premiumUntil: user.premiumUntil || null, premium: Boolean(user.premiumUntil && user.premiumUntil > now), banned: bannedIds.has(Number(user.userId)),
+      })) });
+    } catch (error) {
+      console.error('[admin] User listing failed:', error.message);
+      return res.status(500).json({ ok: false, error: 'users_unavailable' });
+    }
+  });
+
+  app.post('/admin/api/users/:userId/:action(ban|unban)', requireSameOrigin, async (req, res) => {
+    try {
+      const admin = await authorize(req, res);
+      if (!admin) return;
+      if (!admin.isOwner) return res.status(403).json({ ok: false, error: 'owner_only_action' });
+      const userId = Number(req.params.userId);
+      if (!Number.isSafeInteger(userId) || userId <= 0) return res.status(400).json({ ok: false, error: 'invalid_user_id' });
+      if (config.adminIds.includes(userId)) return res.status(400).json({ ok: false, error: 'cannot_change_admin_access' });
+      if (req.params.action === 'ban') {
+        await collection('bans').updateOne({ userId }, { $set: { userId, bannedAt: new Date(), bannedBy: admin.userId } }, { upsert: true });
+      } else {
+        await collection('bans').deleteOne({ userId });
+      }
+      return res.json({ ok: true, userId, banned: req.params.action === 'ban' });
+    } catch (error) {
+      console.error('[admin] User moderation failed:', error.message);
+      return res.status(500).json({ ok: false, error: 'user_moderation_failed' });
+    }
+  });
+
+  const listContent = async (req, res, kind) => {
+    const page = parsePage(req.query.page), limit = parseLimit(req.query.limit), q = queryText(req.query.q);
+    const regex = q ? { $regex: escapeRegex(q), $options: 'i' } : null;
+    let filter = {};
+    if (kind === 'files') {
+      if (q) filter = { $or: [
+        { fileName: regex }, { fileType: regex },
+        ...( /^\d+$/.test(q) ? [{ ownerId: Number(q) }] : []),
+      ] };
+      const [total, docs] = await Promise.all([
+        collection('files').countDocuments(filter),
+        collection('files').find(filter, { projection: { tokenHash: 1, fileName: 1, fileType: 1, mimeType: 1, fileSize: 1, ownerId: 1, createdAt: 1, expiresAt: 1, downloads: 1, revokedAt: 1 } }).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).toArray(),
+      ]);
+      return res.json({ ok: true, kind, pagination: pagination(page, limit, total), items: docs.map((d) => ({
+        id: String(d._id), label: d.fileName || d.fileType || 'File', fileType: d.fileType || 'unknown', mimeType: d.mimeType || '',
+        fileSize: d.fileSize || 0, ownerId: d.ownerId, createdAt: d.createdAt || null, expiresAt: d.expiresAt || null,
+        downloads: d.downloads || 0, revoked: Boolean(d.revokedAt), tokenHint: String(d.tokenHash || '').slice(-8),
+      })) });
+    }
+    if (kind === 'batches') {
+      if (q) filter = { $or: [
+        { tokenHash: regex },
+        ...( /^\d+$/.test(q) ? [{ ownerId: Number(q) }] : []),
+      ] };
+      const [total, docs] = await Promise.all([
+        collection('batches').countDocuments(filter),
+        collection('batches').find(filter, { projection: { ownerId: 1, fileIds: 1, createdAt: 1, expiresAt: 1, downloads: 1, passwordHash: 1, revokedAt: 1 } }).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).toArray(),
+      ]);
+      return res.json({ ok: true, kind, pagination: pagination(page, limit, total), items: docs.map((d) => ({
+        id: String(d._id), label: 'Batch', ownerId: d.ownerId, fileCount: Array.isArray(d.fileIds) ? d.fileIds.length : 0,
+        createdAt: d.createdAt || null, expiresAt: d.expiresAt || null, downloads: d.downloads || 0,
+        passwordProtected: Boolean(d.passwordHash), revoked: Boolean(d.revokedAt),
+      })) });
+    }
+    if (kind === 'posts') {
+      if (q) filter = { $or: [
+        { title: regex },
+        ...( /^\d+$/.test(q) ? [{ ownerId: Number(q) }, { channelId: Number(q) }] : []),
+      ] };
+      const [total, docs] = await Promise.all([
+        collection('posts').countDocuments(filter),
+        collection('posts').find(filter, { projection: { title: 1, ownerId: 1, channelId: 1, stars: 1, videoCount: 1, createdAt: 1, revokedAt: 1, paidUsers: 1 } }).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).toArray(),
+      ]);
+      return res.json({ ok: true, kind, pagination: pagination(page, limit, total), items: docs.map((d) => ({
+        id: String(d._id), label: d.title || 'Untitled post', ownerId: d.ownerId, channelId: d.channelId,
+        stars: d.stars || 0, videoCount: d.videoCount || (Array.isArray(d.fileTokenHashes) ? d.fileTokenHashes.length : 0),
+        createdAt: d.createdAt || null, paidUsers: Array.isArray(d.paidUsers) ? d.paidUsers.length : 0, revoked: Boolean(d.revokedAt),
+      })) });
+    }
+    return res.status(404).json({ ok: false, error: 'unknown_content_type' });
+  };
+
+  for (const kind of ['files', 'batches', 'posts']) {
+    app.get('/admin/api/' + kind, async (req, res) => {
+      try {
+        if (!await authorize(req, res)) return;
+        return await listContent(req, res, kind);
+      } catch (error) {
+        console.error('[admin] ' + kind + ' listing failed:', error.message);
+        return res.status(500).json({ ok: false, error: 'content_unavailable' });
+      }
+    });
+  }
+
+  app.post('/admin/api/:kind(files|batches|posts)/:id/revoke', requireSameOrigin, async (req, res) => {
+    try {
+      const admin = await authorize(req, res);
+      if (!admin) return;
+      const collections = { files: 'files', batches: 'batches', posts: 'posts' };
+      const { kind, id } = req.params;
+      if (!/^[a-f0-9]{24}$/i.test(id)) return res.status(400).json({ ok: false, error: 'invalid_content_id' });
+      const { ObjectId } = await import('mongodb');
+      const result = await collection(collections[kind]).updateOne(
+        { _id: new ObjectId(id), revokedAt: { $exists: false } },
+        { $set: { revokedAt: new Date(), revokedBy: admin.userId } },
+      );
+      if (!result.matchedCount) return res.status(404).json({ ok: false, error: 'content_not_found_or_already_revoked' });
+      return res.json({ ok: true, kind, id, revoked: true });
+    } catch (error) {
+      console.error('[admin] Content revocation failed:', error.message);
+      return res.status(500).json({ ok: false, error: 'content_revocation_failed' });
+    }
+  });
+
 }
