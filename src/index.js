@@ -5,11 +5,14 @@ import { closeDatabase, connectDatabase } from './database.js';
 import { startMaintenance, stopMaintenance } from './maintenance.js';
 import { acceptShortenerCallback } from './shortener.js';
 import { verifyShortenerCallback } from './security.js';
+import { registerAdminRoutes } from './admin.js';
 
 const app = express();
 app.disable('x-powered-by');
+app.use(express.json({ limit: '8kb' }));
 app.get('/health', (_req, res) => res.status(200).json({ ok: true, service: 'filestore-bot' }));
 app.get('/', (_req, res) => res.status(200).send('Filestore bot is running.'));
+registerAdminRoutes(app, bot);
 
 app.get('/shortener/callback', async (req, res) => {
   try {
