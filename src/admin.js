@@ -351,4 +351,122 @@ export function registerAdminRoutes(app, bot) {
     }
   });
 
+
+  app.get('/admin/api/payments', async (req, res) => {
+    try {
+      if (!await authorize(req, res)) return;
+      const page = parsePage(req.query.page), limit = parseLimit(req.query.limit), q = queryText(req.query.q);
+      const filter = q ? { $or: [
+        { payload: { $regex: escapeRegex(q), $options: 'i' } },
+        { telegramPaymentChargeId: { $regex: escapeRegex(q), $options: 'i' } },
+        ...( /^\\d+$/.test(q) ? [{ userId: Number(q) }] : []),
+      ] } : {};
+      const [total, docs] = await Promise.all([
+        collection('payments').countDocuments(filter),
+        collection('payments').find(filter, { projection: { userId: 1, currency: 1, totalAmount: 1, status: 1, payload: 1, createdAt: 1, processedAt: 1, telegramPaymentChargeId: 1, premiumUntil: 1 } }).sort({ processedAt: -1, createdAt: -1 }).skip((page - 1) * limit).limit(limit).toArray(),
+      ]);
+      return res.json({ ok: true, pagination: pagination(page, limit, total), items: docs.map((d) => ({
+        id: String(d._id), userId: d.userId, currency: d.currency || '', totalAmount: Number(d.totalAmount || 0),
+        status: d.status || 'unknown', payload: d.payload || '', createdAt: d.processedAt || d.createdAt || null,
+        chargeId: d.telegramPaymentChargeId || '', premiumUntil: d.premiumUntil || null,
+      })) });
+    } catch (error) {
+      console.error('[admin] Payment listing failed:', error.message);
+      return res.status(500).json({ ok: false, error: 'payments_unavailable' });
+    }
+  });
+
+  app.get('/admin/api/settings', async (req, res) => {
+    try {
+      if (!await authorize(req, res)) return;
+      const [autoDelete, forceSub, postChannels] = await Promise.all([
+        collection('settings').findOne({ key: 'autoDeleteSeconds' }),
+        collection('settings').findOne({ key: 'forceSubConfig' }),
+        collection('settings').findOne({ key: 'postChannels' }),
+      ]);
+      const legacyForceSub = config.forceSubChannel ? [{ chatId: config.forceSubChannel, title: config.forceSubChannel, username: config.forceSubChannel.startsWith('@') ? config.forceSubChannel.slice(1) : '', url: config.forceSubUrl || (config.forceSubChannel.startsWith('@') ? 'https://t.me/' + config.forceSubChannel.slice(1) : '') }] : [];
+      return res.json({ ok: true, settings: {
+        autoDeleteSeconds: Number.isSafeInteger(autoDelete?.value) ? autoDelete.value : config.autoDeleteSeconds,
+        forceSubConfig: forceSub ? { enabled: forceSub.enabled === true, channels: Array.isArray(forceSub.channels) ? forceSub.channels : [] } : { enabled: Boolean(legacyForceSub.length), channels: legacyForceSub },
+        postChannels: Array.isArray(postChannels?.channels) ? postChannels.channels : [],
+        starsPrice: config.starsPrice, starsDays: config.starsDays,
+      } });
+    } catch (error) {
+      console.error('[admin] Settings read failed:', error.message);
+      return res.status(500).json({ ok: false, error: 'settings_unavailable' });
+    }
+  });
+
+  app.put('/admin/api/settings', requireSameOrigin, async (req, res) => {
+    try {
+      const admin = await authorize(req, res);
+      if (!admin) return;
+      if (!admin.isOwner) return res.status(403).json({ ok: false, error: 'owner_only_action' });
+      const body = req.body || {};
+      const seconds = Number(body.autoDeleteSeconds);
+      if (!Number.isSafeInteger(seconds) || seconds < 0 || seconds > 31536000) return res.status(400).json({ ok: false, error: 'invalid_auto_delete_seconds' });
+      const normalizeChannels = (value, label) => {
+        if (!Array.isArray(value) || value.length > 30) throw new Error('invalid_' + label);
+        const seen = new Set();
+        return value.map((item) => {
+          if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('invalid_' + label);
+          const chatId = String(item.chatId ?? '').trim().slice(0, 80);
+          const title = String(item.title ?? '').trim().slice(0, 120);
+          const username = String(item.username ?? '').trim().replace(/^@/, '').slice(0, 64);
+          const url = String(item.url ?? '').trim().slice(0, 2048);
+          if (!chatId || !/^(?:-?\\d{4,20}|@[A-Za-z0-9_]{5,})$/.test(chatId)) throw new Error('invalid_' + label);
+          if (url && (!url.startsWith('https://') || !/^https:\\/\\//i.test(url))) throw new Error('invalid_' + label);
+          if (seen.has(chatId)) throw new Error('duplicate_' + label);
+          seen.add(chatId);
+          return { chatId, title: title || username || chatId, username, url };
+        });
+      };
+      let forceSubChannels, channels;
+      try {
+        forceSubChannels = normalizeChannels(body.forceSubConfig?.channels, 'force_subscription_channels');
+        channels = normalizeChannels(body.postChannels, 'posting_channels');
+      } catch (error) {
+        return res.status(400).json({ ok: false, error: error.message });
+      }
+      const enabled = body.forceSubConfig?.enabled === true;
+      if (enabled && !forceSubChannels.length) return res.status(400).json({ ok: false, error: 'force_subscription_requires_channel' });
+      const now = new Date();
+      await Promise.all([
+        collection('settings').updateOne({ key: 'autoDeleteSeconds' }, { $set: { key: 'autoDeleteSeconds', value: seconds, updatedAt: now, updatedBy: admin.userId } }, { upsert: true }),
+        collection('settings').updateOne({ key: 'forceSubConfig' }, { $set: { key: 'forceSubConfig', enabled, channels: forceSubChannels, updatedAt: now, updatedBy: admin.userId } }, { upsert: true }),
+        collection('settings').updateOne({ key: 'postChannels' }, { $set: { key: 'postChannels', channels, updatedAt: now, updatedBy: admin.userId } }, { upsert: true }),
+      ]);
+      return res.json({ ok: true, savedAt: now });
+    } catch (error) {
+      console.error('[admin] Settings save failed:', error.message);
+      return res.status(500).json({ ok: false, error: 'settings_save_failed' });
+    }
+  });
+
+  app.post('/admin/api/users/:userId/premium', requireSameOrigin, async (req, res) => {
+    try {
+      const admin = await authorize(req, res);
+      if (!admin) return;
+      if (!admin.isOwner) return res.status(403).json({ ok: false, error: 'owner_only_action' });
+      const userId = Number(req.params.userId);
+      const days = Number(req.body?.days);
+      if (!Number.isSafeInteger(userId) || userId <= 0) return res.status(400).json({ ok: false, error: 'invalid_user_id' });
+      if (config.adminIds.includes(userId)) return res.status(400).json({ ok: false, error: 'cannot_change_admin_premium' });
+      if (!Number.isSafeInteger(days) || days < 0 || days > 3650) return res.status(400).json({ ok: false, error: 'invalid_premium_days' });
+      if (days === 0) {
+        await collection('users').updateOne({ userId }, { $unset: { premiumUntil: '' } });
+        return res.json({ ok: true, userId, premiumUntil: null });
+      }
+      const now = new Date();
+      const user = await collection('users').findOne({ userId }, { projection: { premiumUntil: 1 } });
+      const base = user?.premiumUntil && user.premiumUntil > now ? user.premiumUntil : now;
+      const premiumUntil = new Date(base.getTime() + days * 86400000);
+      await collection('users').updateOne({ userId }, { $set: { userId, premiumUntil, premiumUpdatedAt: now, premiumUpdatedBy: admin.userId } }, { upsert: true });
+      return res.json({ ok: true, userId, premiumUntil });
+    } catch (error) {
+      console.error('[admin] Premium update failed:', error.message);
+      return res.status(500).json({ ok: false, error: 'premium_update_failed' });
+    }
+  });
+
 }
