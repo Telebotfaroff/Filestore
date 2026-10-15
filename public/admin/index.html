@@ -233,7 +233,9 @@
       loadManagementPage();
       return;
     }
-    document.getElementById('pageContent').innerHTML = '<div class="notice"><span style="font-size:18px">✦</span><div><strong>'+escapeHtml(titles[page])+'</strong><br>This section is scheduled for Stage 3 or Stage 4. Existing bot functionality is unchanged.</div></div>';
+    if (page === 'payments') { loadPaymentsPage(1, ''); return; }
+    if (page === 'settings') { loadSettingsPage(); return; }
+    document.getElementById('pageContent').innerHTML = '<div class="notice"><span style="font-size:18px">✦</span><div><strong>'+escapeHtml(titles[page])+'</strong><br>Activity and audit history are planned for Stage 4.</div></div>';
   }
   function contentTabs() {
     if (managementKind === 'users') return '';
@@ -254,7 +256,7 @@
         const status = u.banned ? '<span class="state-pill revoked">BANNED</span>' : '<span class="state-pill active">ACTIVE</span>';
         const premium = u.premium ? '<span class="state-pill active">PREMIUM</span>' : '<span class="state-pill">FREE</span>';
         const action = currentAdmin && currentAdmin.isOwner && ![Number(currentAdmin.userId)].includes(Number(u.userId)) && !u.isAdmin
-          ? '<button class="'+(u.banned?'secondary-btn':'danger-btn')+'" data-user-action="'+(u.banned?'unban':'ban')+'" data-user-id="'+escapeHtml(u.userId)+'">'+(u.banned?'Unban':'Ban')+'</button>' : '<span class="muted-cell">—</span>';
+          ? '<div class="manage-actions"><button class="'+(u.banned?'secondary-btn':'danger-btn')+'" data-user-action="'+(u.banned?'unban':'ban')+'" data-user-id="'+escapeHtml(u.userId)+'">'+(u.banned?'Unban':'Ban')+'</button><button class="secondary-btn" data-premium-user="'+escapeHtml(u.userId)+'" data-premium-active="'+(u.premium?'1':'0')+'">'+(u.premium?'Edit premium':'Grant premium')+'</button></div>' : '<span class="muted-cell">—</span>';
         return '<tr><td><div class="user-cell"><div class="mini-avatar">'+escapeHtml(name.slice(0,1).toUpperCase())+'</div><div><div class="user-main">'+escapeHtml(name)+'</div><div class="user-sub">'+(u.username?'@'+escapeHtml(u.username):'No username')+'</div></div></div></td><td>'+escapeHtml(u.userId)+'</td><td>'+escapeHtml(dateTime(u.lastSeenAt||u.createdAt))+'</td><td>'+premium+'</td><td>'+status+'</td><td>'+action+'</td></tr>';
       });
     } else if (managementKind === 'files') {
@@ -309,6 +311,18 @@
         try { await api('/admin/api/users/'+encodeURIComponent(id)+'/'+action,{method:'POST',body:'{}'}); await loadManagementPage(); }
         catch(error) { showFlash('Could not update user: '+error.message,true); }
       }));
+      panel.querySelectorAll('[data-premium-user]').forEach(button => button.addEventListener('click', async () => {
+        if (!currentAdmin || !currentAdmin.isOwner) return;
+        const id = button.dataset.premiumUser;
+        const active = button.dataset.premiumActive === '1';
+        const answer = prompt(active ? 'Premium days to add (0 removes premium):' : 'Grant premium for how many days? (1–3650)', active ? '30' : '30');
+        if (answer === null) return;
+        const days = Number(answer);
+        if (!Number.isSafeInteger(days) || days < 0 || days > 3650) { showFlash('Enter a whole number from 0 to 3650.', true); return; }
+        button.disabled = true;
+        try { await api('/admin/api/users/'+encodeURIComponent(id)+'/premium', {method:'POST', body:JSON.stringify({days})}); await loadManagementPage(); }
+        catch(error) { showFlash('Could not update premium: '+error.message, true); }
+      }));
       panel.querySelectorAll('[data-revoke-kind]').forEach(button => button.addEventListener('click', async () => {
         const kind=button.dataset.revokeKind, id=button.dataset.revokeId;
         if (!confirm('Revoke this '+kind.slice(0,-1)+' link? This blocks future retrieval and cannot be undone.')) return;
@@ -321,6 +335,55 @@
       if (panel) panel.innerHTML = '<div class="empty">Could not load records. '+escapeHtml(error.message)+'</div>';
     }
   }
+
+  async function loadPaymentsPage(page = 1, query = '') {
+    document.getElementById('headerTitle').textContent = titles.payments;
+    document.getElementById('crumbPage').textContent = titles.payments;
+    document.getElementById('pageContent').innerHTML = '<div class="manage-toolbar"><form class="search-form" id="paymentSearch"><input class="search-input" id="paymentQuery" maxlength="80" placeholder="Search by Telegram ID, payload or charge ID" value="'+escapeHtml(query)+'"><button class="primary-btn" type="submit">Search</button></form><button class="secondary-btn" id="paymentRefresh">Refresh</button></div><div id="paymentFlash"></div><section class="manage-panel"><div class="manage-meta" id="paymentMeta">Loading payments…</div><div class="loading">Loading payments…</div></section>';
+    document.getElementById('paymentSearch').addEventListener('submit', event => { event.preventDefault(); loadPaymentsPage(1, document.getElementById('paymentQuery').value.trim()); });
+    document.getElementById('paymentRefresh').addEventListener('click', () => loadPaymentsPage(page, query));
+    try {
+      const data = await api('/admin/api/payments?page='+page+'&limit=10&q='+encodeURIComponent(query));
+      const panel = document.querySelector('.manage-panel');
+      if (!panel) return;
+      const rows = (data.items || []).map(p => '<tr><td><div class="user-main">ID '+escapeHtml(p.userId)+'</div><div class="user-sub">'+escapeHtml(p.payload || 'No payload')+'</div></td><td><strong>'+escapeHtml(formatNumber(p.totalAmount))+' '+escapeHtml(p.currency || '')+'</strong></td><td><span class="state-pill '+(p.status==='processed'?'active':'')+'">'+escapeHtml(p.status)+'</span></td><td>'+escapeHtml(dateTime(p.createdAt))+'</td><td><div class="user-sub">'+escapeHtml(p.chargeId ? p.chargeId.slice(-12) : '—')+'</div></td></tr>');
+      panel.innerHTML = '<div class="manage-meta">'+formatNumber(data.pagination.total)+' payment records · Page '+data.pagination.page+' of '+data.pagination.pages+'</div><div class="table-wrap"><table><thead><tr><th>USER / PAYLOAD</th><th>AMOUNT</th><th>STATUS</th><th>DATE</th><th>CHARGE REF</th></tr></thead><tbody>'+(rows.length?rows.join(''):'<tr><td colspan="5" class="empty">No matching payments.</td></tr>')+'</tbody></table></div><div class="pagination"><span>Page '+data.pagination.page+' of '+data.pagination.pages+'</span><div class="pagination-actions"><button class="secondary-btn" id="paymentPrev" '+(page<=1?'disabled':'')+'>Previous</button><button class="secondary-btn" id="paymentNext" '+(page>=data.pagination.pages?'disabled':'')+'>Next</button></div></div>';
+      const prev=document.getElementById('paymentPrev'), next=document.getElementById('paymentNext');
+      if(prev) prev.addEventListener('click',()=>loadPaymentsPage(Math.max(1,page-1),query));
+      if(next) next.addEventListener('click',()=>loadPaymentsPage(page+1,query));
+    } catch(error) {
+      const panel=document.querySelector('.manage-panel');
+      if(panel) panel.innerHTML='<div class="empty">Could not load payments. '+escapeHtml(error.message)+'</div>';
+    }
+  }
+  async function loadSettingsPage() {
+    document.getElementById('headerTitle').textContent = titles.settings;
+    document.getElementById('crumbPage').textContent = titles.settings;
+    document.getElementById('pageContent').innerHTML = '<div class="manage-panel" style="padding:18px"><div class="loading">Loading settings…</div></div>';
+    try {
+      const data = await api('/admin/api/settings');
+      const s = data.settings;
+      const disabled = !currentAdmin || !currentAdmin.isOwner;
+      document.getElementById('pageContent').innerHTML = '<div class="notice"><span style="font-size:18px">⚙</span><div><strong>Live bot settings</strong><br>These values are saved to MongoDB and take effect without a redeploy. Posting and required-membership channels must already have the bot added with appropriate permissions. Only the owner can save changes.</div></div><form id="settingsForm" class="manage-panel" style="padding:18px;margin-top:16px;display:grid;gap:16px"><label class="field-label" for="autoDeleteSeconds">Auto-delete seconds <span class="user-sub">0 disables expiry; maximum 31,536,000 (365 days)</span></label><input class="search-input" id="autoDeleteSeconds" type="number" min="0" max="31536000" step="1" value="'+escapeHtml(s.autoDeleteSeconds)+'" '+(disabled?'disabled':'')+'><div><label class="field-label"><input id="forceSubEnabled" type="checkbox" '+(s.forceSubConfig.enabled?'checked':'')+' '+(disabled?'disabled':'')+'> Enable force subscription</label><div class="user-sub">Users must join every channel listed below.</div></div><label class="field-label" for="forceSubChannels">Required channels (JSON array)</label><textarea class="search-input" id="forceSubChannels" rows="5" style="width:100%;resize:vertical" '+(disabled?'disabled':'')+'>'+escapeHtml(JSON.stringify(s.forceSubConfig.channels,null,2))+'</textarea><label class="field-label" for="postChannels">Posting channels (JSON array)</label><textarea class="search-input" id="postChannels" rows="5" style="width:100%;resize:vertical" '+(disabled?'disabled':'')+'>'+escapeHtml(JSON.stringify(s.postChannels,null,2))+'</textarea><div class="user-sub">Each channel object uses chatId (numeric ID or @username), title, username (without @), and url (https:// link). Stars price and premium duration are currently controlled by STARS_PRICE and STARS_DAYS environment variables: '+escapeHtml(s.starsPrice)+' ⭐ / '+escapeHtml(s.starsDays)+' days.</div><div id="settingsFlash" role="status"></div><div><button class="primary-btn" type="submit" '+(disabled?'disabled':'')+'>Save settings</button> <button class="secondary-btn" type="button" id="settingsReload">Reload</button></div></form>';
+      document.getElementById('settingsReload').addEventListener('click', loadSettingsPage);
+      document.getElementById('settingsForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        const flash=document.getElementById('settingsFlash');
+        try {
+          const forceSubConfig={enabled:document.getElementById('forceSubEnabled').checked,channels:JSON.parse(document.getElementById('forceSubChannels').value)};
+          const postChannels=JSON.parse(document.getElementById('postChannels').value);
+          const autoDeleteSeconds=Number(document.getElementById('autoDeleteSeconds').value);
+          await api('/admin/api/settings',{method:'PUT',body:JSON.stringify({autoDeleteSeconds,forceSubConfig,postChannels})});
+          flash.className='flash'; flash.textContent='Settings saved successfully.';
+        } catch(error) {
+          flash.className='flash error'; flash.textContent=error instanceof SyntaxError?'Channel lists must be valid JSON arrays.':'Could not save settings: '+error.message;
+        }
+      });
+    } catch(error) {
+      document.getElementById('pageContent').innerHTML='<div class="notice"><div><strong>Settings unavailable</strong><br>'+escapeHtml(error.message)+'</div></div>';
+    }
+  }
+
   function showFlash(message, isError=false) {
     const flash=document.getElementById('manageFlash');
     if (flash) { flash.className='flash'+(isError?' error':''); flash.textContent=message; }
