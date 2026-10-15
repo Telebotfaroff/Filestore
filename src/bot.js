@@ -426,7 +426,7 @@ bot.on('message', async (ctx) => {
       ctx.chat.id,
       status.message_id,
       undefined,
-      `✅ File saved successfully!\n\nType: ${info.fileType}${info.fileName ? `\nName: ${info.fileName}` : ''}${info.fileSize ? `\nSize: ${formatBytes(info.fileSize)}` : ''}\n\nPermanent link:\n${link}`,
+      `${fileDoc.passwordHash ? '🔐 Password-protected file saved!' : '✅ File saved successfully!'}\n\nType: ${info.fileType}${info.fileName ? `\nName: ${info.fileName}` : ''}${info.fileSize ? `\nSize: ${formatBytes(info.fileSize)}` : ''}\n\nPermanent link:\n${link}`,
       { reply_markup: Markup.inlineKeyboard([[Markup.button.url('🔗 Open file link', link)]]).reply_markup },
     );
   } catch (error) {
