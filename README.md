@@ -1,10 +1,11 @@
 # Filestore — Node.js + Telegraf + MongoDB Atlas
 
-A Telegram file-store bot that saves incoming Telegram messages to a private storage channel and creates permanent deep links for retrieving them.
+A **single-bot** Telegram file store that saves incoming Telegram messages to a private storage channel and creates permanent deep links for retrieving them. Clone bots and multi-bot management are intentionally out of scope.
 
 ## Included in the initial implementation
 
 - Node.js 20+, ES modules, Telegraf 4
+- One Telegram bot token, configured through `BOT_TOKEN`
 - MongoDB Atlas for users, file metadata, batch links, bans, and settings
 - Private Telegram storage channel for the actual media
 - Permanent single-file links and multi-file batch links
@@ -15,7 +16,7 @@ A Telegram file-store bot that saves incoming Telegram messages to a private sto
 
 ## 1. Create Telegram resources
 
-1. Create a bot with [@BotFather](https://t.me/BotFather) and copy its token.
+1. Create one bot with [@BotFather](https://t.me/BotFather) and copy its token.
 2. Create a **private Telegram channel** for file storage.
 3. Add the bot as an administrator of that channel with permission to post messages.
 4. Get the channel ID (usually starts with `-100`).
@@ -63,6 +64,7 @@ Deploy as a **persistent Node.js web service/worker**. Set the environment varia
 
 ## Important notes
 
+- This project is for one bot only; there is no clone-bot creation, clone-token storage, or multi-bot manager.
 - The bot must be an admin in the storage channel.
 - A bot can only retrieve messages it can access. Keep the storage channel private and don't delete stored posts while their links are active.
-- This is the first implementation milestone. Shortener-provider verification, Telegram Stars, password-protected links, clone-bot management, richer admin settings, and scheduled deletion should be added as separate tested modules rather than represented as complete before they work.
+- This is the first implementation milestone. Shortener-provider verification, Telegram Stars, password-protected links, richer admin settings, and scheduled deletion should be added as separate tested modules rather than represented as complete before they work.
