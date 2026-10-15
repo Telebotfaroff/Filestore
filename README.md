@@ -10,6 +10,7 @@ A **single-bot** Telegram file store. Files are copied to a private Telegram sto
 - Optional auto-delete for new uploads, with a persisted expiry worker
 - Optional shortener verification using one-time sessions and signed server-to-server callbacks
 - Telegram Stars premium purchase (configurable price and duration); premium bypasses shortener verification
+- Admin-only link creation: only `OWNER_ID` and optional `ADMIN_IDS` can upload files or create batch links; everyone else can open shared links
 - Owner tools: stats, ban/unban, broadcast, and auto-delete configuration
 - MongoDB indexes for token uniqueness, payment deduplication, and expiry processing
 - Health endpoint for persistent hosting
@@ -20,7 +21,8 @@ A **single-bot** Telegram file store. Files are copied to a private Telegram sto
 1. Create one bot with [@BotFather](https://t.me/BotFather).
 2. Create a private storage channel and add the bot as an administrator with permission to post and delete messages.
 3. Set the channel ID (usually starts with `-100`) in `DB_CHANNEL_ID`.
-4. Set your numeric Telegram user ID in `OWNER_ID`.
+4. Set your numeric Telegram user ID in `OWNER_ID`. This account is always an admin.
+5. Optionally set `ADMIN_IDS` to a comma-separated list of additional numeric Telegram user IDs. Only these admins can create file links or batch links; other users can only open links shared with them.
 
 ## MongoDB Atlas
 
