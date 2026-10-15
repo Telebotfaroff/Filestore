@@ -491,7 +491,7 @@ export function registerAdminRoutes(app, bot) {
         { action: { $regex: escapeRegex(q), $options: 'i' } },
         { targetType: { $regex: escapeRegex(q), $options: 'i' } },
         { targetId: { $regex: escapeRegex(q), $options: 'i' } },
-        ...( /^\\d+$/.test(q) ? [{ actorId: Number(q) }] : []),
+        ...( /^\d+$/.test(q) ? [{ actorId: Number(q) }] : []),
       ] } : {};
       const [total, events] = await Promise.all([
         collection('adminAuditLogs').countDocuments(filter),
