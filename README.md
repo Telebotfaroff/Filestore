@@ -20,6 +20,38 @@ A **single-bot** Telegram file store. Files are copied to a private Telegram sto
 - Health endpoint for persistent hosting
 - No Redis, no local file storage, and no secrets committed to Git
 
+## Admin website (Stages 1–2)
+
+The admin dashboard is served by the same Express service as the bot at `/admin`; it does not use a separate database or a second bot.
+
+### Sign-in setup
+
+1. Open [@BotFather](https://t.me/BotFather) and use `/setdomain` for your bot.
+2. Set the domain to the HTTPS hostname where Filestore is deployed (for example, your Render service hostname or custom domain; do not include a path).
+3. Make sure `OWNER_ID` is your numeric Telegram user ID. Add any additional admin Telegram IDs to `ADMIN_IDS`, separated by commas.
+4. Deploy the app and open `https://YOUR_HOST/admin`.
+5. Sign in using the Telegram account whose ID is configured as an admin.
+
+Telegram's signed login data is verified on the server. The dashboard issues an opaque, HttpOnly, SameSite=Strict session cookie; only a hash of the session token is stored in MongoDB. Sessions expire after 12 hours. The browser never receives the bot token or MongoDB credentials.
+
+### Implemented features
+
+- Responsive dashboard with dark and light themes.
+- Telegram Login Widget authentication restricted to `OWNER_ID` and `ADMIN_IDS`.
+- Session expiry and MongoDB TTL cleanup.
+- Overview counts for users, files, batches, posts, active premium users, bans, processed Stars payments, and total Stars.
+- Recent users and recent successful payments.
+- The existing bot commands, webhook-free polling, storage channel and shortener callback remain in the same service.
+
+### Rollout stages
+
+- **Stage 1:** secure login and overview.
+- **Stage 2:** searchable user management, owner-only ban/unban, paginated file/batch/post browsing, and soft-revocation of share links.
+- **Stage 3:** payment history, premium tools, promo/referral support where compatible with the existing schema, and settings management.
+- **Stage 4:** audit events, activity logs, health monitoring, recovery tools and final security/test pass.
+
+Do not put `BOT_TOKEN`, `MONGODB_URI`, or any session secret in frontend code or a public repository. Configure all production variables through the hosting dashboard. The Telegram Login Widget requires the deployed domain to be configured in BotFather before login can work.
+
 ## Telegram setup
 
 1. Create one bot with [@BotFather](https://t.me/BotFather).

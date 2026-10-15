@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#11131a">
+  <title>Filestore Admin</title>
+  <style>
+    :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-synthesis:none;text-rendering:optimizeLegibility}
+    :root[data-theme="dark"]{color-scheme:dark;--bg:#0e1016;--panel:#151821;--panel2:#1b1f2b;--line:#292e3b;--text:#f3f5fa;--muted:#959caf;--accent:#9b8cff;--accent2:#7665ed;--good:#43c69a;--warn:#e8b86b;--bad:#f07b85;--shadow:0 12px 40px #0003}
+    :root[data-theme="light"]{color-scheme:light;--bg:#f5f6fb;--panel:#fff;--panel2:#f0f1f8;--line:#e3e5ef;--text:#202235;--muted:#73778d;--accent:#6e5ae6;--accent2:#5c49d3;--good:#168c69;--warn:#a96c0d;--bad:#c44253;--shadow:0 12px 36px #1b20400d}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);min-height:100vh}button{font:inherit;cursor:pointer}
+    .hidden{display:none!important}.layout{display:grid;grid-template-columns:244px minmax(0,1fr);min-height:100vh}.sidebar{border-right:1px solid var(--line);background:var(--panel);padding:24px 15px;display:flex;flex-direction:column;gap:30px}.brand{display:flex;align-items:center;gap:12px;padding:0 10px}.brand-mark{display:grid;place-items:center;width:40px;height:40px;border-radius:13px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:white;font-weight:900;font-size:20px;box-shadow:0 8px 24px #7767ee38}.brand-title{font-weight:750;letter-spacing:-.4px}.brand-sub{font-size:12px;color:var(--muted);margin-top:3px}.nav-label{font-size:10px;font-weight:800;letter-spacing:1.5px;color:var(--muted);padding:0 12px 9px}.nav{display:grid;gap:5px}.nav button{display:flex;align-items:center;gap:12px;border:1px solid transparent;border-radius:11px;background:transparent;color:var(--muted);padding:11px 12px;text-align:left;font-size:13px;font-weight:600}.nav button:hover,.nav button.active{background:var(--panel2);color:var(--text)}.nav button.active{border-color:var(--line)}.nav-icon{width:19px;text-align:center;font-size:16px}.nav-soon{margin-left:auto;font-size:9px;border:1px solid var(--line);border-radius:5px;padding:3px 5px}.side-bottom{margin-top:auto}.connection{display:flex;align-items:center;gap:9px;background:var(--panel2);border:1px solid var(--line);padding:12px;border-radius:12px;font-size:12px;color:var(--muted)}.dot{width:8px;height:8px;border-radius:50%;background:var(--good);box-shadow:0 0 0 4px color-mix(in srgb,var(--good) 15%,transparent)}
+    main{min-width:0;padding:0 34px 38px}.topbar{height:84px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);gap:18px}.crumb{font-size:12px;color:var(--muted);margin-bottom:5px}.page-title{font-size:20px;font-weight:750;letter-spacing:-.5px}.top-actions{display:flex;align-items:center;gap:10px}.icon-btn{width:39px;height:39px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--text);font-size:17px}.profile{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:13px;padding:6px 10px 6px 6px;background:var(--panel)}.avatar{width:29px;height:29px;border-radius:9px;background:var(--panel2);object-fit:cover;display:grid;place-items:center;font-size:12px;font-weight:800}.profile-name{font-size:12px;font-weight:700}.profile-role{font-size:10px;color:var(--muted);margin-top:2px}
+    .content{max-width:1440px;margin:0 auto}.welcome{display:flex;justify-content:space-between;align-items:end;gap:16px;padding:28px 0 22px}.welcome h1{font-size:24px;letter-spacing:-.8px;margin:0 0 8px}.welcome p{margin:0;color:var(--muted);font-size:13px}.date-pill{border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--muted);font-size:11px;white-space:nowrap;background:var(--panel)}
+    .stat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.stat{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;min-width:0;box-shadow:var(--shadow)}.stat-top{display:flex;justify-content:space-between;align-items:center;gap:10px}.stat-label{font-size:12px;color:var(--muted);font-weight:600}.stat-icon{width:35px;height:35px;display:grid;place-items:center;border-radius:11px;background:var(--panel2);font-size:17px}.stat-value{font-size:28px;font-weight:780;letter-spacing:-1px;margin:17px 0 7px;overflow-wrap:anywhere}.stat-note{font-size:11px;color:var(--muted)}.accent{color:var(--accent)}.green{color:var(--good)}
+    .section-grid{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(280px,1fr);gap:16px;margin-top:18px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;min-width:0;overflow:hidden}.panel-head{padding:18px 20px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid var(--line)}.panel-title{font-size:14px;font-weight:750}.panel-sub{font-size:11px;color:var(--muted);margin-top:5px}.text-btn{border:0;background:transparent;color:var(--accent);font-size:11px;font-weight:700}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;white-space:nowrap}th{text-align:left;color:var(--muted);font-size:10px;font-weight:700;padding:12px 18px;background:var(--panel2)}td{font-size:11px;padding:14px 18px;border-top:1px solid var(--line)}.user-cell{display:flex;align-items:center;gap:9px}.mini-avatar{width:28px;height:28px;border-radius:9px;background:var(--panel2);display:grid;place-items:center;font-weight:800;color:var(--accent)}.user-main{font-size:11px;font-weight:700}.user-sub{font-size:10px;color:var(--muted);margin-top:3px}.badge{font-size:9px;padding:4px 7px;border-radius:6px;background:var(--panel2);color:var(--muted);font-weight:750}.badge.premium{color:var(--good);background:color-mix(in srgb,var(--good) 12%,transparent)}.badge.banned{color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,transparent)}.empty{padding:28px;text-align:center;color:var(--muted);font-size:12px}.quick-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:16px}.quick{border:1px solid var(--line);border-radius:12px;background:var(--panel2);padding:14px;text-align:left;color:var(--text)}.quick:hover{border-color:var(--accent)}.quick-icon{font-size:19px;margin-bottom:10px}.quick-title{font-size:12px;font-weight:750}.quick-desc{font-size:10px;line-height:1.5;color:var(--muted);margin-top:5px}.notice{display:flex;gap:12px;padding:15px 17px;margin-top:17px;border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));border-radius:14px;background:color-mix(in srgb,var(--accent) 7%,var(--panel));font-size:11px;color:var(--muted);line-height:1.6}.notice strong{color:var(--text)}.loading{height:110px;display:grid;place-items:center;color:var(--muted);font-size:12px}.error{color:var(--bad);font-size:12px;margin-top:14px}
+    .manage-toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;margin:22px 0 14px;flex-wrap:wrap}.search-form{display:flex;gap:8px;flex:1;max-width:530px}.search-input{min-width:0;flex:1;border:1px solid var(--line);border-radius:11px;background:var(--panel);color:var(--text);padding:11px 13px;font:inherit;font-size:12px;outline:none}.search-input:focus{border-color:var(--accent)}.primary-btn,.secondary-btn,.danger-btn{border:1px solid var(--line);border-radius:10px;padding:10px 13px;font-size:11px;font-weight:750;background:var(--panel2);color:var(--text)}.primary-btn{background:var(--accent2);border-color:var(--accent2);color:white}.danger-btn{border-color:color-mix(in srgb,var(--bad) 35%,var(--line));color:var(--bad);background:color-mix(in srgb,var(--bad) 8%,var(--panel))}.secondary-btn:disabled,.primary-btn:disabled{opacity:.4;cursor:not-allowed}.manage-panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden}.manage-tabs{display:flex;gap:7px;padding:14px 17px;border-bottom:1px solid var(--line);flex-wrap:wrap}.manage-tabs button{border:1px solid var(--line);background:var(--panel2);color:var(--muted);border-radius:9px;padding:8px 11px;font-size:11px;font-weight:700}.manage-tabs button.active{background:color-mix(in srgb,var(--accent) 14%,var(--panel));border-color:var(--accent);color:var(--text)}.manage-meta{font-size:11px;color:var(--muted);padding:12px 18px;border-bottom:1px solid var(--line)}.manage-actions{display:flex;gap:6px}.pagination{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 18px;border-top:1px solid var(--line);color:var(--muted);font-size:11px}.pagination-actions{display:flex;gap:7px}.state-pill{display:inline-block;padding:4px 7px;border-radius:6px;font-size:9px;font-weight:800;background:var(--panel2);color:var(--muted)}.state-pill.active{color:var(--good);background:color-mix(in srgb,var(--good) 12%,transparent)}.state-pill.revoked{color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,transparent)}.flash{padding:12px 16px;margin-bottom:12px;border-radius:10px;background:var(--panel2);color:var(--muted);font-size:12px}.flash.error{color:var(--bad)}.muted-cell{color:var(--muted)}
+    .login-screen{min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(ellipse at 50% 0%,color-mix(in srgb,var(--accent) 14%,var(--bg)),var(--bg) 62%)}.login-card{width:min(430px,100%);background:var(--panel);border:1px solid var(--line);border-radius:24px;padding:34px;box-shadow:var(--shadow);text-align:center}.login-logo{width:58px;height:58px;border-radius:18px;margin:0 auto 20px;display:grid;place-items:center;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-size:27px;font-weight:900}.login-card h1{font-size:24px;letter-spacing:-.7px;margin:0 0 10px}.login-card p{font-size:13px;color:var(--muted);line-height:1.7;margin:0}.login-divider{height:1px;background:var(--line);margin:26px 0}.widget-wrap{display:flex;justify-content:center;min-height:44px}.login-note{font-size:10px!important;margin-top:18px!important}.login-error{font-size:12px;color:var(--bad);margin-top:14px}.login-top{position:absolute;top:22px;right:22px}
+    @media(max-width:1100px){.stat-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.section-grid{grid-template-columns:1fr}main{padding:0 22px 30px}}
+    @media(max-width:700px){.layout{grid-template-columns:1fr}.sidebar{border-right:0;border-bottom:1px solid var(--line);padding:14px;gap:14px}.brand{padding:0 5px}.nav-label,.side-bottom{display:none}.nav{display:flex;overflow:auto;gap:5px}.nav button{white-space:nowrap;padding:9px 10px}.nav-icon{width:auto}.nav-soon{display:none}main{padding:0 14px 24px}.topbar{height:70px}.page-title{font-size:17px}.profile-name,.profile-role{display:none}.profile{padding:5px}.welcome{align-items:start;flex-direction:column;padding:23px 0 17px}.welcome h1{font-size:22px}.date-pill{display:none}.stat-grid{gap:9px}.stat{padding:14px;border-radius:13px}.stat-value{font-size:24px;margin:14px 0 6px}.stat-label{font-size:11px}.stat-icon{width:30px;height:30px}.panel-head{padding:15px}.quick-grid{padding:12px;gap:8px}.quick{padding:11px}.login-card{padding:28px 22px}}
+  </style>
+</head>
+<body>
+  <section id="login" class="login-screen hidden">
+    <button class="icon-btn login-top" id="loginTheme" aria-label="Toggle theme">☼</button>
+    <div class="login-card">
+      <div class="login-logo">F</div>
+      <h1>Welcome to Filestore</h1>
+      <p>Sign in with your Telegram account to securely manage your bot, files, users and payments.</p>
+      <div class="login-divider"></div>
+      <div id="telegramWidget" class="widget-wrap"><span class="loading">Loading secure Telegram sign-in…</span></div>
+      <div id="loginError" class="login-error"></div>
+      <p class="login-note">Access is restricted to Telegram IDs configured in OWNER_ID and ADMIN_IDS.</p>
+    </div>
+  </section>
+
+  <section id="app" class="layout hidden">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">F</div><div><div class="brand-title">Filestore</div><div class="brand-sub">Control center</div></div></div>
+      <div><div class="nav-label">WORKSPACE</div><nav class="nav">
+        <button class="active" data-page="overview"><span class="nav-icon">◫</span>Overview</button>
+        <button data-page="users"><span class="nav-icon">♙</span>Users</button>
+        <button data-page="files"><span class="nav-icon">▤</span>Files & links</button>
+        <button data-page="posts"><span class="nav-icon">▧</span>Posts & batches</button>
+      </nav></div>
+      <div><div class="nav-label">MANAGEMENT</div><nav class="nav">
+        <button data-page="payments"><span class="nav-icon">◈</span>Payments <span class="nav-soon">STAGE 3</span></button>
+        <button data-page="settings"><span class="nav-icon">⚙</span>Settings <span class="nav-soon">STAGE 3</span></button>
+        <button data-page="activity"><span class="nav-icon">◷</span>Activity & logs <span class="nav-soon">STAGE 4</span></button>
+      </nav></div>
+      <div class="side-bottom"><div class="connection"><span class="dot"></span><span>Admin session secured</span></div></div>
+    </aside>
+    <main>
+      <header class="topbar"><div><div class="crumb">Filestore / <span id="crumbPage">Overview</span></div><div class="page-title" id="headerTitle">Overview</div></div><div class="top-actions"><button class="icon-btn" id="themeToggle" aria-label="Toggle theme">☼</button><div class="profile"><img id="avatar" class="avatar hidden" alt=""><div id="avatarFallback" class="avatar">A</div><div><div class="profile-name" id="profileName">Admin</div><div class="profile-role">Administrator</div></div><button class="icon-btn" id="logout" title="Sign out" aria-label="Sign out" style="width:32px;height:32px;border:0;background:transparent">↪</button></div></div></header>
+      <div class="content" id="pageContent">
+        <div class="welcome"><div><h1>Good to see you, <span id="welcomeName">Admin</span> 👋</h1><p>Here’s what’s happening across your Filestore bot.</p></div><div class="date-pill" id="today"></div></div>
+        <div id="stats" class="stat-grid"><div class="stat"><div class="loading">Loading overview…</div></div></div>
+        <div class="section-grid">
+          <section class="panel"><div class="panel-head"><div><div class="panel-title">Recent users</div><div class="panel-sub">Latest activity recorded by the bot</div></div><button class="text-btn" data-go="users">View users →</button></div><div class="table-wrap"><table><thead><tr><th>USER</th><th>STATUS</th><th>LAST SEEN</th></tr></thead><tbody id="recentUsers"><tr><td colspan="3" class="empty">Loading users…</td></tr></tbody></table></div></section>
+          <section class="panel"><div class="panel-head"><div><div class="panel-title">Recent payments</div><div class="panel-sub">Telegram Stars transactions</div></div><button class="text-btn" data-go="payments">View payments →</button></div><div class="table-wrap"><table><thead><tr><th>USER</th><th>AMOUNT</th><th>DATE</th></tr></thead><tbody id="recentPayments"><tr><td colspan="3" class="empty">Loading payments…</td></tr></tbody></table></div></section>
+        </div>
+        <section class="panel" style="margin-top:17px"><div class="panel-head"><div><div class="panel-title">Quick actions</div><div class="panel-sub">Jump into common admin tasks</div></div></div><div class="quick-grid">
+          <button class="quick" data-go="users"><div class="quick-icon">♙</div><div class="quick-title">Manage users</div><div class="quick-desc">Search users, inspect premium status and manage access.</div></button>
+          <button class="quick" data-go="files"><div class="quick-icon">▤</div><div class="quick-title">Find a file or link</div><div class="quick-desc">Search your file library and manage share links.</div></button>
+          <button class="quick" data-go="payments"><div class="quick-icon">◈</div><div class="quick-title">Review payments</div><div class="quick-desc">Check Stars transactions and premium purchases.</div></button>
+          <button class="quick" data-go="settings"><div class="quick-icon">⚙</div><div class="quick-title">Bot settings</div><div class="quick-desc">Manage subscription, expiry and bot configuration.</div></button>
+        </div></section>
+        <div class="notice"><span style="font-size:18px">✦</span><div><strong>Built in stages</strong><br>This first stage adds the secure admin sign-in and live overview. User search and moderation, file/batch/post browsing, and link revocation are now available in Stage 2.</div></div>
+        <div id="pageError" class="error"></div>
+      </div>
+    </main>
+  </section>
+<script>
+(() => {
+  const root = document.documentElement;
+  const login = document.getElementById('login');
+  const app = document.getElementById('app');
+  const loginError = document.getElementById('loginError');
+  const titles = {overview:'Overview',users:'User management',files:'Files & links',posts:'Posts & batches',payments:'Payments',settings:'Settings',activity:'Activity & logs'};
+  const overviewMarkup = document.getElementById('pageContent').innerHTML;
+  let currentAdmin = null;
+  let managementPage = 1;
+  let managementQuery = '';
+  let managementKind = 'files';
+  const storedTheme = (() => { try { return localStorage.getItem('filestore-admin-theme'); } catch { return null; } })();
+  root.dataset.theme = storedTheme === 'light' ? 'light' : 'dark';
+  const updateThemeIcons = () => {
+    const glyph = root.dataset.theme === 'dark' ? '☼' : '☾';
+    document.getElementById('themeToggle').textContent = glyph;
+    document.getElementById('loginTheme').textContent = glyph;
+  };
+  const toggleTheme = () => {
+    root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+    try { localStorage.setItem('filestore-admin-theme', root.dataset.theme); } catch {}
+    updateThemeIcons();
+  };
+  document.getElementById('themeToggle').addEventListener('click', toggleTheme);
+  document.getElementById('loginTheme').addEventListener('click', toggleTheme);
+  updateThemeIcons();
+
+  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  const formatNumber = (n) => Number(n || 0).toLocaleString();
+  const formatDate = (value) => {
+    if (!value) return '—';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '—';
+    return date.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+  };
+  async function api(url, options = {}) {
+    const response = await fetch(url, {credentials:'same-origin', ...options, headers:{'Content-Type':'application/json', ...(options.headers || {})}});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(data.error || 'request_failed');
+      error.status = response.status;
+      throw error;
+    }
+    return data;
+  }
+  function showLogin(message = '') {
+    app.classList.add('hidden');
+    login.classList.remove('hidden');
+    loginError.textContent = message ? humanError(message) : '';
+    loadTelegramWidget().catch(() => { document.getElementById('telegramWidget').innerHTML = '<span class="error">Could not load Telegram sign-in. Refresh the page and try again.</span>'; });
+  }
+  function humanError(code) {
+    if (code === 'telegram_account_not_admin') return 'This Telegram account is not listed as a bot admin.';
+    if (code === 'invalid_or_expired_telegram_login') return 'Telegram sign-in expired or could not be verified. Please try again.';
+    return 'Sign-in failed. Please try again.';
+  }
+  async function loadTelegramWidget() {
+    const container = document.getElementById('telegramWidget');
+    if (container.dataset.loaded === 'true') return;
+    const config = await api('/admin/api/config');
+    container.replaceChildren();
+    const script = document.createElement('script');
+    script.async = true;
+    script.src = 'https://telegram.org/js/telegram-widget.js?22';
+    script.dataset.telegramLogin = config.botUsername;
+    script.dataset.size = 'large';
+    script.dataset.userpic = 'false';
+    script.dataset.requestAccess = 'write';
+    script.dataset.onauth = 'onTelegramAuth(user)';
+    container.appendChild(script);
+    container.dataset.loaded = 'true';
+  }
+  window.onTelegramAuth = async (user) => {
+    loginError.textContent = '';
+    try {
+      await api('/admin/api/auth/telegram', {method:'POST',body:JSON.stringify(user)});
+      await loadDashboard();
+    } catch (error) {
+      showLogin(error.message);
+    }
+  };
+  function renderStats(stats) {
+    const cards = [
+      ['Total users',stats.users,'♙','Across all bot users',''],
+      ['Files stored',stats.files,'▤','Indexed file records','accent'],
+      ['Batches & posts',(Number(stats.batches)||0)+(Number(stats.posts)||0),'▧',formatNumber(stats.batches)+' batches · '+formatNumber(stats.posts)+' posts',''],
+      ['Stars revenue',formatNumber(stats.totalStars)+' ⭐','◈',formatNumber(stats.payments)+' processed payments','green'],
+      ['Premium users',stats.premiumUsers,'✦','Currently active',''],
+      ['Banned users',stats.bans,'⊘','Access restricted',''],
+    ];
+    document.getElementById('stats').innerHTML = cards.map(([label,value,icon,note,cls]) => '<article class="stat"><div class="stat-top"><div class="stat-label">'+escapeHtml(label)+'</div><div class="stat-icon">'+icon+'</div></div><div class="stat-value '+cls+'">'+escapeHtml(formatNumber(value))+'</div><div class="stat-note">'+escapeHtml(note)+'</div></article>').join('');
+  }
+  function renderUsers(users) {
+    const tbody = document.getElementById('recentUsers');
+    if (!users.length) { tbody.innerHTML = '<tr><td colspan="3" class="empty">No users recorded yet.</td></tr>'; return; }
+    tbody.innerHTML = users.map(user => {
+      const name = [user.firstName,user.lastName].filter(Boolean).join(' ') || 'Telegram user';
+      const username = user.username ? '@'+user.username : 'ID '+user.userId;
+      const status = user.banned ? '<span class="badge banned">BANNED</span>' : user.premium ? '<span class="badge premium">PREMIUM</span>' : '<span class="badge">FREE</span>';
+      return '<tr><td><div class="user-cell"><div class="mini-avatar">'+escapeHtml(name.slice(0,1).toUpperCase())+'</div><div><div class="user-main">'+escapeHtml(name)+'</div><div class="user-sub">'+escapeHtml(username)+'</div></div></div></td><td>'+status+'</td><td>'+escapeHtml(formatDate(user.lastSeenAt || user.createdAt))+'</td></tr>';
+    }).join('');
+  }
+  function renderPayments(payments) {
+    const tbody = document.getElementById('recentPayments');
+    if (!payments.length) { tbody.innerHTML = '<tr><td colspan="3" class="empty">No successful payments yet.</td></tr>'; return; }
+    tbody.innerHTML = payments.map(payment => '<tr><td><div class="user-main">ID '+escapeHtml(payment.userId)+'</div><div class="user-sub">Telegram Stars</div></td><td><strong>'+escapeHtml(formatNumber(payment.totalAmount))+' ⭐</strong></td><td>'+escapeHtml(formatDate(payment.createdAt))+'</td></tr>').join('');
+  }
+  async function loadDashboard() {
+    const data = await api('/admin/api/overview');
+    login.classList.add('hidden');
+    app.classList.remove('hidden');
+    const me = await api('/admin/api/me');
+    currentAdmin = me.user;
+    const name = me.user.firstName || me.user.username || 'Admin';
+    document.getElementById('welcomeName').textContent = name;
+    document.getElementById('profileName').textContent = [me.user.firstName,me.user.lastName].filter(Boolean).join(' ') || me.user.username || 'Admin';
+    document.getElementById('avatarFallback').textContent = name.slice(0,1).toUpperCase();
+    const avatar = document.getElementById('avatar');
+    if (me.user.photoUrl) { avatar.src = me.user.photoUrl; avatar.classList.remove('hidden'); document.getElementById('avatarFallback').classList.add('hidden'); }
+    else { avatar.classList.add('hidden'); document.getElementById('avatarFallback').classList.remove('hidden'); }
+    document.getElementById('today').textContent = new Date().toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric',year:'numeric'});
+    renderStats(data.stats);
+    renderUsers(data.recentUsers || []);
+    renderPayments(data.recentPayments || []);
+  }
+  document.getElementById('logout').addEventListener('click', async () => {
+    try { await api('/admin/api/logout',{method:'POST',body:'{}'}); } catch {}
+    showLogin();
+  });
+  function openPage(page) {
+    if (!titles[page]) return;
+    document.getElementById('headerTitle').textContent = titles[page];
+    document.getElementById('crumbPage').textContent = titles[page];
+    document.getElementById('pageError').textContent = '';
+    if (page === 'overview') {
+      document.getElementById('pageContent').innerHTML = overviewMarkup;
+      loadDashboard().catch(() => { document.getElementById('pageError').textContent = 'Could not refresh overview.'; });
+      return;
+    }
+    if (page === 'users') {
+      managementKind = 'users';
+      managementQuery = '';
+      managementPage = 1;
+      loadManagementPage();
+      return;
+    }
+    if (page === 'files') {
+      managementKind = 'files';
+      managementQuery = '';
+      managementPage = 1;
+      loadManagementPage();
+      return;
+    }
+    if (page === 'posts') {
+      managementKind = 'posts';
+      managementQuery = '';
+      managementPage = 1;
+      loadManagementPage();
+      return;
+    }
+    document.getElementById('pageContent').innerHTML = '<div class="notice"><span style="font-size:18px">✦</span><div><strong>'+escapeHtml(titles[page])+'</strong><br>This section is scheduled for Stage 3 or Stage 4. Existing bot functionality is unchanged.</div></div>';
+  }
+  function contentTabs() {
+    if (managementKind === 'users') return '';
+    return '<div class="manage-tabs"><button data-kind="files" class="'+(managementKind==='files'?'active':'')+'">Files</button><button data-kind="batches" class="'+(managementKind==='batches'?'active':'')+'">Batches</button><button data-kind="posts" class="'+(managementKind==='posts'?'active':'')+'">Posts</button></div>';
+  }
+  function dateTime(value) {
+    if (!value) return '—';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString(undefined,{month:'short',day:'numeric',year:'numeric'});
+  }
+  function contentTable(data) {
+    const items = data.items || [];
+    let headers = [], rows = [];
+    if (managementKind === 'users') {
+      headers = ['USER','TELEGRAM ID','LAST SEEN','PREMIUM','STATUS','ACTIONS'];
+      rows = items.map(u => {
+        const name = [u.firstName,u.lastName].filter(Boolean).join(' ') || 'Telegram user';
+        const status = u.banned ? '<span class="state-pill revoked">BANNED</span>' : '<span class="state-pill active">ACTIVE</span>';
+        const premium = u.premium ? '<span class="state-pill active">PREMIUM</span>' : '<span class="state-pill">FREE</span>';
+        const action = currentAdmin && currentAdmin.isOwner && ![Number(currentAdmin.userId)].includes(Number(u.userId)) && !u.isAdmin
+          ? '<button class="'+(u.banned?'secondary-btn':'danger-btn')+'" data-user-action="'+(u.banned?'unban':'ban')+'" data-user-id="'+escapeHtml(u.userId)+'">'+(u.banned?'Unban':'Ban')+'</button>' : '<span class="muted-cell">—</span>';
+        return '<tr><td><div class="user-cell"><div class="mini-avatar">'+escapeHtml(name.slice(0,1).toUpperCase())+'</div><div><div class="user-main">'+escapeHtml(name)+'</div><div class="user-sub">'+(u.username?'@'+escapeHtml(u.username):'No username')+'</div></div></div></td><td>'+escapeHtml(u.userId)+'</td><td>'+escapeHtml(dateTime(u.lastSeenAt||u.createdAt))+'</td><td>'+premium+'</td><td>'+status+'</td><td>'+action+'</td></tr>';
+      });
+    } else if (managementKind === 'files') {
+      headers = ['FILE','OWNER','SIZE','DOWNLOADS','CREATED','LINK STATUS','ACTIONS'];
+      rows = items.map(f => '<tr><td><div class="user-main">'+escapeHtml(f.label)+'</div><div class="user-sub">'+escapeHtml(f.fileType)+' · token …'+escapeHtml(f.tokenHint)+'</div></td><td>'+escapeHtml(f.ownerId)+'</td><td>'+escapeHtml(f.fileSize?formatBytes(f.fileSize):'—')+'</td><td>'+escapeHtml(f.downloads)+'</td><td>'+escapeHtml(dateTime(f.createdAt))+'</td><td><span class="state-pill '+(f.revoked?'revoked':'active')+'">'+(f.revoked?'REVOKED':'ACTIVE')+'</span></td><td>'+(f.revoked?'<span class="muted-cell">—</span>':'<button class="danger-btn" data-revoke-kind="files" data-revoke-id="'+escapeHtml(f.id)+'">Revoke</button>')+'</td></tr>');
+    } else if (managementKind === 'batches') {
+      headers = ['BATCH','OWNER','FILES','DOWNLOADS','CREATED','STATUS','ACTIONS'];
+      rows = items.map(f => '<tr><td><div class="user-main">Batch</div><div class="user-sub">'+(f.passwordProtected?'Password protected':'No password')+'</div></td><td>'+escapeHtml(f.ownerId)+'</td><td>'+escapeHtml(f.fileCount)+'</td><td>'+escapeHtml(f.downloads)+'</td><td>'+escapeHtml(dateTime(f.createdAt))+'</td><td><span class="state-pill '+(f.revoked?'revoked':'active')+'">'+(f.revoked?'REVOKED':'ACTIVE')+'</span></td><td>'+(f.revoked?'<span class="muted-cell">—</span>':'<button class="danger-btn" data-revoke-kind="batches" data-revoke-id="'+escapeHtml(f.id)+'">Revoke</button>')+'</td></tr>');
+    } else {
+      headers = ['POST','OWNER','CHANNEL','ACCESS','VIDEOS','CREATED','STATUS','ACTIONS'];
+      rows = items.map(p => '<tr><td><div class="user-main">'+escapeHtml(p.label)+'</div><div class="user-sub">Unlocks: '+escapeHtml(p.paidUsers)+'</div></td><td>'+escapeHtml(p.ownerId)+'</td><td>'+escapeHtml(p.channelId)+'</td><td>'+ (p.stars?escapeHtml(p.stars)+' ⭐':'Free')+'</td><td>'+escapeHtml(p.videoCount)+'</td><td>'+escapeHtml(dateTime(p.createdAt))+'</td><td><span class="state-pill '+(p.revoked?'revoked':'active')+'">'+(p.revoked?'REVOKED':'ACTIVE')+'</span></td><td>'+(p.revoked?'<span class="muted-cell">—</span>':'<button class="danger-btn" data-revoke-kind="posts" data-revoke-id="'+escapeHtml(p.id)+'">Revoke</button>')+'</td></tr>');
+    }
+    return '<div class="table-wrap"><table><thead><tr>'+headers.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+(rows.length?rows.join(''):'<tr><td colspan="'+headers.length+'" class="empty">No matching records.</td></tr>')+'</tbody></table></div>';
+  }
+  function formatBytes(bytes) {
+    const n = Number(bytes);
+    if (!Number.isFinite(n) || n <= 0) return '—';
+    const units = ['B','KB','MB','GB','TB'];
+    const index = Math.min(Math.floor(Math.log(n)/Math.log(1024)),units.length-1);
+    return (n/Math.pow(1024,index)).toFixed(index?1:0)+' '+units[index];
+  }
+  async function loadManagementPage() {
+    const title = managementKind === 'users' ? 'User management' : managementKind === 'files' ? 'Files & links' : managementKind === 'batches' ? 'Batch links' : 'Posts & batches';
+    document.getElementById('headerTitle').textContent = title;
+    document.getElementById('crumbPage').textContent = title;
+    document.getElementById('pageContent').innerHTML = '<div class="manage-toolbar"><form class="search-form" id="manageSearch"><input class="search-input" id="manageQuery" maxlength="80" placeholder="'+(managementKind==='users'?'Search name, username or Telegram ID':'Search '+managementKind+' by title, filename or owner ID')+'" value="'+escapeHtml(managementQuery)+'"><button class="primary-btn" type="submit">Search</button></form><button class="secondary-btn" id="manageRefresh">Refresh</button></div><div id="manageFlash"></div><section class="manage-panel">'+contentTabs()+'<div class="manage-meta" id="manageMeta">Loading records…</div><div class="loading">Loading records…</div><div class="pagination"><span>Loading…</span></div></section>';
+    document.getElementById('manageSearch').addEventListener('submit', event => {
+      event.preventDefault();
+      managementQuery = document.getElementById('manageQuery').value.trim();
+      managementPage = 1;
+      loadManagementPage();
+    });
+    document.getElementById('manageRefresh').addEventListener('click', () => loadManagementPage());
+    document.querySelectorAll('[data-kind]').forEach(button => button.addEventListener('click', () => {
+      managementKind = button.dataset.kind;
+      managementPage = 1;
+      loadManagementPage();
+    }));
+    try {
+      const data = await api('/admin/api/'+managementKind+'?page='+managementPage+'&limit=10&q='+encodeURIComponent(managementQuery));
+      const panel = document.querySelector('.manage-panel');
+      if (!panel) return;
+      panel.innerHTML = contentTabs()+'<div class="manage-meta" id="manageMeta">'+formatNumber(data.pagination.total)+' records · Page '+data.pagination.page+' of '+data.pagination.pages+'</div>'+contentTable(data)+'<div class="pagination"><span>Page '+data.pagination.page+' of '+data.pagination.pages+'</span><div class="pagination-actions"><button class="secondary-btn" id="managePrev" '+(managementPage<=1?'disabled':'')+'>Previous</button><button class="secondary-btn" id="manageNext" '+(managementPage>=data.pagination.pages?'disabled':'')+'>Next</button></div></div>';
+      panel.querySelectorAll('[data-kind]').forEach(button => button.addEventListener('click', () => { managementKind=button.dataset.kind; managementPage=1; loadManagementPage(); }));
+      const prev = document.getElementById('managePrev'), next = document.getElementById('manageNext');
+      if (prev) prev.addEventListener('click',()=>{managementPage=Math.max(1,managementPage-1);loadManagementPage();});
+      if (next) next.addEventListener('click',()=>{managementPage++;loadManagementPage();});
+      panel.querySelectorAll('[data-user-action]').forEach(button => button.addEventListener('click', async () => {
+        const action=button.dataset.userAction, id=button.dataset.userId;
+        if (!confirm((action==='ban'?'Ban':'Unban')+' Telegram user '+id+'?')) return;
+        button.disabled=true;
+        try { await api('/admin/api/users/'+encodeURIComponent(id)+'/'+action,{method:'POST',body:'{}'}); await loadManagementPage(); }
+        catch(error) { showFlash('Could not update user: '+error.message,true); }
+      }));
+      panel.querySelectorAll('[data-revoke-kind]').forEach(button => button.addEventListener('click', async () => {
+        const kind=button.dataset.revokeKind, id=button.dataset.revokeId;
+        if (!confirm('Revoke this '+kind.slice(0,-1)+' link? This blocks future retrieval and cannot be undone.')) return;
+        button.disabled=true;
+        try { await api('/admin/api/'+kind+'/'+encodeURIComponent(id)+'/revoke',{method:'POST',body:'{}'}); await loadManagementPage(); }
+        catch(error) { showFlash('Could not revoke this link: '+error.message,true); }
+      }));
+    } catch(error) {
+      const panel = document.querySelector('.manage-panel');
+      if (panel) panel.innerHTML = '<div class="empty">Could not load records. '+escapeHtml(error.message)+'</div>';
+    }
+  }
+  function showFlash(message, isError=false) {
+    const flash=document.getElementById('manageFlash');
+    if (flash) { flash.className='flash'+(isError?' error':''); flash.textContent=message; }
+  }
+  document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => {
+    document.querySelectorAll('[data-page]').forEach(item => item.classList.toggle('active',item === button));
+    openPage(button.dataset.page);
+  }));
+  document.querySelectorAll('[data-go]').forEach(button => button.addEventListener('click', () => {
+    const page = button.dataset.go;
+    document.querySelectorAll('[data-page]').forEach(item => item.classList.toggle('active',item.dataset.page === page));
+    openPage(page);
+  }));
+  (async () => {
+    try { await loadDashboard(); }
+    catch (error) {
+      if (error.status === 401) showLogin();
+      else { showLogin(); loginError.textContent = 'Admin service is temporarily unavailable. Please refresh in a moment.'; }
+    }
+  })();
+})();
+</script>
+</body>
+</html>
