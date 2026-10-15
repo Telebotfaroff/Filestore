@@ -239,7 +239,7 @@ export function registerAdminRoutes(app, bot) {
       return res.json({ ok: true, pagination: pagination(page, limit, total), users: users.map((user) => ({
         userId: user.userId, firstName: user.firstName || '', lastName: user.lastName || '', username: user.username || '',
         createdAt: user.createdAt || null, lastSeenAt: user.lastSeenAt || null,
-        premiumUntil: user.premiumUntil || null, premium: Boolean(user.premiumUntil && user.premiumUntil > now), banned: bannedIds.has(Number(user.userId)),
+        premiumUntil: user.premiumUntil || null, premium: Boolean(user.premiumUntil && user.premiumUntil > now), banned: bannedIds.has(Number(user.userId)), isAdmin: config.adminIds.includes(Number(user.userId)),
       })) });
     } catch (error) {
       console.error('[admin] User listing failed:', error.message);
