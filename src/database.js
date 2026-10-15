@@ -17,10 +17,15 @@ export async function connectDatabase() {
     database.collection('users').createIndex({ lastSeenAt: -1 }),
     database.collection('files').createIndex({ tokenHash: 1 }, { unique: true }),
     database.collection('files').createIndex({ ownerId: 1, createdAt: -1 }),
+    database.collection('files').createIndex({ expiresAt: 1 }),
     database.collection('batches').createIndex({ tokenHash: 1 }, { unique: true }),
     database.collection('batches').createIndex({ ownerId: 1, createdAt: -1 }),
+    database.collection('batches').createIndex({ expiresAt: 1 }),
     database.collection('bans').createIndex({ userId: 1 }, { unique: true }),
     database.collection('settings').createIndex({ key: 1 }, { unique: true }),
+    database.collection('payments').createIndex({ telegramPaymentChargeId: 1 }, { unique: true }),
+    database.collection('verificationSessions').createIndex({ sessionId: 1 }, { unique: true }),
+    database.collection('verificationSessions').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
   ]);
 
   console.info(`[database] Connected to MongoDB database "${config.mongoDbName}"`);
