@@ -9,6 +9,8 @@ import { createShortenerLink, needsVerification, shortenerEnabled } from './shor
 const bot = new Telegraf(config.botToken);
 const now = () => new Date();
 const isOwner = (ctx) => Number(ctx.from?.id) === config.ownerId;
+const isAdmin = (ctx) => config.adminIds.includes(Number(ctx.from?.id));
+const adminOnlyMessage = '⛔ Only bot admins can create file or batch links. You can still open links shared with you.';
 
 function getFileInfo(message) {
   const candidates = [
@@ -105,7 +107,7 @@ bot.start(async (ctx) => {
   const parsed = parsePayload(ctx.startPayload || '');
   if (!parsed) {
     return ctx.reply(
-      `👋 Hello ${ctx.from.first_name || 'there'}!\n\nSend me a file to get a permanent share link, or use /batch to create a link for multiple files.\n\nUse /help to see available commands.`,
+      `👋 Hello ${ctx.from.first_name || 'there'}!\n\n${isAdmin(ctx) ? 'Send me a file to create a share link, or use /batch to create a multi-file link.' : 'This bot is read-only for you: only admins can create file and batch links. You can open any share link sent to you.'}\n\nUse /help to see available commands.`,
       Markup.inlineKeyboard([
         ...(config.updatesUrl ? [[Markup.button.url('📢 Updates', config.updatesUrl)]] : []),
         ...(config.supportUrl ? [[Markup.button.url('💬 Support', config.supportUrl)]] : []),
@@ -157,6 +159,7 @@ bot.command('help', (ctx) => ctx.reply(
 
 
 bot.command('setpassword', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
   if (ctx.chat.type !== 'private') return ctx.reply('Please set passwords in a private chat.');
   const password = ctx.message.text.replace(/^\/setpassword(?:@\w+)?\s*/i, '').trim();
   if (!password) return ctx.reply('Usage: /setpassword YOUR_PASSWORD\nThe password will protect your next single-file link, or the batch link if you are in batch mode.');
@@ -170,6 +173,7 @@ bot.command('setpassword', async (ctx) => {
 });
 
 bot.command('clearpassword', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
   await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { pendingPasswordHash: '' } });
   return ctx.reply('Pending link password cleared.');
 });
@@ -217,6 +221,7 @@ bot.on('pre_checkout_query', async (ctx) => {
 });
 
 bot.command('batch', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
   if (ctx.chat.type !== 'private') return ctx.reply('Please create batches in a private chat with me.');
   await collection('users').updateOne({ userId: ctx.from.id }, { $set: { batchDraft: [], batchStartedAt: now() } });
   return ctx.reply('📦 Batch mode started. Send or forward the files you want to include, then use /done. Use /cancel to stop.');
@@ -228,6 +233,7 @@ bot.command('cancel', async (ctx) => {
 });
 
 bot.command('done', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
   const user = await collection('users').findOne({ userId: ctx.from.id });
   const ids = user?.batchDraft || [];
   if (!ids.length) {
@@ -381,7 +387,8 @@ bot.on('message', async (ctx) => {
     }
     return;
   }
-  if (!config.privateUploadsEnabled && !isOwner(ctx)) {
+  if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+  if (!config.privateUploadsEnabled && !isAdmin(ctx)) {
     return ctx.reply('File uploads are currently disabled by the bot owner.');
   }
 
