@@ -138,7 +138,7 @@ async function getForceSubConfig() {
   return {
     enabled: Boolean(legacy),
     channels: legacy ? [{
-      chatId: /^-?\\d+$/.test(legacy) ? Number(legacy) : legacy,
+      chatId: /^-?\d+$/.test(legacy) ? Number(legacy) : legacy,
       title: legacy,
       username: legacy.startsWith('@') ? legacy.slice(1) : null,
       url: config.forceSubUrl || (legacy.startsWith('@') ? `https://t.me/${legacy.slice(1)}` : ''),
@@ -791,7 +791,7 @@ bot.on('message', async (ctx) => {
   if (workflowUser?.pendingForceSubAdd && ctx.message.text && !ctx.message.text.startsWith('/')) {
     if (!isAdmin(ctx)) return ctx.reply('⛔ Only admins can manage force subscription.');
     const [rawChatPart, rawUrlPart = ''] = ctx.message.text.split('|').map((part) => part.trim());
-    const requestedChat = /^-?\\d+$/.test(rawChatPart) ? Number(rawChatPart) : rawChatPart;
+    const requestedChat = /^-?\d+$/.test(rawChatPart) ? Number(rawChatPart) : rawChatPart;
     try {
       const chat = await ctx.telegram.getChat(requestedChat);
       if (chat.type !== 'channel') return ctx.reply('That is not a Telegram channel. Send @username or a channel ID, optionally followed by | invite URL.');
