@@ -1,6 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import path from 'node:path';
 import { collection } from './database.js';
 import { config } from './config.js';
 
