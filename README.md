@@ -6,6 +6,7 @@ A **single-bot** Telegram file store. Files are copied to a private Telegram sto
 
 - Permanent single-file and multi-file batch links
 - Admin `/post` wizard: thumbnail → title → one or more videos → free or Telegram Stars price → configured channel
+- Admin `/auto` shortcut: send one Telegram media group with one thumbnail photo, one or more videos, and the title as a caption; then choose pricing and destination channel
 - Admin `/channels` manager to add/remove posting channels (the bot must be a channel administrator)
 - Channel posts use the thumbnail, title, and an inline button linking to a free or paid video post
 - Password-protected links using salted scrypt hashes
@@ -60,11 +61,12 @@ Use `/fsub` or **Admin panel → Force subscription** to enable or disable the g
 - `/clearpassword` — clear a pending password
 - `/premium` — purchase the configured premium plan using Telegram Stars
 - `/post` — create a thumbnail/title/video post and publish it to a configured channel as free or Stars-paid
+- `/auto` — create a post from a single media group containing one thumbnail photo and one or more videos; put the title in the album caption
 - `/channels` — add or remove channels where the bot can publish posts
 
 ## Channel posts and paid video access
 
-Admins use `/post` and follow the prompts to send a thumbnail and title, then send one or more videos. After each video is saved, choose **Add another video** or **Finish videos**. Then choose Free or Paid; paid posts ask for a Telegram Stars amount (for example, `5`). The bot stores every video in the private storage channel and publishes one thumbnail/title post with a single button linking to the bot. Opening the link delivers all videos in that post; for paid posts, users pay once to unlock the complete set. Successful payments are recorded and access is granted per user. Use `/channels` to manage the channels available in the posting menu. The bot must be an administrator in every configured posting channel and in `DB_CHANNEL_ID`.
+Admins can use `/post` for the guided thumbnail/title/video flow, or `/auto` to send one Telegram media group containing exactly one thumbnail photo and one or more videos. Add the post title as the album caption (preferably on the thumbnail). The bot saves the videos and then asks for Free or Paid and the destination channel. Paid posts ask for a Telegram Stars amount (for example, `5`). The bot stores every video in the private storage channel and publishes one thumbnail/title post with a single button linking to the bot. Opening the link delivers all videos in that post; for paid posts, users pay once to unlock the complete set. Successful payments are recorded and access is granted per user. Use `/channels` to manage the channels available in the posting menu. The bot must be an administrator in every configured posting channel and in `DB_CHANNEL_ID`.
 
 ## Owner commands
 
