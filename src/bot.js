@@ -939,6 +939,10 @@ bot.on('message', async (ctx) => {
     { projection: { postDraft: 1, pendingChannelAdd: 1, pendingForceSubAdd: 1, pendingAutoAlbum: 1 } },
   );
 
+  if (workflowUser?.pendingAutoAlbum && !ctx.message.media_group_id && !ctx.message.text?.startsWith('/')) {
+    return ctx.reply('Please send the thumbnail and videos together as one Telegram media group. Run /cancel to stop auto-post mode.');
+  }
+
   if (workflowUser?.pendingAutoAlbum && ctx.message.media_group_id) {
     const key = `${ctx.from.id}:${ctx.message.media_group_id}`;
     let buffer = autoAlbumBuffers.get(key);
