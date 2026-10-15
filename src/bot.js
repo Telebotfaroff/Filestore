@@ -12,6 +12,36 @@ const isOwner = (ctx) => Number(ctx.from?.id) === config.ownerId;
 const isAdmin = (ctx) => config.adminIds.includes(Number(ctx.from?.id));
 const adminOnlyMessage = '⛔ Only bot admins can create file or batch links. You can still open links shared with you.';
 
+function mainMenu(ctx) {
+  return Markup.inlineKeyboard([
+    ...(isAdmin(ctx) ? [
+      [Markup.button.callback('📤 Create file link', 'menu:file'), Markup.button.callback('📦 Create batch', 'menu:batch')],
+      [Markup.button.callback('🔐 Password settings', 'menu:password')],
+    ] : []),
+    [Markup.button.callback('⭐ Premium', 'menu:premium'), Markup.button.callback('❔ Help', 'menu:help')],
+    ...(isOwner(ctx) ? [[Markup.button.callback('🛠 Admin panel', 'menu:admin')]] : []),
+    ...(config.updatesUrl ? [[Markup.button.url('📢 Updates', config.updatesUrl)]] : []),
+    ...(config.supportUrl ? [[Markup.button.url('💬 Support', config.supportUrl)]] : []),
+  ]);
+}
+function adminMenu() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback('📊 Statistics', 'admin:stats'), Markup.button.callback('🧹 Auto-delete', 'admin:auto')],
+    [Markup.button.callback('📣 Broadcast', 'admin:broadcast')],
+    [Markup.button.callback('🏠 Main menu', 'menu:home')],
+  ]);
+}
+async function showMainMenu(ctx, edit = false) {
+  const text = `👋 Welcome to Filestore, ${ctx.from.first_name || 'there'}!\\n\\n${isAdmin(ctx) ? 'Use the buttons below to create file links, batches, and password-protected links.' : 'You can open links shared with you. Link creation is restricted to admins.'}`;
+  if (edit && ctx.callbackQuery) return ctx.editMessageText(text, mainMenu(ctx)).catch(() => {});
+  return ctx.reply(text, mainMenu(ctx));
+}
+async function sendPremiumInvoice(ctx) {
+  const price = config.starsPrice, days = config.starsDays;
+  return ctx.replyWithInvoice(`Filestore Premium — ${days} days`, `Premium access for ${days} days. Premium users bypass configured shortener verification.`, `premium_${days}d_${ctx.from.id}`, '', 'XTR', [{ label: `Premium ${days} days`, amount: price }], { start_parameter: 'premium', provider_token: '' });
+}
+
+
 function getFileInfo(message) {
   const candidates = [
     ['document', message.document],
@@ -103,17 +133,89 @@ async function guardUser(ctx, next) {
 
 bot.use(guardUser);
 
+bot.action(/^menu:(home|file|batch|password|premium|help|admin)$/, async (ctx) => {
+  const action = ctx.match[1];
+  await ctx.answerCbQuery().catch(() => {});
+  if (action === 'home') return showMainMenu(ctx, true);
+  if (action === 'file') {
+    if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+    return ctx.reply('📤 Send your file, video, photo, audio, or document now. I will save it and return a share link.', Markup.inlineKeyboard([[Markup.button.callback('🏠 Main menu', 'menu:home')]]));
+  }
+  if (action === 'batch') {
+    if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+    if (ctx.chat?.type !== 'private') return ctx.reply('Please create batches in a private chat with me.');
+    await collection('users').updateOne({ userId: ctx.from.id }, { $set: { batchDraft: [], batchStartedAt: now() } });
+    return ctx.reply('📦 Batch started. Send files, then tap Finish batch.', Markup.inlineKeyboard([[Markup.button.callback('✅ Finish batch', 'menu:finish')],[Markup.button.callback('🛑 Cancel batch', 'menu:cancel')]]));
+  }
+  if (action === 'password') {
+    if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+    return ctx.reply('🔐 Password settings', Markup.inlineKeyboard([[Markup.button.callback('Set next-link password', 'menu:setpass')],[Markup.button.callback('Clear pending password', 'menu:clearpass')],[Markup.button.callback('🏠 Main menu', 'menu:home')]]));
+  }
+  if (action === 'premium') return sendPremiumInvoice(ctx);
+  if (action === 'help') return ctx.reply('📚 Help\\n\\nOpen links shared with you. Admins can create links using the menu or by sending media. For batches, send files and tap Finish batch. Password settings protect the next link. Premium uses Telegram Stars.', Markup.inlineKeyboard([[Markup.button.callback('🏠 Main menu', 'menu:home')]]));
+  if (action === 'admin') {
+    if (!isOwner(ctx)) return ctx.reply('⛔ Owner only.');
+    return ctx.reply('🛠 Filestore Admin Panel', adminMenu());
+  }
+});
+bot.action('menu:finish', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+  const user = await collection('users').findOne({ userId: ctx.from.id });
+  const ids = user?.batchDraft || [];
+  if (!ids.length) return ctx.reply('Batch is empty. Send files first.');
+  const tokenData = createToken(), seconds = await getAutoDeleteSeconds();
+  const doc = { tokenHash: tokenData.tokenHash, ownerId: ctx.from.id, fileIds: ids, passwordHash: user.pendingPasswordHash || null, createdAt: now(), downloads: 0 };
+  if (seconds > 0) doc.expiresAt = new Date(Date.now() + seconds * 1000);
+  await collection('batches').insertOne(doc);
+  await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { batchDraft: '', batchStartedAt: '', pendingPasswordHash: '' } });
+  const me = await ctx.telegram.getMe(), link = buildLink(me.username, 'B', tokenData.token);
+  return ctx.reply(`✅ Batch link created\\nFiles: ${ids.length}\\n\\n${link}`, Markup.inlineKeyboard([[Markup.button.url('🔗 Open batch link', link)],[Markup.button.callback('🏠 Main menu', 'menu:home')]]));
+});
+bot.action('menu:cancel', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { batchDraft: '', batchStartedAt: '' } });
+  return ctx.reply('🛑 Batch cancelled.', Markup.inlineKeyboard([[Markup.button.callback('🏠 Main menu', 'menu:home')]]));
+});
+bot.action('menu:setpass', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+  await collection('users').updateOne({ userId: ctx.from.id }, { $set: { pendingPasswordPrompt: true } });
+  return ctx.reply('Send the password in your next normal message. It will be stored as a salted hash. /cancel aborts.');
+});
+bot.action('menu:clearpass', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+  await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { pendingPasswordHash: '', pendingPasswordPrompt: '' } });
+  return ctx.reply('✅ Pending password cleared.', Markup.inlineKeyboard([[Markup.button.callback('🏠 Main menu', 'menu:home')]]));
+});
+bot.action(/^admin:(stats|auto|broadcast)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isOwner(ctx)) return ctx.reply('⛔ Owner only.');
+  if (ctx.match[1] === 'stats') {
+    const [users, files, batches, bans, payments] = await Promise.all([collection('users').countDocuments(), collection('files').countDocuments(), collection('batches').countDocuments(), collection('bans').countDocuments(), collection('payments').countDocuments()]);
+    return ctx.reply(`📊 Statistics\\nUsers: ${users}\\nFiles: ${files}\\nBatches: ${batches}\\nBanned: ${bans}\\nStar payments: ${payments}`, adminMenu());
+  }
+  if (ctx.match[1] === 'auto') {
+    const seconds = await getAutoDeleteSeconds();
+    return ctx.reply(`🧹 Current auto-delete: ${seconds ? seconds + ' seconds' : 'off'}\\nChoose expiry for new links:`, Markup.inlineKeyboard([[Markup.button.callback('Off', 'admin:expiry:0'),Markup.button.callback('1 hour', 'admin:expiry:3600')],[Markup.button.callback('1 day', 'admin:expiry:86400'),Markup.button.callback('7 days', 'admin:expiry:604800')],[Markup.button.callback('↩ Admin panel', 'menu:admin')]]));
+  }
+  await collection('users').updateOne({ userId: ctx.from.id }, { $set: { pendingBroadcast: true } });
+  return ctx.reply('📣 Send your broadcast as the next normal text message. Send /cancel to abort.');
+});
+bot.action(/^admin:expiry:(0|3600|86400|604800)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isOwner(ctx)) return ctx.reply('⛔ Owner only.');
+  const seconds = Number(ctx.match[1]);
+  await collection('settings').updateOne({ key: 'autoDeleteSeconds' }, { $set: { key: 'autoDeleteSeconds', value: seconds, updatedAt: now(), updatedBy: ctx.from.id } }, { upsert: true });
+  return ctx.reply(seconds ? `🧹 Auto-delete set to ${seconds} seconds for new links.` : '🧹 Auto-delete disabled for new links.', adminMenu());
+});
+
+
+
 bot.start(async (ctx) => {
   const parsed = parsePayload(ctx.startPayload || '');
-  if (!parsed) {
-    return ctx.reply(
-      `👋 Hello ${ctx.from.first_name || 'there'}!\n\n${isAdmin(ctx) ? 'Send me a file to create a share link, or use /batch to create a multi-file link.' : 'This bot is read-only for you: only admins can create file and batch links. You can open any share link sent to you.'}\n\nUse /help to see available commands.`,
-      Markup.inlineKeyboard([
-        ...(config.updatesUrl ? [[Markup.button.url('📢 Updates', config.updatesUrl)]] : []),
-        ...(config.supportUrl ? [[Markup.button.url('💬 Support', config.supportUrl)]] : []),
-      ]),
-    );
-  }
+  if (!parsed) return showMainMenu(ctx);
 
   if (await needsVerification(ctx.from.id)) {
     const me = await ctx.telegram.getMe();
@@ -144,19 +246,13 @@ bot.action('check_sub', async (ctx) => {
   }
 });
 
-bot.command('help', (ctx) => ctx.reply(
-  '📚 Available commands\n\n' +
-  '/start — start the bot or open a share link\n' +
-  '/batch — start collecting files for one batch link\n' +
-  '/done — finish the current batch and get its link\n' +
-  '/cancel — cancel batch creation\n' +
-  '/setpassword PASSWORD — protect your next file or batch link\n' +
-  '/clearpassword — clear a pending password\n' +
-  '/premium — buy 30 days of premium with Telegram Stars\n' +
-  '/help — show this help\n\n' +
-  'Send a file or media message to create a permanent link. During batch mode, send the files you want included and use /done when finished.',
-));
-
+bot.command('help', async (ctx) => {
+  const text = '📚 Filestore help\\n\\n/start — interactive menu or open a share link\\n/premium — buy premium with Stars\\n/help — show help\\n' +
+    (isAdmin(ctx) ? '/batch — start batch\\n/done — finish batch\\n/cancel — cancel batch\\n/setpassword PASSWORD — protect next link\\n/clearpassword — clear password\\n' : '') +
+    (isOwner(ctx) ? '/stats — statistics\\n/autodelete SECONDS — expiry setting\\n/broadcast MESSAGE — broadcast\\n' : '') +
+    '\\nUse the buttons for guided actions.';
+  return ctx.reply(text, mainMenu(ctx));
+});
 
 bot.command('setpassword', async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
@@ -197,19 +293,7 @@ bot.command('autodelete', async (ctx) => {
   return ctx.reply(seconds ? `🧹 Auto-delete set to ${seconds} seconds for new uploads.` : '🧹 Auto-delete disabled for new uploads. Existing expiry times are unchanged.');
 });
 
-bot.command('premium', async (ctx) => {
-  const price = config.starsPrice;
-  const days = config.starsDays;
-  return ctx.replyWithInvoice(
-    `Filestore Premium — ${days} days`,
-    `Premium access for ${days} days. Premium users bypass configured shortener verification.`,
-    `premium_${days}d_${ctx.from.id}`,
-    '',
-    'XTR',
-    [{ label: `Premium ${days} days`, amount: price }],
-    { start_parameter: 'premium', provider_token: '' },
-  );
-});
+bot.command('premium', async (ctx) => sendPremiumInvoice(ctx));
 
 bot.on('pre_checkout_query', async (ctx) => {
   const query = ctx.update.pre_checkout_query;
@@ -350,6 +434,31 @@ bot.on('message', async (ctx) => {
   }
 
   if (ctx.message.text) {
+    const menuState = await collection('users').findOne({ userId: ctx.from.id }, { projection: { pendingPasswordPrompt: 1, pendingBroadcast: 1 } });
+    if (ctx.message.text === '/cancel' && (menuState?.pendingPasswordPrompt || menuState?.pendingBroadcast)) {
+      await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { pendingPasswordPrompt: '', pendingBroadcast: '' } });
+      return ctx.reply('🛑 Action cancelled.', Markup.inlineKeyboard([[Markup.button.callback('🏠 Main menu', 'menu:home')]]));
+    }
+    if (menuState?.pendingPasswordPrompt && !ctx.message.text.startsWith('/')) {
+      if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+      try {
+        const passwordHash = hashPassword(ctx.message.text);
+        await collection('users').updateOne({ userId: ctx.from.id }, { $set: { pendingPasswordHash: passwordHash }, $unset: { pendingPasswordPrompt: '' } });
+        return ctx.reply('🔐 Password saved for your next file or batch link.', Markup.inlineKeyboard([[Markup.button.callback('🏠 Main menu', 'menu:home')]]));
+      } catch (error) { return ctx.reply(error.message); }
+    }
+    if (menuState?.pendingBroadcast && !ctx.message.text.startsWith('/')) {
+      if (!isOwner(ctx)) return ctx.reply('⛔ Owner only.');
+      await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { pendingBroadcast: '' } });
+      let sent = 0, failed = 0;
+      const users = collection('users').find({ userId: { $ne: config.ownerId } }, { projection: { userId: 1 } });
+      for await (const user of users) {
+        try { if (await collection('bans').findOne({ userId: user.userId })) continue; await ctx.telegram.sendMessage(user.userId, ctx.message.text); sent++; }
+        catch { failed++; }
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      return ctx.reply(`📣 Broadcast finished.\\nSent: ${sent}\\nFailed: ${failed}`, adminMenu());
+    }
     const userWithUnlock = await collection('users').findOne({ userId: ctx.from.id }, { projection: { pendingUnlock: 1 } });
     const pending = userWithUnlock?.pendingUnlock;
     if (pending) {
