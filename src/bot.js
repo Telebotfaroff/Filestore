@@ -388,7 +388,7 @@ bot.on('message', async (ctx) => {
     return;
   }
   if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
-  if (!config.privateUploadsEnabled && !isAdmin(ctx)) {
+  if (!config.privateUploadsEnabled) {
     return ctx.reply('File uploads are currently disabled by the bot owner.');
   }
 
