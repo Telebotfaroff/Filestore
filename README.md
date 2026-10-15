@@ -5,7 +5,7 @@ A **single-bot** Telegram file store. Files are copied to a private Telegram sto
 ## Features implemented
 
 - Permanent single-file and multi-file batch links
-- Admin `/post` wizard: thumbnail → title → video → free or Telegram Stars price → configured channel
+- Admin `/post` wizard: thumbnail → title → one or more videos → free or Telegram Stars price → configured channel
 - Admin `/channels` manager to add/remove posting channels (the bot must be a channel administrator)
 - Channel posts use the thumbnail, title, and an inline button linking to a free or paid video post
 - Password-protected links using salted scrypt hashes
@@ -64,7 +64,7 @@ Use `/fsub` or **Admin panel → Force subscription** to enable or disable the g
 
 ## Channel posts and paid video access
 
-Admins use `/post` and follow the prompts to send a thumbnail, title, and video, then choose Free or Paid. Paid posts ask for a Telegram Stars amount (for example, `5`). The bot stores the video in the private storage channel and publishes the thumbnail, title, and a button linking to the bot. Users must pay the configured Stars amount before the bot delivers a paid video; successful payments are recorded and access is granted per user. Use `/channels` to manage the channels available in the posting menu. The bot must be an administrator in every configured posting channel and in `DB_CHANNEL_ID`.
+Admins use `/post` and follow the prompts to send a thumbnail and title, then send one or more videos. After each video is saved, choose **Add another video** or **Finish videos**. Then choose Free or Paid; paid posts ask for a Telegram Stars amount (for example, `5`). The bot stores every video in the private storage channel and publishes one thumbnail/title post with a single button linking to the bot. Opening the link delivers all videos in that post; for paid posts, users pay once to unlock the complete set. Successful payments are recorded and access is granted per user. Use `/channels` to manage the channels available in the posting menu. The bot must be an administrator in every configured posting channel and in `DB_CHANNEL_ID`.
 
 ## Owner commands
 
