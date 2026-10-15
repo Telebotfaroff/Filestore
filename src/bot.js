@@ -377,7 +377,7 @@ bot.action('fsub:add', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   if (!isAdmin(ctx)) return ctx.reply('⛔ Only admins can manage force subscription.');
   await collection('users').updateOne({ userId: ctx.from.id }, { $set: { pendingForceSubAdd: true }, $unset: { pendingChannelAdd: '' } });
-  return ctx.reply('Send a public channel @username, or a private channel as: -1001234567890 | https://t.me/+inviteLink\\n\\nThe bot must already be an administrator there. For private channels, include an invite link. /cancel aborts.');
+  return ctx.reply('Send the channel @username or numeric channel ID. I will automatically generate an invite link because the bot is an administrator there. Make sure the bot has permission to invite users. /cancel aborts.');
 });
 
 bot.action(/^fsub:remove:(.+)$/, async (ctx) => {
@@ -790,7 +790,7 @@ bot.on('message', async (ctx) => {
 
   if (workflowUser?.pendingForceSubAdd && ctx.message.text && !ctx.message.text.startsWith('/')) {
     if (!isAdmin(ctx)) return ctx.reply('⛔ Only admins can manage force subscription.');
-    const [rawChatPart, rawUrlPart = ''] = ctx.message.text.split('|').map((part) => part.trim());
+    const rawChatPart = ctx.message.text.trim();
     const requestedChat = /^-?\d+$/.test(rawChatPart) ? Number(rawChatPart) : rawChatPart;
     try {
       const chat = await ctx.telegram.getChat(requestedChat);
@@ -805,19 +805,21 @@ bot.on('message', async (ctx) => {
         await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { pendingForceSubAdd: '' } });
         return ctx.reply('That channel is already in the required-membership list.', forceSubKeyboard(data));
       }
-      const publicUrl = chat.username ? `https://t.me/${chat.username}` : '';
-      const suppliedUrl = rawUrlPart.replace(/[<>]/g, '');
-      if (suppliedUrl && (!suppliedUrl.startsWith('https://t.me/') || suppliedUrl.length > 500)) {
-        return ctx.reply('Please provide a valid Telegram invite URL (https://t.me/+...).');
-      }
-      if (!publicUrl && !suppliedUrl) {
-        return ctx.reply('This channel is private. Send it again with its invite URL, like: -1001234567890 | https://t.me/+inviteLink');
+      let inviteLink;
+      try {
+        const invite = await ctx.telegram.createChatInviteLink(chat.id, {
+          name: 'Filestore Force Sub',
+        });
+        inviteLink = invite.invite_link;
+      } catch (error) {
+        console.error('[fsub] Could not generate invite link:', error.message);
+        return ctx.reply('❌ I could not generate an invite link. Confirm the bot has permission to invite users in that channel, then try again.');
       }
       const record = {
         chatId: chat.id,
         title: chat.title || chat.username || String(chat.id),
         username: chat.username || null,
-        url: publicUrl || suppliedUrl,
+        url: inviteLink,
         addedAt: now(),
         addedBy: ctx.from.id,
       };
