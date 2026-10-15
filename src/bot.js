@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'node:crypto';
 import { Telegraf, Markup } from 'telegraf';
 import { config } from './config.js';
 import { collection, runInTransaction } from './database.js';
@@ -430,6 +431,34 @@ bot.action(/^admin:expiry:(0|3600|86400|604800)$/, async (ctx) => {
   return ctx.reply(seconds ? `🧹 Auto-delete set to ${seconds} seconds for new links.` : '🧹 Auto-delete disabled for new links.', adminMenu());
 });
 
+
+
+
+bot.command('adminlink', async (ctx) => {
+  if (ctx.chat?.type !== 'private' || !isOwner(ctx)) {
+    return ctx.reply('⛔ Only the owner can request an admin dashboard link in a private chat.');
+  }
+  try {
+    const token = randomBytes(32).toString('base64url');
+    const createdAt = now();
+    const expiresAt = new Date(createdAt.getTime() + 5 * 60 * 1000);
+    await collection('adminAccessLinks').deleteMany({ userId: ctx.from.id, redeemedAt: { $exists: false } });
+    await collection('adminAccessLinks').insertOne({
+      tokenHash: createHash('sha256').update(token).digest('hex'),
+      userId: ctx.from.id,
+      createdAt,
+      expiresAt,
+    });
+    const link = 'https://filestore-ozsv.onrender.com/admin/access/' + token;
+    await ctx.reply(
+      '🔐 Your one-time admin dashboard link (expires in 5 minutes):\\n\\n' + link + '\\n\\nKeep this link private. Opening it signs you in and immediately invalidates it.',
+      { disable_web_page_preview: true },
+    );
+  } catch (error) {
+    console.error('[adminlink] Could not create access link:', error.message);
+    return ctx.reply('❌ Could not create an admin link right now. Please try again.');
+  }
+});
 
 
 bot.start(async (ctx) => {
