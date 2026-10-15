@@ -104,6 +104,11 @@ function requireSameOrigin(req, res, next) {
   return next();
 }
 
+async function writeAuditEvent(event) {
+  try { await collection('adminAuditLogs').insertOne({ ...event, createdAt: new Date() }); }
+  catch (error) { console.error('[admin] Audit log write failed:', error.message); }
+}
+
 export function registerAdminRoutes(app, bot) {
   app.get('/admin', (_req, res) => res.sendFile(pagePath));
   app.get('/admin/', (_req, res) => res.sendFile(pagePath));
