@@ -5,6 +5,9 @@ A **single-bot** Telegram file store. Files are copied to a private Telegram sto
 ## Features implemented
 
 - Permanent single-file and multi-file batch links
+- Admin `/post` wizard: thumbnail → title → video → free or Telegram Stars price → configured channel
+- Admin `/channels` manager to add/remove posting channels (the bot must be a channel administrator)
+- Channel posts use the thumbnail, title, and an inline button linking to a free or paid video post
 - Password-protected links using salted scrypt hashes
 - Optional force subscription
 - Optional auto-delete for new uploads, with a persisted expiry worker
@@ -51,6 +54,12 @@ Requires Node.js 20.11 or newer.
 - `/setpassword PASSWORD` — protect the next single-file link or current batch link
 - `/clearpassword` — clear a pending password
 - `/premium` — purchase the configured premium plan using Telegram Stars
+- `/post` — create a thumbnail/title/video post and publish it to a configured channel as free or Stars-paid
+- `/channels` — add or remove channels where the bot can publish posts
+
+## Channel posts and paid video access
+
+Admins use `/post` and follow the prompts to send a thumbnail, title, and video, then choose Free or Paid. Paid posts ask for a Telegram Stars amount (for example, `5`). The bot stores the video in the private storage channel and publishes the thumbnail, title, and a button linking to the bot. Users must pay the configured Stars amount before the bot delivers a paid video; successful payments are recorded and access is granted per user. Use `/channels` to manage the channels available in the posting menu. The bot must be an administrator in every configured posting channel and in `DB_CHANNEL_ID`.
 
 ## Owner commands
 
