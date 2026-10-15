@@ -110,10 +110,25 @@
     return date.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
   };
   async function api(url, options = {}) {
-    const response = await fetch(url, {credentials:'same-origin', ...options, headers:{'Content-Type':'application/json', ...(options.headers || {})}});
-    const data = await response.json().catch(() => ({}));
+    const response = await fetch(url, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      ...options,
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...(options.headers || {}) }
+    });
+    const contentType = response.headers.get('content-type') || '';
+    const data = contentType.includes('application/json')
+      ? await response.json().catch(() => ({}))
+      : {};
     if (!response.ok) {
-      const error = new Error(data.error || 'request_failed');
+      const code = data.error || ('http_' + response.status);
+      const error = new Error(code + ' (HTTP ' + response.status + ')');
+      error.status = response.status;
+      error.code = code;
+      throw error;
+    }
+    if (!contentType.includes('application/json')) {
+      const error = new Error('invalid_server_response (expected JSON from ' + url + ')');
       error.status = response.status;
       throw error;
     }
@@ -182,11 +197,11 @@
     tbody.innerHTML = payments.map(payment => '<tr><td><div class="user-main">ID '+escapeHtml(payment.userId)+'</div><div class="user-sub">Telegram Stars</div></td><td><strong>'+escapeHtml(formatNumber(payment.totalAmount))+' ⭐</strong></td><td>'+escapeHtml(formatDate(payment.createdAt))+'</td></tr>').join('');
   }
   async function loadDashboard() {
-    const data = await api('/admin/api/overview');
-    login.classList.add('hidden');
-    app.classList.remove('hidden');
+    // Authenticate first so a statistics/API failure does not incorrectly look like a failed login.
     const me = await api('/admin/api/me');
     currentAdmin = me.user;
+    login.classList.add('hidden');
+    app.classList.remove('hidden');
     const name = me.user.firstName || me.user.username || 'Admin';
     document.getElementById('welcomeName').textContent = name;
     document.getElementById('profileName').textContent = [me.user.firstName,me.user.lastName].filter(Boolean).join(' ') || me.user.username || 'Admin';
@@ -195,9 +210,18 @@
     if (me.user.photoUrl) { avatar.src = me.user.photoUrl; avatar.classList.remove('hidden'); document.getElementById('avatarFallback').classList.add('hidden'); }
     else { avatar.classList.add('hidden'); document.getElementById('avatarFallback').classList.remove('hidden'); }
     document.getElementById('today').textContent = new Date().toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric',year:'numeric'});
-    renderStats(data.stats);
-    renderUsers(data.recentUsers || []);
-    renderPayments(data.recentPayments || []);
+    try {
+      const data = await api('/admin/api/overview');
+      renderStats(data.stats || {});
+      renderUsers(data.recentUsers || []);
+      renderPayments(data.recentPayments || []);
+      document.getElementById('pageError').textContent = '';
+    } catch (error) {
+      document.getElementById('stats').innerHTML = '<div class="notice"><div><strong>Overview data could not load.</strong><br>' + escapeHtml(error.message) + '</div></div>';
+      document.getElementById('recentUsers').innerHTML = '<tr><td colspan="3" class="empty">Overview unavailable: ' + escapeHtml(error.message) + '</td></tr>';
+      document.getElementById('recentPayments').innerHTML = '<tr><td colspan="3" class="empty">Overview unavailable.</td></tr>';
+      document.getElementById('pageError').textContent = 'Check the API error above, then review the Render logs if it is a server error.';
+    }
   }
   document.getElementById('logout').addEventListener('click', async () => {
     try { await api('/admin/api/logout',{method:'POST',body:'{}'}); } catch {}
@@ -334,7 +358,7 @@
       }));
     } catch(error) {
       const panel = document.querySelector('.manage-panel');
-      if (panel) panel.innerHTML = '<div class="empty">Could not load records. '+escapeHtml(error.message)+'</div>';
+      if (panel) panel.innerHTML = '<div class="empty">Could not load records. '+escapeHtml(error.message)+(error.status===401?' — refresh this page and sign in again.':'')+'</div>';
     }
   }
 
