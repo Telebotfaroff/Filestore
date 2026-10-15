@@ -33,6 +33,8 @@ export async function connectDatabase() {
     database.collection('adminSessions').createIndex({ tokenHash: 1 }, { unique: true }),
     database.collection('adminSessions').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
     database.collection('adminSessions').createIndex({ userId: 1, expiresAt: -1 }),
+    database.collection('adminAuditLogs').createIndex({ createdAt: -1 }),
+    database.collection('adminAuditLogs').createIndex({ actorId: 1, createdAt: -1 }),
   ]);
 
   console.info(`[database] Connected to MongoDB database "${config.mongoDbName}"`);
