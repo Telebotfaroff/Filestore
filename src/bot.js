@@ -29,6 +29,7 @@ function adminMenu() {
   return Markup.inlineKeyboard([
     [Markup.button.callback('📊 Statistics', 'admin:stats'), Markup.button.callback('🧹 Auto-delete', 'admin:auto')],
     [Markup.button.callback('📣 Broadcast', 'admin:broadcast')],
+    [Markup.button.callback('🔒 Force subscription', 'fsub:manage')],
     [Markup.button.callback('🏠 Main menu', 'menu:home')],
   ]);
 }
@@ -130,27 +131,81 @@ async function registerUser(ctx) {
   );
 }
 
-async function isSubscribed(ctx) {
-  if (!config.forceSubChannel || isOwner(ctx)) return true;
-  try {
-    const member = await ctx.telegram.getChatMember(config.forceSubChannel, ctx.from.id);
-    return ['creator', 'administrator', 'member'].includes(member.status) ||
-      (member.status === 'restricted' && member.is_member === true);
-  } catch (error) {
-    console.error('[fsub] Could not check membership:', error.message);
-    return false;
+async function getForceSubConfig() {
+  const saved = await collection('settings').findOne({ key: 'forceSubConfig' });
+  if (saved) return { enabled: saved.enabled === true, channels: Array.isArray(saved.channels) ? saved.channels : [] };
+  const legacy = config.forceSubChannel;
+  return {
+    enabled: Boolean(legacy),
+    channels: legacy ? [{
+      chatId: /^-?\\d+$/.test(legacy) ? Number(legacy) : legacy,
+      title: legacy,
+      username: legacy.startsWith('@') ? legacy.slice(1) : null,
+      url: config.forceSubUrl || (legacy.startsWith('@') ? `https://t.me/${legacy.slice(1)}` : ''),
+    }] : [],
+  };
+}
+
+async function saveForceSubConfig(data, userId) {
+  await collection('settings').updateOne(
+    { key: 'forceSubConfig' },
+    { $set: { key: 'forceSubConfig', enabled: Boolean(data.enabled), channels: data.channels || [], updatedAt: now(), updatedBy: userId } },
+    { upsert: true },
+  );
+}
+
+function forceSubKeyboard(data) {
+  const rows = [[Markup.button.callback(data.enabled ? '🟢 Enabled — turn off' : '⚪ Disabled — turn on', 'fsub:toggle')]];
+  rows.push([Markup.button.callback('➕ Add required channel', 'fsub:add')]);
+  for (const channel of data.channels) {
+    rows.push([Markup.button.callback('❌ Remove ' + String(channel.title || channel.username || channel.chatId).slice(0, 30), 'fsub:remove:' + encodeURIComponent(String(channel.chatId)))]);
   }
+  rows.push([Markup.button.callback('↩ Admin panel', 'menu:admin')]);
+  return Markup.inlineKeyboard(rows);
+}
+
+async function showForceSubSettings(ctx) {
+  const data = await getForceSubConfig();
+  const status = data.enabled ? 'ON' : 'OFF';
+  const list = data.channels.length
+    ? data.channels.map((channel, index) => `${index + 1}. ${channel.title || channel.username || channel.chatId}${channel.url ? ' — ' + channel.url : ''}`).join('\\n')
+    : 'No required channels configured.';
+  return ctx.reply(`🔒 Force subscription: ${status}\\n\\nUsers must join every listed channel before using the bot.\\n\\n${list}\\n\\nThe bot must be an administrator in every required channel.`, forceSubKeyboard(data));
+}
+
+async function isSubscribed(ctx) {
+  if (!ctx.from || isAdmin(ctx)) return true;
+  const data = await getForceSubConfig();
+  if (!data.enabled || !data.channels.length) return true;
+  for (const channel of data.channels) {
+    try {
+      const member = await ctx.telegram.getChatMember(channel.chatId, ctx.from.id);
+      const joined = ['creator', 'administrator', 'member'].includes(member.status) ||
+        (member.status === 'restricted' && member.is_member === true);
+      if (!joined) return false;
+    } catch (error) {
+      console.error('[fsub] Could not check membership for', channel.chatId, error.message);
+      return false;
+    }
+  }
+  return true;
 }
 
 async function showJoinPrompt(ctx) {
-  const joinUrl = config.forceSubUrl ||
-    (config.forceSubChannel.startsWith('@') ? `https://t.me/${config.forceSubChannel.slice(1)}` : '');
+  const data = await getForceSubConfig();
   const rows = [];
-  if (joinUrl) rows.push([Markup.button.url('📢 Join channel', joinUrl)]);
+  for (const channel of data.channels) {
+    const url = channel.url || (channel.username ? `https://t.me/${String(channel.username).replace(/^@/, '')}` : '');
+    if (url) rows.push([Markup.button.url('📢 Join ' + String(channel.title || channel.username || channel.chatId).slice(0, 28), url)]);
+  }
   rows.push([Markup.button.callback('✅ I have joined — check again', 'check_sub')]);
-  const message = 'To use this bot, please join the required channel first.';
-  if (ctx.callbackQuery) await ctx.answerCbQuery('Please join the channel first.', { show_alert: true }).catch(() => {});
-  else await ctx.reply(message, Markup.inlineKeyboard(rows));
+  const message = '🔒 To use this bot, join every required channel below, then tap “I have joined — check again”.';
+  if (ctx.callbackQuery) {
+    await ctx.answerCbQuery('Please join all required channels first.', { show_alert: true }).catch(() => {});
+    await ctx.editMessageText(message, Markup.inlineKeyboard(rows)).catch(() => ctx.reply(message, Markup.inlineKeyboard(rows)));
+  } else {
+    await ctx.reply(message, Markup.inlineKeyboard(rows));
+  }
 }
 
 async function guardUser(ctx, next) {
@@ -297,6 +352,45 @@ bot.start(async (ctx) => {
   return sendPost(ctx, parsed.tokenHash);
 });
 
+bot.command('fsub', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.reply('⛔ Only admins can manage force subscription.');
+  if (ctx.chat.type !== 'private') return ctx.reply('Please manage force subscription in a private chat.');
+  return showForceSubSettings(ctx);
+});
+
+bot.action('fsub:manage', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isAdmin(ctx)) return ctx.reply('⛔ Only admins can manage force subscription.');
+  return showForceSubSettings(ctx);
+});
+
+bot.action('fsub:toggle', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isAdmin(ctx)) return ctx.reply('⛔ Only admins can manage force subscription.');
+  const data = await getForceSubConfig();
+  data.enabled = !data.enabled;
+  await saveForceSubConfig(data, ctx.from.id);
+  return showForceSubSettings(ctx);
+});
+
+bot.action('fsub:add', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isAdmin(ctx)) return ctx.reply('⛔ Only admins can manage force subscription.');
+  await collection('users').updateOne({ userId: ctx.from.id }, { $set: { pendingForceSubAdd: true }, $unset: { pendingChannelAdd: '' } });
+  return ctx.reply('Send a public channel @username, or a private channel as: -1001234567890 | https://t.me/+inviteLink\\n\\nThe bot must already be an administrator there. For private channels, include an invite link. /cancel aborts.');
+});
+
+bot.action(/^fsub:remove:(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isAdmin(ctx)) return ctx.reply('⛔ Only admins can manage force subscription.');
+  let chatId;
+  try { chatId = decodeURIComponent(ctx.match[1]); } catch { return ctx.reply('Invalid channel selection.'); }
+  const data = await getForceSubConfig();
+  data.channels = data.channels.filter((channel) => String(channel.chatId) !== chatId);
+  await saveForceSubConfig(data, ctx.from.id);
+  return showForceSubSettings(ctx);
+});
+
 bot.action('check_sub', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   if (await isSubscribed(ctx)) {
@@ -308,7 +402,7 @@ bot.action('check_sub', async (ctx) => {
 
 bot.command('help', async (ctx) => {
   const text = '📚 Filestore help\\n\\n/start — interactive menu or open a share link\\n/premium — buy premium with Stars\\n/help — show help\\n' +
-    (isAdmin(ctx) ? '/batch — start batch\\n/done — finish batch\\n/cancel — cancel current action\\n/setpassword PASSWORD — protect next link\\n/clearpassword — clear password\\n/post — publish a free or paid video post\\n/channels — manage posting channels\\n' : '') +
+    (isAdmin(ctx) ? '/batch — start batch\\n/done — finish batch\\n/cancel — cancel current action\\n/setpassword PASSWORD — protect next link\\n/clearpassword — clear password\\n/post — publish a free or paid video post\\n/channels — manage posting channels\\n/fsub — manage required membership channels\\n' : '') +
     (isOwner(ctx) ? '/stats — statistics\\n/autodelete SECONDS — expiry setting\\n/broadcast MESSAGE — broadcast\\n' : '') +
     '\\nUse the buttons for guided actions.';
   return ctx.reply(text, mainMenu(ctx));
@@ -530,7 +624,7 @@ bot.command('cancel', async (ctx) => {
   }
   await collection('users').updateOne(
     { userId: ctx.from.id },
-    { $unset: { batchDraft: '', batchStartedAt: '', pendingPasswordPrompt: '', pendingBroadcast: '', pendingChannelAdd: '', postDraft: '' } },
+    { $unset: { batchDraft: '', batchStartedAt: '', pendingPasswordPrompt: '', pendingBroadcast: '', pendingChannelAdd: '', pendingForceSubAdd: '', postDraft: '' } },
   );
   return ctx.reply('🛑 Current action cancelled.');
 });
@@ -691,8 +785,51 @@ bot.on('message', async (ctx) => {
 
   const workflowUser = await collection('users').findOne(
     { userId: ctx.from.id },
-    { projection: { postDraft: 1, pendingChannelAdd: 1 } },
+    { projection: { postDraft: 1, pendingChannelAdd: 1, pendingForceSubAdd: 1 } },
   );
+
+  if (workflowUser?.pendingForceSubAdd && ctx.message.text && !ctx.message.text.startsWith('/')) {
+    if (!isAdmin(ctx)) return ctx.reply('⛔ Only admins can manage force subscription.');
+    const [rawChatPart, rawUrlPart = ''] = ctx.message.text.split('|').map((part) => part.trim());
+    const requestedChat = /^-?\\d+$/.test(rawChatPart) ? Number(rawChatPart) : rawChatPart;
+    try {
+      const chat = await ctx.telegram.getChat(requestedChat);
+      if (chat.type !== 'channel') return ctx.reply('That is not a Telegram channel. Send @username or a channel ID, optionally followed by | invite URL.');
+      const me = await ctx.telegram.getMe();
+      const botMember = await ctx.telegram.getChatMember(chat.id, me.id);
+      if (!['administrator', 'creator'].includes(botMember.status)) {
+        return ctx.reply('❌ The bot is not an administrator in that channel. Promote it, then try again.');
+      }
+      const data = await getForceSubConfig();
+      if (data.channels.some((channel) => String(channel.chatId) === String(chat.id))) {
+        await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { pendingForceSubAdd: '' } });
+        return ctx.reply('That channel is already in the required-membership list.', forceSubKeyboard(data));
+      }
+      const publicUrl = chat.username ? `https://t.me/${chat.username}` : '';
+      const suppliedUrl = rawUrlPart.replace(/[<>]/g, '');
+      if (suppliedUrl && !/^https:\\/\\/t\\.me\\/(?:\\+|joinchat\\/|[A-Za-z0-9_]+)/i.test(suppliedUrl)) {
+        return ctx.reply('Please provide a valid Telegram invite URL (https://t.me/+...).');
+      }
+      if (!publicUrl && !suppliedUrl) {
+        return ctx.reply('This channel is private. Send it again with its invite URL, like: -1001234567890 | https://t.me/+inviteLink');
+      }
+      const record = {
+        chatId: chat.id,
+        title: chat.title || chat.username || String(chat.id),
+        username: chat.username || null,
+        url: publicUrl || suppliedUrl,
+        addedAt: now(),
+        addedBy: ctx.from.id,
+      };
+      data.channels.push(record);
+      await saveForceSubConfig(data, ctx.from.id);
+      await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { pendingForceSubAdd: '' } });
+      return ctx.reply('✅ Required channel added: ' + record.title + '\\nForce subscription is currently ' + (data.enabled ? 'ON' : 'OFF') + '.', forceSubKeyboard(data));
+    } catch (error) {
+      console.error('[fsub] Channel validation failed:', error.message);
+      return ctx.reply('❌ Could not access that channel. Check the ID or @username and confirm the bot is an administrator.');
+    }
+  }
 
   if (workflowUser?.pendingChannelAdd && ctx.message.text && !ctx.message.text.startsWith('/')) {
     if (!isAdmin(ctx)) return ctx.reply('⛔ Only admins can manage posting channels.');
