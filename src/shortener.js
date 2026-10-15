@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { collection } from './database.js';
+import { collection, runInTransaction } from './database.js';
 import { config } from './config.js';
 
 const now = () => new Date();
@@ -51,15 +51,18 @@ export async function acceptShortenerCallback(sessionId, signature, verifySignat
   });
   if (!session) return false;
 
-  const result = await collection('verificationSessions').updateOne(
-    { _id: session._id, status: 'pending', expiresAt: { $gt: now() } },
-    { $set: { status: 'completed', completedAt: now() } },
-  );
-  if (!result.modifiedCount) return false;
-
-  await collection('users').updateOne(
-    { userId: session.userId },
-    { $set: { verifiedUntil: new Date(Date.now() + SIX_HOURS_MS) } },
-  );
-  return true;
+  return runInTransaction(async (transactionSession) => {
+    const result = await collection('verificationSessions').updateOne(
+      { _id: session._id, status: 'pending', expiresAt: { $gt: now() } },
+      { $set: { status: 'completed', completedAt: now() } },
+      { session: transactionSession },
+    );
+    if (!result.modifiedCount) return false;
+    await collection('users').updateOne(
+      { userId: session.userId },
+      { $set: { verifiedUntil: new Date(Date.now() + SIX_HOURS_MS) } },
+      { upsert: true, session: transactionSession },
+    );
+    return true;
+  });
 }
