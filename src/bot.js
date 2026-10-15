@@ -186,7 +186,7 @@ async function sendPostVideos(ctx, post) {
   let sent = 0;
   for (const tokenHash of hashes) {
     const file = await collection('files').findOne({ tokenHash });
-    if (!file) continue;
+    if (!file || file.revokedAt || (file.expiresAt && file.expiresAt <= now())) continue;
     try {
       await ctx.telegram.copyMessage(ctx.chat.id, config.dbChannelId, file.storageMessageId);
       await collection('files').updateOne({ _id: file._id }, { $inc: { downloads: 1 }, $set: { lastAccessedAt: now() } });
@@ -203,7 +203,7 @@ async function sendPostVideos(ctx, post) {
 
 async function sendPost(ctx, tokenHash) {
   const post = await collection('posts').findOne({ tokenHash });
-  if (!post) return ctx.reply('❌ This post link is invalid or no longer available.');
+  if (!post || post.revokedAt) return ctx.reply('❌ This post link is invalid, revoked, or no longer available.');
   if (post.stars > 0 && !(post.paidUsers || []).includes(ctx.from.id)) {
     return ctx.replyWithInvoice({
       title: ('🔒 ' + post.title).slice(0, 32),
@@ -756,7 +756,7 @@ bot.on('pre_checkout_query', async (ctx) => {
   if (query.invoice_payload.startsWith('post_')) {
     const postHash = query.invoice_payload.slice(5);
     const post = /^[a-f0-9]{64}$/i.test(postHash) ? await collection('posts').findOne({ tokenHash: postHash }) : null;
-    if (!post || post.stars < 1 || (post.paidUsers || []).includes(query.from.id) || query.currency !== 'XTR' || query.total_amount !== post.stars) {
+    if (!post || post.revokedAt || post.stars < 1 || (post.paidUsers || []).includes(query.from.id) || query.currency !== 'XTR' || query.total_amount !== post.stars) {
       return ctx.answerPreCheckoutQuery(false, 'This paid-post invoice is invalid or expired.');
     }
     return ctx.answerPreCheckoutQuery(true);
@@ -879,7 +879,7 @@ bot.on('message', async (ctx) => {
       try {
         await runInTransaction(async (session) => {
           const currentPost = await collection('posts').findOne({ tokenHash: postHash }, { session });
-          if (!currentPost || currentPost.stars !== payment.total_amount) throw new Error('Paid post is no longer valid.');
+          if (!currentPost || currentPost.revokedAt || currentPost.stars !== payment.total_amount) throw new Error('Paid post is no longer valid.');
           await collection('payments').insertOne({
             telegramPaymentChargeId: chargeId, providerPaymentChargeId: payment.provider_payment_charge_id || null,
             userId: ctx.from.id, currency: payment.currency, totalAmount: payment.total_amount,
@@ -1247,7 +1247,7 @@ bot.on('message', async (ctx) => {
 
 async function sendSingleFile(ctx, tokenHash, options = {}) {
   const file = await collection('files').findOne({ tokenHash });
-  if (!file) return ctx.reply('❌ This link is invalid or the file is no longer available.');
+  if (!file || file.revokedAt) return ctx.reply('❌ This link is invalid, revoked, or the file is no longer available.');
   if (file.expiresAt && file.expiresAt <= now()) return ctx.reply('⌛ This file link has expired.');
   if (file.passwordHash && !options.unlocked) {
     const failure = await collection('passwordAttempts').findOne({ userId: ctx.from.id, tokenHash });
@@ -1269,7 +1269,7 @@ async function sendSingleFile(ctx, tokenHash, options = {}) {
 
 async function sendBatch(ctx, tokenHash, options = {}) {
   const batch = await collection('batches').findOne({ tokenHash });
-  if (!batch) return ctx.reply('❌ This batch link is invalid or no longer available.');
+  if (!batch || batch.revokedAt) return ctx.reply('❌ This batch link is invalid, revoked, or no longer available.');
   if (batch.expiresAt && batch.expiresAt <= now()) return ctx.reply('⌛ This batch link has expired.');
   if (batch.passwordHash && !options.unlocked) {
     const failure = await collection('passwordAttempts').findOne({ userId: ctx.from.id, tokenHash });
