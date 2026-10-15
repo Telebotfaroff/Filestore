@@ -10,7 +10,7 @@ export function hashToken(token) {
 }
 
 export function parsePayload(payload = '') {
-  const match = /^(F|B)_([A-Za-z0-9_-]{20,80})$/.exec(payload);
+  const match = /^(F|B|P)_([A-Za-z0-9_-]{20,80})$/.exec(payload);
   if (!match) return null;
   return { type: match[1], token: match[2], tokenHash: hashToken(match[2]) };
 }
