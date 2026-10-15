@@ -97,13 +97,36 @@ async function promptPostChannels(ctx) {
   return ctx.reply('📢 Choose which configured channel should receive this post:', postChannelsKeyboard(channels));
 }
 
+async function sendPostVideos(ctx, post) {
+  const hashes = Array.isArray(post.fileTokenHashes) && post.fileTokenHashes.length
+    ? post.fileTokenHashes
+    : (post.fileTokenHash ? [post.fileTokenHash] : []);
+  if (!hashes.length) return ctx.reply('❌ This post has no videos available.');
+  let sent = 0;
+  for (const tokenHash of hashes) {
+    const file = await collection('files').findOne({ tokenHash });
+    if (!file) continue;
+    try {
+      await ctx.telegram.copyMessage(ctx.chat.id, config.dbChannelId, file.storageMessageId);
+      await collection('files').updateOne({ _id: file._id }, { $inc: { downloads: 1 }, $set: { lastAccessedAt: now() } });
+      sent++;
+    } catch (error) {
+      console.error('[post] Video delivery failed:', error.message);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  }
+  if (!sent) return ctx.reply('❌ None of the videos in this post could be retrieved.');
+  if (sent < hashes.length) return ctx.reply(`⚠️ Delivered ${sent} of ${hashes.length} videos. Some files may have been removed.`);
+  if (hashes.length > 1) return ctx.reply(`✅ Delivered all ${sent} videos.`);
+}
+
 async function sendPost(ctx, tokenHash) {
   const post = await collection('posts').findOne({ tokenHash });
   if (!post) return ctx.reply('❌ This post link is invalid or no longer available.');
   if (post.stars > 0 && !(post.paidUsers || []).includes(ctx.from.id)) {
     return ctx.replyWithInvoice(
       '🔒 ' + post.title.slice(0, 120),
-      'Pay ' + post.stars + ' Telegram Stars to unlock this video.',
+      'Pay ' + post.stars + ' Telegram Stars to unlock all videos in this post.',
       'post_' + post.tokenHash,
       '',
       'XTR',
@@ -111,7 +134,7 @@ async function sendPost(ctx, tokenHash) {
       { start_parameter: 'post', provider_token: '' },
     );
   }
-  return sendSingleFile(ctx, post.fileTokenHash);
+  return sendPostVideos(ctx, post);
 }
 
 async function registerUser(ctx) {
@@ -237,12 +260,13 @@ bot.action('menu:post', async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
   if (ctx.chat?.type !== 'private') return ctx.reply('Please create posts in a private chat with me.');
   const user = await collection('users').findOne({ userId: ctx.from.id }, { projection: { postDraft: 1 } });
-  if (user?.postDraft?.storageMessageId) {
-    await ctx.telegram.deleteMessage(config.dbChannelId, user.postDraft.storageMessageId).catch(() => {});
+  for (const video of (user?.postDraft?.videoFiles || [])) {
+    if (video.storageMessageId) await ctx.telegram.deleteMessage(config.dbChannelId, video.storageMessageId).catch(() => {});
   }
+  if (user?.postDraft?.storageMessageId) await ctx.telegram.deleteMessage(config.dbChannelId, user.postDraft.storageMessageId).catch(() => {});
   await collection('users').updateOne(
     { userId: ctx.from.id },
-    { $set: { postDraft: { step: 'thumbnail', createdAt: now() } }, $unset: { batchDraft: '', batchStartedAt: '' } },
+    { $set: { postDraft: { step: 'thumbnail', videoFiles: [], createdAt: now() } }, $unset: { batchDraft: '', batchStartedAt: '' } },
   );
   return ctx.reply('🖼 Step 1/3: Send the thumbnail image for your post. Use /cancel to stop.');
 });
@@ -451,9 +475,13 @@ bot.command('autodelete', async (ctx) => {
 bot.command('post', async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
   if (ctx.chat.type !== 'private') return ctx.reply('Please create posts in a private chat with me.');
+  const oldDraft = await collection('users').findOne({ userId: ctx.from.id }, { projection: { postDraft: 1 } });
+  for (const video of (oldDraft?.postDraft?.videoFiles || [])) {
+    if (video.storageMessageId) await ctx.telegram.deleteMessage(config.dbChannelId, video.storageMessageId).catch(() => {});
+  }
   await collection('users').updateOne(
     { userId: ctx.from.id },
-    { $set: { postDraft: { step: 'thumbnail', createdAt: now() } }, $unset: { batchDraft: '', batchStartedAt: '' } },
+    { $set: { postDraft: { step: 'thumbnail', videoFiles: [], createdAt: now() } }, $unset: { batchDraft: '', batchStartedAt: '' } },
   );
   return ctx.reply('🖼 Step 1/3: Send the thumbnail image for your post. Use /cancel to stop.');
 });
@@ -506,12 +534,35 @@ bot.action(/^post:channels:remove:(.+)$/, async (ctx) => {
   return ctx.reply('✅ Channel removed from the posting list.', Markup.inlineKeyboard([[Markup.button.callback('📢 Manage channels', 'post:channels:manage')]]));
 });
 
+bot.action('post:videos:add', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+  const user = await collection('users').findOne({ userId: ctx.from.id }, { projection: { postDraft: 1 } });
+  if (!user?.postDraft || user.postDraft.step !== 'videoChoices') return ctx.reply('This video step expired. Start again with /post.');
+  await collection('users').updateOne({ userId: ctx.from.id }, { $set: { 'postDraft.step': 'video' } });
+  return ctx.reply('🎬 Send the next video. When finished, tap Finish videos.');
+});
+
+bot.action('post:videos:done', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+  const user = await collection('users').findOne({ userId: ctx.from.id }, { projection: { postDraft: 1 } });
+  const draft = user?.postDraft;
+  if (!draft || draft.step !== 'videoChoices' || !draft.videoFiles?.length) return ctx.reply('Send at least one video first.');
+  await collection('users').updateOne({ userId: ctx.from.id }, { $set: { 'postDraft.step': 'pricing' } });
+  return ctx.reply(`✅ ${draft.videoFiles.length} video(s) ready. Choose whether this post is free or paid:`, Markup.inlineKeyboard([
+    [Markup.button.callback('🆓 Free link', 'post:pricing:free')],
+    [Markup.button.callback('⭐ Paid link', 'post:pricing:paid')],
+    [Markup.button.callback('🛑 Cancel post', 'post:cancel')],
+  ]));
+});
+
 bot.action(/^post:pricing:(free|paid)$/, async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
   if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
   const user = await collection('users').findOne({ userId: ctx.from.id });
   const draft = user?.postDraft;
-  if (!draft || draft.step !== 'pricing' || !draft.storageMessageId) return ctx.reply('This post draft expired. Start again with /post.');
+  if (!draft || draft.step !== 'pricing' || !draft.videoFiles?.length) return ctx.reply('This post draft expired. Start again with /post.');
   if (ctx.match[1] === 'free') {
     await collection('users').updateOne({ userId: ctx.from.id }, { $set: { 'postDraft.stars': 0, 'postDraft.step': 'channel' } });
     return promptPostChannels(ctx);
@@ -538,34 +589,37 @@ bot.action(/^post:channel:(.+)$/, async (ctx) => {
   try { selectedId = decodeURIComponent(ctx.match[1]); } catch { return ctx.reply('Invalid channel selection.'); }
   const user = await collection('users').findOne({ userId: ctx.from.id });
   const draft = user?.postDraft;
-  if (!draft || draft.step !== 'channel' || !draft.storageMessageId) return ctx.reply('This post draft expired. Start again with /post.');
+  if (!draft || draft.step !== 'channel' || !Array.isArray(draft.videoFiles) || !draft.videoFiles.length) return ctx.reply('This post draft expired. Start again with /post.');
   const channels = await getPostChannels();
   const channel = channels.find((item) => String(item.chatId) === selectedId);
   if (!channel) return ctx.reply('That channel is no longer configured. Please choose again.', postChannelsKeyboard(channels));
-  const fileToken = createToken();
   const postToken = createToken();
-  const fileDoc = {
-    tokenHash: fileToken.tokenHash,
-    storageMessageId: draft.storageMessageId,
-    fileType: draft.fileType || 'video',
-    fileName: draft.fileName || null,
-    mimeType: draft.mimeType || null,
-    fileSize: draft.fileSize || null,
-    ownerId: ctx.from.id,
-    passwordHash: null,
-    createdAt: now(),
-    downloads: 0,
-  };
-  const fileResult = await collection('files').insertOne(fileDoc);
+  const videoDocs = draft.videoFiles.map((video) => {
+    const token = createToken();
+    return {
+      tokenHash: token.tokenHash,
+      storageMessageId: video.storageMessageId,
+      fileType: video.fileType || 'video',
+      fileName: video.fileName || null,
+      mimeType: video.mimeType || null,
+      fileSize: video.fileSize || null,
+      ownerId: ctx.from.id,
+      passwordHash: null,
+      createdAt: now(),
+      downloads: 0,
+    };
+  });
+  const fileResult = await collection('files').insertMany(videoDocs);
   const postDoc = {
     tokenHash: postToken.tokenHash,
-    fileTokenHash: fileToken.tokenHash,
+    fileTokenHashes: videoDocs.map((video) => video.tokenHash),
     title: draft.title,
     thumbnailFileId: draft.thumbnailFileId,
     stars: Number(draft.stars || 0),
     paidUsers: [],
     channelId: channel.chatId,
     ownerId: ctx.from.id,
+    videoCount: videoDocs.length,
     createdAt: now(),
   };
   await collection('posts').insertOne(postDoc);
@@ -580,12 +634,12 @@ bot.action(/^post:channel:(.+)$/, async (ctx) => {
     await collection('posts').updateOne({ tokenHash: postToken.tokenHash }, { $set: { channelPostMessageId: published.message_id } });
     await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { postDraft: '' } });
     return ctx.reply(
-      '✅ Post published to ' + (channel.title || channel.username || channel.chatId) + '.\n\nTitle: ' + draft.title + '\nAccess: ' + (postDoc.stars > 0 ? postDoc.stars + ' Stars' : 'Free') + '\n\nLink: ' + link,
+      '✅ Post published to ' + (channel.title || channel.username || channel.chatId) + '.\n\nTitle: ' + draft.title + '\nVideos: ' + videoDocs.length + '\nAccess: ' + (postDoc.stars > 0 ? postDoc.stars + ' Stars' : 'Free') + '\n\nLink: ' + link,
       Markup.inlineKeyboard([[Markup.button.url('🔗 Open post link', link)], [Markup.button.callback('📢 Manage channels', 'post:channels:manage')]]),
     );
   } catch (error) {
     await collection('posts').deleteOne({ tokenHash: postToken.tokenHash });
-    await collection('files').deleteOne({ _id: fileResult.insertedId });
+    await collection('files').deleteMany({ _id: { $in: Object.values(fileResult.insertedIds) } });
     console.error('[post] Publish failed:', error.message);
     return ctx.reply('❌ I could not publish to that channel. Check that the bot can post photos and messages there. Your draft is still saved; choose a channel again.', postChannelsKeyboard(channels));
   }
@@ -619,9 +673,10 @@ bot.command('batch', async (ctx) => {
 
 bot.command('cancel', async (ctx) => {
   const user = await collection('users').findOne({ userId: ctx.from.id }, { projection: { postDraft: 1 } });
-  if (user?.postDraft?.storageMessageId) {
-    await ctx.telegram.deleteMessage(config.dbChannelId, user.postDraft.storageMessageId).catch(() => {});
+  for (const video of (user?.postDraft?.videoFiles || [])) {
+    if (video.storageMessageId) await ctx.telegram.deleteMessage(config.dbChannelId, video.storageMessageId).catch(() => {});
   }
+  if (user?.postDraft?.storageMessageId) await ctx.telegram.deleteMessage(config.dbChannelId, user.postDraft.storageMessageId).catch(() => {});
   await collection('users').updateOne(
     { userId: ctx.from.id },
     { $unset: { batchDraft: '', batchStartedAt: '', pendingPasswordPrompt: '', pendingBroadcast: '', pendingChannelAdd: '', pendingForceSubAdd: '', postDraft: '' } },
@@ -734,7 +789,7 @@ bot.on('message', async (ctx) => {
         if (!record) throw error;
         if (record.status === 'processed') {
           await collection('posts').updateOne({ tokenHash: postHash }, { $addToSet: { paidUsers: ctx.from.id } });
-          return sendSingleFile(ctx, post.fileTokenHash);
+          return sendPostVideos(ctx, post);
         }
       }
       await collection('posts').updateOne({ tokenHash: postHash }, { $addToSet: { paidUsers: ctx.from.id } });
@@ -742,7 +797,7 @@ bot.on('message', async (ctx) => {
         { _id: record._id, status: 'pending' },
         { $set: { status: 'processed', processedAt: now(), postTokenHash: postHash } },
       );
-      return sendSingleFile(ctx, post.fileTokenHash);
+      return sendPostVideos(ctx, post);
     }
     const expectedPayload = 'premium_' + config.starsDays + 'd_' + ctx.from.id;
     if (payment.currency !== 'XTR' || payment.total_amount !== config.starsPrice || payment.invoice_payload !== expectedPayload) {
@@ -893,34 +948,43 @@ bot.on('message', async (ctx) => {
         { userId: ctx.from.id },
         { $set: { 'postDraft.title': title, 'postDraft.step': 'video' } },
       );
-      return ctx.reply('🎬 Step 3/3: Send the video now (as a Telegram video or a video document).');
+      return ctx.reply('🎬 Step 3/3: Send the first video (as a Telegram video or a video document). You can add multiple videos to this one post.');
     }
-    if (draft.step === 'video') {
+    if (draft.step === 'video' || draft.step === 'videoChoices') {
+      if (draft.step === 'videoChoices') {
+        return ctx.reply('Choose Add another video or Finish videos below before sending another video.', Markup.inlineKeyboard([
+          [Markup.button.callback('➕ Add another video', 'post:videos:add')],
+          [Markup.button.callback('✅ Finish videos', 'post:videos:done')],
+          [Markup.button.callback('🛑 Cancel post', 'post:cancel')],
+        ]));
+      }
       const info = getFileInfo(ctx.message);
       const isVideo = info && (info.fileType === 'video' || (info.fileType === 'document' && String(info.mimeType || '').startsWith('video/')));
       if (!isVideo) return ctx.reply('🎬 Please send a video or a document with a video MIME type. Use /cancel to stop.');
       const status = await ctx.reply('📥 Saving video to the private storage channel…');
       try {
         const stored = await ctx.telegram.copyMessage(config.dbChannelId, ctx.chat.id, ctx.message.message_id);
+        const video = {
+          storageMessageId: stored.message_id,
+          fileType: info.fileType,
+          fileName: info.fileName,
+          mimeType: info.mimeType,
+          fileSize: info.fileSize,
+        };
         await collection('users').updateOne(
           { userId: ctx.from.id },
-          { $set: {
-            'postDraft.storageMessageId': stored.message_id,
-            'postDraft.fileType': info.fileType,
-            'postDraft.fileName': info.fileName,
-            'postDraft.mimeType': info.mimeType,
-            'postDraft.fileSize': info.fileSize,
-            'postDraft.step': 'pricing',
-          } },
+          { $push: { 'postDraft.videoFiles': video }, $set: { 'postDraft.step': 'videoChoices' } },
         );
+        const updated = await collection('users').findOne({ userId: ctx.from.id }, { projection: { postDraft: 1 } });
+        const count = updated?.postDraft?.videoFiles?.length || 1;
         return ctx.telegram.editMessageText(
           ctx.chat.id,
           status.message_id,
           undefined,
-          '✅ Video saved. Choose whether this post is free or paid:',
+          `✅ Video ${count} saved. Add more videos or finish to continue.`,
           { reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback('🆓 Free link', 'post:pricing:free')],
-            [Markup.button.callback('⭐ Paid link', 'post:pricing:paid')],
+            [Markup.button.callback('➕ Add another video', 'post:videos:add')],
+            [Markup.button.callback('✅ Finish videos', 'post:videos:done')],
             [Markup.button.callback('🛑 Cancel post', 'post:cancel')],
           ]).reply_markup },
         );
