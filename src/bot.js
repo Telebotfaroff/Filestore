@@ -1,6 +1,6 @@
 import { Telegraf, Markup } from 'telegraf';
 import { config } from './config.js';
-import { collection } from './database.js';
+import { collection, runInTransaction } from './database.js';
 import { createToken, parsePayload } from './utils/tokens.js';
 import { hashPassword, verifyPassword } from './security.js';
 import { getAutoDeleteSeconds } from './maintenance.js';
@@ -698,6 +698,8 @@ bot.action(/^post:channel:(.+)$/, async (ctx) => {
   const channel = channels.find((item) => String(item.chatId) === selectedId);
   if (!channel) return ctx.reply('That channel is no longer configured. Please choose again.', postChannelsKeyboard(channels));
   const postToken = createToken();
+  const me = await ctx.telegram.getMe();
+  const link = buildLink(me.username, 'P', postToken.token);
   const videoDocs = draft.videoFiles.map((video) => {
     const token = createToken();
     return {
@@ -727,8 +729,6 @@ bot.action(/^post:channel:(.+)$/, async (ctx) => {
     createdAt: now(),
   };
   await collection('posts').insertOne(postDoc);
-  const me = await ctx.telegram.getMe();
-  const link = buildLink(me.username, 'P', postToken.token);
   const buttonLabel = postDoc.stars > 0 ? '⭐ Unlock for ' + postDoc.stars + ' Stars' : '▶️ Open video';
   try {
     const published = await ctx.telegram.sendPhoto(channel.chatId, draft.thumbnailFileId, {
@@ -756,7 +756,7 @@ bot.on('pre_checkout_query', async (ctx) => {
   if (query.invoice_payload.startsWith('post_')) {
     const postHash = query.invoice_payload.slice(5);
     const post = /^[a-f0-9]{64}$/i.test(postHash) ? await collection('posts').findOne({ tokenHash: postHash }) : null;
-    if (!post || post.stars < 1 || query.currency !== 'XTR' || query.total_amount !== post.stars) {
+    if (!post || post.stars < 1 || (post.paidUsers || []).includes(query.from.id) || query.currency !== 'XTR' || query.total_amount !== post.stars) {
       return ctx.answerPreCheckoutQuery(false, 'This paid-post invoice is invalid or expired.');
     }
     return ctx.answerPreCheckoutQuery(true);
@@ -771,11 +771,13 @@ bot.on('pre_checkout_query', async (ctx) => {
 bot.command('batch', async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
   if (ctx.chat.type !== 'private') return ctx.reply('Please create batches in a private chat with me.');
+  if (ctx.chat.type !== 'private') return ctx.reply('Please create batches in a private chat with me.');
   await collection('users').updateOne({ userId: ctx.from.id }, { $set: { batchDraft: [], batchStartedAt: now() } });
   return ctx.reply('📦 Batch mode started. Send or forward the files you want to include, then use /done. Use /cancel to stop.');
 });
 
 bot.command('cancel', async (ctx) => {
+  if (ctx.chat.type !== 'private') return ctx.reply('Please cancel actions in a private chat with me.');
   const user = await collection('users').findOne({ userId: ctx.from.id }, { projection: { postDraft: 1 } });
   for (const video of (user?.postDraft?.videoFiles || [])) {
     if (video.storageMessageId) await ctx.telegram.deleteMessage(config.dbChannelId, video.storageMessageId).catch(() => {});
@@ -790,6 +792,7 @@ bot.command('cancel', async (ctx) => {
 
 bot.command('done', async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+  if (ctx.chat.type !== 'private') return ctx.reply('Please finish batches in a private chat with me.');
   const user = await collection('users').findOne({ userId: ctx.from.id });
   const ids = user?.batchDraft || [];
   if (!ids.length) {
@@ -867,80 +870,69 @@ bot.on('message', async (ctx) => {
 
   if (ctx.message.successful_payment) {
     const payment = ctx.message.successful_payment;
+    const chargeId = payment.telegram_payment_charge_id;
+    const receivedAt = now();
     if (payment.invoice_payload.startsWith('post_')) {
       const postHash = payment.invoice_payload.slice(5);
       const post = /^[a-f0-9]{64}$/i.test(postHash) ? await collection('posts').findOne({ tokenHash: postHash }) : null;
-      if (!post || post.stars < 1 || payment.currency !== 'XTR' || payment.total_amount !== post.stars) {
-        return ctx.reply('❌ Payment details did not match this paid post. Please contact the bot owner.');
-      }
-      let record;
+      if (!post || post.stars < 1 || payment.currency !== 'XTR' || payment.total_amount !== post.stars) return ctx.reply('❌ Payment details did not match this paid post. Please contact the bot owner.');
       try {
-        const inserted = await collection('payments').insertOne({
-          telegramPaymentChargeId: payment.telegram_payment_charge_id,
-          providerPaymentChargeId: payment.provider_payment_charge_id || null,
-          userId: ctx.from.id,
-          currency: payment.currency,
-          totalAmount: payment.total_amount,
-          payload: payment.invoice_payload,
-          postTokenHash: postHash,
-          status: 'pending',
-          createdAt: now(),
+        await runInTransaction(async (session) => {
+          const currentPost = await collection('posts').findOne({ tokenHash: postHash }, { session });
+          if (!currentPost || currentPost.stars !== payment.total_amount) throw new Error('Paid post is no longer valid.');
+          await collection('payments').insertOne({
+            telegramPaymentChargeId: chargeId, providerPaymentChargeId: payment.provider_payment_charge_id || null,
+            userId: ctx.from.id, currency: payment.currency, totalAmount: payment.total_amount,
+            payload: payment.invoice_payload, postTokenHash: postHash, status: 'processed',
+            createdAt: receivedAt, processedAt: receivedAt,
+          }, { session });
+          await collection('posts').updateOne({ tokenHash: postHash }, { $addToSet: { paidUsers: ctx.from.id } }, { session });
         });
-        record = await collection('payments').findOne({ _id: inserted.insertedId });
       } catch (error) {
-        if (error?.code !== 11000) throw error;
-        record = await collection('payments').findOne({ telegramPaymentChargeId: payment.telegram_payment_charge_id });
-        if (!record) throw error;
-        if (record.status === 'processed') {
-          await collection('posts').updateOne({ tokenHash: postHash }, { $addToSet: { paidUsers: ctx.from.id } });
-          return sendPostVideos(ctx, post);
+        if (error?.code === 11000) {
+          const existing = await collection('payments').findOne({ telegramPaymentChargeId: chargeId });
+          if (existing?.status === 'processed' && existing.userId === ctx.from.id && existing.payload === payment.invoice_payload) {
+            const refreshed = await collection('posts').findOne({ tokenHash: postHash });
+            if (refreshed) {
+              await collection('posts').updateOne({ tokenHash: postHash }, { $addToSet: { paidUsers: ctx.from.id } });
+              return sendPostVideos(ctx, refreshed);
+            }
+          }
+          return ctx.reply('✅ This payment has already been processed.');
         }
+        console.error('[payment] Paid-post transaction failed:', error);
+        return ctx.reply('❌ I could not confirm this payment yet. Please contact the bot owner with your Telegram payment receipt.');
       }
-      await collection('posts').updateOne({ tokenHash: postHash }, { $addToSet: { paidUsers: ctx.from.id } });
-      await collection('payments').updateOne(
-        { _id: record._id, status: 'pending' },
-        { $set: { status: 'processed', processedAt: now(), postTokenHash: postHash } },
-      );
-      return sendPostVideos(ctx, post);
+      const refreshed = await collection('posts').findOne({ tokenHash: postHash });
+      if (!refreshed) return ctx.reply('✅ Payment recorded, but this post is no longer available. Please contact the bot owner.');
+      return sendPostVideos(ctx, refreshed);
     }
     const expectedPayload = 'premium_' + config.starsDays + 'd_' + ctx.from.id;
-    if (payment.currency !== 'XTR' || payment.total_amount !== config.starsPrice || payment.invoice_payload !== expectedPayload) {
-      return ctx.reply('❌ Payment details did not match this account. Please contact support.');
-    }
-    if (payment.total_amount !== config.starsPrice) {
-      return ctx.reply('❌ The payment amount did not match the configured plan. Please contact support.');
-    }
-    let paymentRecord;
+    if (payment.currency !== 'XTR' || payment.total_amount !== config.starsPrice || payment.invoice_payload !== expectedPayload) return ctx.reply('❌ Payment details did not match this account. Please contact support.');
+    let premiumUntil;
     try {
-      const inserted = await collection('payments').insertOne({
-        telegramPaymentChargeId: payment.telegram_payment_charge_id,
-        providerPaymentChargeId: payment.provider_payment_charge_id || null,
-        userId: ctx.from.id,
-        currency: payment.currency,
-        totalAmount: payment.total_amount,
-        payload: payment.invoice_payload,
-        status: 'pending',
-        createdAt: now(),
+      await runInTransaction(async (session) => {
+        const user = await collection('users').findOne({ userId: ctx.from.id }, { projection: { premiumUntil: 1 }, session });
+        const base = user?.premiumUntil && user.premiumUntil > receivedAt ? user.premiumUntil : receivedAt;
+        premiumUntil = new Date(base.getTime() + config.starsDays * 24 * 60 * 60 * 1000);
+        await collection('payments').insertOne({
+          telegramPaymentChargeId: chargeId, providerPaymentChargeId: payment.provider_payment_charge_id || null,
+          userId: ctx.from.id, currency: payment.currency, totalAmount: payment.total_amount,
+          payload: payment.invoice_payload, status: 'processed', createdAt: receivedAt,
+          processedAt: receivedAt, premiumUntil,
+        }, { session });
+        await collection('users').updateOne({ userId: ctx.from.id }, { $set: { premiumUntil } }, { upsert: true, session });
       });
-      paymentRecord = await collection('payments').findOne({ _id: inserted.insertedId });
     } catch (error) {
-      if (error?.code !== 11000) throw error;
-      paymentRecord = await collection('payments').findOne({ telegramPaymentChargeId: payment.telegram_payment_charge_id });
-      if (!paymentRecord || paymentRecord.status === 'processed') {
-        return ctx.reply('✅ This payment has already been processed.');
+      if (error?.code === 11000) {
+        const existing = await collection('payments').findOne({ telegramPaymentChargeId: chargeId });
+        if (existing?.status === 'processed' && existing.userId === ctx.from.id && existing.payload === payment.invoice_payload) return ctx.reply('✅ This payment has already been processed.');
       }
+      console.error('[payment] Premium transaction failed:', error);
+      return ctx.reply('❌ I could not confirm this payment yet. Please contact the bot owner with your Telegram payment receipt.');
     }
-    const user = await collection('users').findOne({ userId: ctx.from.id }, { projection: { premiumUntil: 1 } });
-    const base = user?.premiumUntil && user.premiumUntil > now() ? user.premiumUntil : now();
-    const premiumUntil = new Date(base.getTime() + config.starsDays * 24 * 60 * 60 * 1000);
-    await collection('users').updateOne({ userId: ctx.from.id }, { $set: { premiumUntil } });
-    await collection('payments').updateOne(
-      { _id: paymentRecord._id, status: 'pending' },
-      { $set: { status: 'processed', processedAt: now(), premiumUntil } },
-    );
     return ctx.reply(`🎉 Payment successful! Premium is active until ${premiumUntil.toUTCString()}.`);
   }
-
 
   const workflowUser = await collection('users').findOne(
     { userId: ctx.from.id },
@@ -1172,14 +1164,18 @@ bot.on('message', async (ctx) => {
         return ctx.reply('This protected link is no longer available. Please reopen the link.');
       }
       if (!verifyPassword(ctx.message.text, target.passwordHash)) {
-        const attempts = (pending.attempts || 0) + 1;
-        if (attempts >= 5) {
-          await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { pendingUnlock: '' } });
-          return ctx.reply('❌ Too many incorrect attempts. Reopen the share link to try again.');
-        }
-        await collection('users').updateOne({ userId: ctx.from.id }, { $set: { 'pendingUnlock.attempts': attempts } });
+        const failureKey = { userId: ctx.from.id, tokenHash: pending.tokenHash };
+        const existingFailure = await collection('passwordAttempts').findOne(failureKey);
+        const attempts = (existingFailure?.expiresAt > now() ? existingFailure.attempts : 0) + 1;
+        const update = { $set: { attempts, expiresAt: new Date(Date.now() + 30 * 60 * 1000) }, $setOnInsert: { ...failureKey, createdAt: now() } };
+        if (attempts >= 5) update.$set.lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+        await collection('passwordAttempts').updateOne(failureKey, update, { upsert: true });
+        await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { pendingUnlock: '' } });
+        if (attempts >= 5) return ctx.reply('🔒 Too many incorrect attempts. Password access is locked for 15 minutes.');
+        await collection('users').updateOne({ userId: ctx.from.id }, { $set: { pendingUnlock: { ...pending, attempts } } });
         return ctx.reply(`❌ Incorrect password. Attempts remaining: ${5 - attempts}.`);
       }
+      await collection('passwordAttempts').deleteOne({ userId: ctx.from.id, tokenHash: pending.tokenHash });
       await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { pendingUnlock: '' } });
       if (pending.type === 'F') return sendSingleFile(ctx, pending.tokenHash, { unlocked: true });
       return sendBatch(ctx, pending.tokenHash, { unlocked: true });
@@ -1253,6 +1249,8 @@ async function sendSingleFile(ctx, tokenHash, options = {}) {
   if (!file) return ctx.reply('❌ This link is invalid or the file is no longer available.');
   if (file.expiresAt && file.expiresAt <= now()) return ctx.reply('⌛ This file link has expired.');
   if (file.passwordHash && !options.unlocked) {
+    const failure = await collection('passwordAttempts').findOne({ userId: ctx.from.id, tokenHash });
+    if (failure?.lockedUntil > now()) return ctx.reply('🔒 Too many incorrect passwords. Try again after ' + failure.lockedUntil.toUTCString() + '.');
     await collection('users').updateOne(
       { userId: ctx.from.id },
       { $set: { pendingUnlock: { type: 'F', tokenHash, attempts: 0, expiresAt: new Date(Date.now() + 10 * 60 * 1000) } } },
@@ -1273,6 +1271,8 @@ async function sendBatch(ctx, tokenHash, options = {}) {
   if (!batch) return ctx.reply('❌ This batch link is invalid or no longer available.');
   if (batch.expiresAt && batch.expiresAt <= now()) return ctx.reply('⌛ This batch link has expired.');
   if (batch.passwordHash && !options.unlocked) {
+    const failure = await collection('passwordAttempts').findOne({ userId: ctx.from.id, tokenHash });
+    if (failure?.lockedUntil > now()) return ctx.reply('🔒 Too many incorrect passwords. Try again after ' + failure.lockedUntil.toUTCString() + '.');
     await collection('users').updateOne(
       { userId: ctx.from.id },
       { $set: { pendingUnlock: { type: 'B', tokenHash, attempts: 0, expiresAt: new Date(Date.now() + 10 * 60 * 1000) } } },
