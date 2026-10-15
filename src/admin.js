@@ -214,9 +214,7 @@ export function registerAdminRoutes(app, bot) {
     const parsed = Number(value || 10);
     return Number.isSafeInteger(parsed) && parsed > 0 ? Math.min(parsed, 25) : 10;
   };
-  const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\
-}
-');
+  const escapeRegex = (value) => value.replace(/[.*+?^$()|[\\]\\\\]/g, '\\$&');
   const queryText = (value) => String(value || '').trim().slice(0, 80);
   const pagination = (page, limit, total) => ({ page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) });
 
