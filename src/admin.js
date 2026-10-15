@@ -195,7 +195,7 @@ export function registerAdminRoutes(app, bot) {
       if (!admin) return res.status(401).json({ ok: false, error: 'authentication_required' });
       return res.json({ ok: true, user: admin });
     } catch (error) {
-      console.error('[admin] Session lookup failed:', error.message);
+      console.error('[admin] Session lookup failed:', error);
       return res.status(500).json({ ok: false, error: 'session_lookup_failed' });
     }
   });
@@ -240,7 +240,7 @@ export function registerAdminRoutes(app, bot) {
         serverTime: now,
       });
     } catch (error) {
-      console.error('[admin] Overview failed:', error.message);
+      console.error('[admin] Overview failed:', error);
       return res.status(500).json({ ok: false, error: 'overview_unavailable' });
     }
   });
@@ -289,7 +289,7 @@ export function registerAdminRoutes(app, bot) {
         premiumUntil: user.premiumUntil || null, premium: Boolean(user.premiumUntil && user.premiumUntil > now), banned: bannedIds.has(Number(user.userId)), isAdmin: config.adminIds.includes(Number(user.userId)),
       })) });
     } catch (error) {
-      console.error('[admin] User listing failed:', error.message);
+      console.error('[admin] User listing failed:', error);
       return res.status(500).json({ ok: false, error: 'users_unavailable' });
     }
   });
@@ -373,7 +373,7 @@ export function registerAdminRoutes(app, bot) {
         if (!await authorize(req, res)) return;
         return await listContent(req, res, kind);
       } catch (error) {
-        console.error('[admin] ' + kind + ' listing failed:', error.message);
+        console.error('[admin] ' + kind + ' listing failed:', error);
         return res.status(500).json({ ok: false, error: 'content_unavailable' });
       }
     });
@@ -420,7 +420,7 @@ export function registerAdminRoutes(app, bot) {
         chargeId: d.telegramPaymentChargeId || '', premiumUntil: d.premiumUntil || null,
       })) });
     } catch (error) {
-      console.error('[admin] Payment listing failed:', error.message);
+      console.error('[admin] Payment listing failed:', error);
       return res.status(500).json({ ok: false, error: 'payments_unavailable' });
     }
   });
