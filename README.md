@@ -20,7 +20,7 @@ A **single-bot** Telegram file store. Files are copied to a private Telegram sto
 - Health endpoint for persistent hosting
 - No Redis, no local file storage, and no secrets committed to Git
 
-## Admin website (Stage 1)
+## Admin website (Stages 1–2)
 
 The admin dashboard is served by the same Express service as the bot at `/admin`; it does not use a separate database or a second bot.
 
@@ -34,7 +34,7 @@ The admin dashboard is served by the same Express service as the bot at `/admin`
 
 Telegram's signed login data is verified on the server. The dashboard issues an opaque, HttpOnly, SameSite=Strict session cookie; only a hash of the session token is stored in MongoDB. Sessions expire after 12 hours. The browser never receives the bot token or MongoDB credentials.
 
-### Stage 1 features
+### Implemented features
 
 - Responsive dashboard with dark and light themes.
 - Telegram Login Widget authentication restricted to `OWNER_ID` and `ADMIN_IDS`.
@@ -46,7 +46,7 @@ Telegram's signed login data is verified on the server. The dashboard issues an 
 ### Rollout stages
 
 - **Stage 1:** secure login and overview.
-- **Stage 2:** user search/management and file, batch, post and share-link management.
+- **Stage 2:** searchable user management, owner-only ban/unban, paginated file/batch/post browsing, and soft-revocation of share links.
 - **Stage 3:** payment history, premium tools, promo/referral support where compatible with the existing schema, and settings management.
 - **Stage 4:** audit events, activity logs, health monitoring, recovery tools and final security/test pass.
 
