@@ -807,7 +807,7 @@ bot.on('message', async (ctx) => {
       }
       const publicUrl = chat.username ? `https://t.me/${chat.username}` : '';
       const suppliedUrl = rawUrlPart.replace(/[<>]/g, '');
-      if (suppliedUrl && !/^https:\/\/t\.me\/(?:\+|joinchat\/|[A-Za-z0-9_]+)/i.test(suppliedUrl)) {
+      if (suppliedUrl && (!suppliedUrl.startsWith('https://t.me/') || suppliedUrl.length > 500)) {
         return ctx.reply('Please provide a valid Telegram invite URL (https://t.me/+...).');
       }
       if (!publicUrl && !suppliedUrl) {
