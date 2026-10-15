@@ -28,6 +28,8 @@ export async function connectDatabase() {
     database.collection('payments').createIndex({ telegramPaymentChargeId: 1 }, { unique: true }),
     database.collection('verificationSessions').createIndex({ sessionId: 1 }, { unique: true }),
     database.collection('verificationSessions').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    database.collection('passwordAttempts').createIndex({ userId: 1, tokenHash: 1 }, { unique: true }),
+    database.collection('passwordAttempts').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
   ]);
 
   console.info(`[database] Connected to MongoDB database "${config.mongoDbName}"`);
@@ -37,6 +39,18 @@ export async function connectDatabase() {
 export function collection(name) {
   if (!database) throw new Error('Database is not connected');
   return database.collection(name);
+}
+
+export async function runInTransaction(work) {
+  if (!database) throw new Error('Database is not connected');
+  const session = client.startSession();
+  try {
+    let result;
+    await session.withTransaction(async () => { result = await work(session); });
+    return result;
+  } finally {
+    await session.endSession();
+  }
 }
 
 export async function closeDatabase() {
