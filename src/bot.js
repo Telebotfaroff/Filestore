@@ -794,7 +794,7 @@ bot.on('message', async (ctx) => {
     const requestedChat = /^-?\d+$/.test(rawChatPart) ? Number(rawChatPart) : rawChatPart;
     try {
       const chat = await ctx.telegram.getChat(requestedChat);
-      if (chat.type !== 'channel') return ctx.reply('That is not a Telegram channel. Send @username or a channel ID, optionally followed by | invite URL.');
+      if (chat.type !== 'channel') return ctx.reply('That is not a Telegram channel. Send a channel @username or numeric channel ID.');
       const me = await ctx.telegram.getMe();
       const botMember = await ctx.telegram.getChatMember(chat.id, me.id);
       if (!['administrator', 'creator'].includes(botMember.status)) {
