@@ -69,6 +69,49 @@ function buildLink(username, prefix, token) {
   return `https://t.me/${username}?start=${prefix}_${token}`;
 }
 
+
+async function getPostChannels() {
+  const saved = await collection('settings').findOne({ key: 'postChannels' });
+  return Array.isArray(saved?.channels) ? saved.channels : [];
+}
+
+function postChannelsKeyboard(channels) {
+  const rows = channels.map((channel) => [
+    Markup.button.callback('📢 ' + String(channel.title || channel.username || channel.chatId).slice(0, 35), 'post:channel:' + encodeURIComponent(String(channel.chatId))),
+  ]);
+  rows.push([Markup.button.callback('🛠 Manage channels', 'post:channels:manage')]);
+  rows.push([Markup.button.callback('🛑 Cancel post', 'post:cancel')]);
+  return Markup.inlineKeyboard(rows);
+}
+
+async function promptPostChannels(ctx) {
+  const channels = await getPostChannels();
+  if (!channels.length) {
+    return ctx.reply('⚠️ No posting channels configured yet. Use /channels to add a channel, then return to /post.', Markup.inlineKeyboard([
+      [Markup.button.callback('➕ Configure channels', 'post:channels:manage')],
+      [Markup.button.callback('🛑 Cancel post', 'post:cancel')],
+    ]));
+  }
+  return ctx.reply('📢 Choose which configured channel should receive this post:', postChannelsKeyboard(channels));
+}
+
+async function sendPost(ctx, tokenHash) {
+  const post = await collection('posts').findOne({ tokenHash });
+  if (!post) return ctx.reply('❌ This post link is invalid or no longer available.');
+  if (post.stars > 0 && !(post.paidUsers || []).includes(ctx.from.id)) {
+    return ctx.replyWithInvoice(
+      '🔒 ' + post.title.slice(0, 120),
+      'Pay ' + post.stars + ' Telegram Stars to unlock this video.',
+      'post_' + post.tokenHash,
+      '',
+      'XTR',
+      [{ label: 'Video access', amount: post.stars }],
+      { start_parameter: 'post', provider_token: '' },
+    );
+  }
+  return sendSingleFile(ctx, post.fileTokenHash);
+}
+
 async function registerUser(ctx) {
   if (!ctx.from || ctx.from.is_bot) return;
   await collection('users').updateOne(
@@ -234,7 +277,8 @@ bot.start(async (ctx) => {
     }
   }
   if (parsed.type === 'F') return sendSingleFile(ctx, parsed.tokenHash);
-  return sendBatch(ctx, parsed.tokenHash);
+  if (parsed.type === 'B') return sendBatch(ctx, parsed.tokenHash);
+  return sendPost(ctx, parsed.tokenHash);
 });
 
 bot.action('check_sub', async (ctx) => {
@@ -293,11 +337,163 @@ bot.command('autodelete', async (ctx) => {
   return ctx.reply(seconds ? `🧹 Auto-delete set to ${seconds} seconds for new uploads.` : '🧹 Auto-delete disabled for new uploads. Existing expiry times are unchanged.');
 });
 
+
+bot.command('post', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+  if (ctx.chat.type !== 'private') return ctx.reply('Please create posts in a private chat with me.');
+  await collection('users').updateOne(
+    { userId: ctx.from.id },
+    { $set: { postDraft: { step: 'thumbnail', createdAt: now() } }, $unset: { batchDraft: '', batchStartedAt: '' } },
+  );
+  return ctx.reply('🖼 Step 1/3: Send the thumbnail image for your post. Use /cancel to stop.');
+});
+
+bot.command('channels', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.reply('⛔ Only admins can manage posting channels.');
+  if (ctx.chat.type !== 'private') return ctx.reply('Please manage posting channels in a private chat.');
+  const channels = await getPostChannels();
+  const rows = channels.map((channel) => [
+    Markup.button.callback('❌ Remove ' + String(channel.title || channel.username || channel.chatId).slice(0, 24), 'post:channels:remove:' + encodeURIComponent(String(channel.chatId))),
+  ]);
+  rows.unshift([Markup.button.callback('➕ Add channel', 'post:channels:add')]);
+  rows.push([Markup.button.callback('🏠 Main menu', 'menu:home')]);
+  const summary = channels.length
+    ? '📢 Configured posting channels:\n\n' + channels.map((channel, index) => (index + 1) + '. ' + (channel.title || channel.username || channel.chatId) + ' (' + channel.chatId + ')').join('\n')
+    : '📢 No posting channels configured yet.';
+  return ctx.reply(summary + '\n\nThe bot must be an administrator in each channel.', Markup.inlineKeyboard(rows));
+});
+
+bot.action('post:channels:manage', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isAdmin(ctx)) return ctx.reply('⛔ Only admins can manage posting channels.');
+  const channels = await getPostChannels();
+  const rows = channels.map((channel) => [
+    Markup.button.callback('❌ Remove ' + String(channel.title || channel.username || channel.chatId).slice(0, 24), 'post:channels:remove:' + encodeURIComponent(String(channel.chatId))),
+  ]);
+  rows.unshift([Markup.button.callback('➕ Add channel', 'post:channels:add')]);
+  rows.push([Markup.button.callback('🏠 Main menu', 'menu:home')]);
+  return ctx.reply(
+    (channels.length ? '📢 Configured posting channels:\n\n' + channels.map((channel, index) => (index + 1) + '. ' + (channel.title || channel.username || channel.chatId)).join('\n') : '📢 No posting channels configured yet.') + '\n\nThe bot must be an administrator in each channel.',
+    Markup.inlineKeyboard(rows),
+  );
+});
+
+bot.action('post:channels:add', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isAdmin(ctx)) return ctx.reply('⛔ Only admins can manage posting channels.');
+  await collection('users').updateOne({ userId: ctx.from.id }, { $set: { pendingChannelAdd: true } });
+  return ctx.reply('Send the channel @username or numeric channel ID. Make sure the bot is already an administrator there. /cancel aborts.');
+});
+
+bot.action(/^post:channels:remove:(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isAdmin(ctx)) return ctx.reply('⛔ Only admins can manage posting channels.');
+  let chatId;
+  try { chatId = decodeURIComponent(ctx.match[1]); } catch { return ctx.reply('Invalid channel selection.'); }
+  const channels = await getPostChannels();
+  const updated = channels.filter((channel) => String(channel.chatId) !== chatId);
+  await collection('settings').updateOne({ key: 'postChannels' }, { $set: { key: 'postChannels', channels: updated, updatedAt: now(), updatedBy: ctx.from.id } }, { upsert: true });
+  return ctx.reply('✅ Channel removed from the posting list.', Markup.inlineKeyboard([[Markup.button.callback('📢 Manage channels', 'post:channels:manage')]]));
+});
+
+bot.action(/^post:pricing:(free|paid)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+  const user = await collection('users').findOne({ userId: ctx.from.id });
+  const draft = user?.postDraft;
+  if (!draft || draft.step !== 'pricing' || !draft.storageMessageId) return ctx.reply('This post draft expired. Start again with /post.');
+  if (ctx.match[1] === 'free') {
+    await collection('users').updateOne({ userId: ctx.from.id }, { $set: { 'postDraft.stars': 0, 'postDraft.step': 'channel' } });
+    return promptPostChannels(ctx);
+  }
+  await collection('users').updateOne({ userId: ctx.from.id }, { $set: { 'postDraft.step': 'stars' } });
+  return ctx.reply('⭐ How many Telegram Stars should users pay to unlock this video? Send a whole number, for example: 5. /cancel aborts.');
+});
+
+bot.action('post:cancel', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+  const user = await collection('users').findOne({ userId: ctx.from.id }, { projection: { postDraft: 1 } });
+  if (user?.postDraft?.storageMessageId) {
+    await ctx.telegram.deleteMessage(config.dbChannelId, user.postDraft.storageMessageId).catch(() => {});
+  }
+  await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { postDraft: '' } });
+  return ctx.reply('🛑 Post creation cancelled.', Markup.inlineKeyboard([[Markup.button.callback('🏠 Main menu', 'menu:home')]]));
+});
+
+bot.action(/^post:channel:(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+  let selectedId;
+  try { selectedId = decodeURIComponent(ctx.match[1]); } catch { return ctx.reply('Invalid channel selection.'); }
+  const user = await collection('users').findOne({ userId: ctx.from.id });
+  const draft = user?.postDraft;
+  if (!draft || draft.step !== 'channel' || !draft.storageMessageId) return ctx.reply('This post draft expired. Start again with /post.');
+  const channels = await getPostChannels();
+  const channel = channels.find((item) => String(item.chatId) === selectedId);
+  if (!channel) return ctx.reply('That channel is no longer configured. Please choose again.', postChannelsKeyboard(channels));
+  const fileToken = createToken();
+  const postToken = createToken();
+  const fileDoc = {
+    tokenHash: fileToken.tokenHash,
+    storageMessageId: draft.storageMessageId,
+    fileType: draft.fileType || 'video',
+    fileName: draft.fileName || null,
+    mimeType: draft.mimeType || null,
+    fileSize: draft.fileSize || null,
+    ownerId: ctx.from.id,
+    passwordHash: null,
+    createdAt: now(),
+    downloads: 0,
+  };
+  const fileResult = await collection('files').insertOne(fileDoc);
+  const postDoc = {
+    tokenHash: postToken.tokenHash,
+    fileTokenHash: fileToken.tokenHash,
+    title: draft.title,
+    thumbnailFileId: draft.thumbnailFileId,
+    stars: Number(draft.stars || 0),
+    paidUsers: [],
+    channelId: channel.chatId,
+    ownerId: ctx.from.id,
+    createdAt: now(),
+  };
+  await collection('posts').insertOne(postDoc);
+  const me = await ctx.telegram.getMe();
+  const link = buildLink(me.username, 'P', postToken.token);
+  const buttonLabel = postDoc.stars > 0 ? '⭐ Unlock for ' + postDoc.stars + ' Stars' : '▶️ Open video';
+  try {
+    const published = await ctx.telegram.sendPhoto(channel.chatId, draft.thumbnailFileId, {
+      caption: draft.title,
+      reply_markup: Markup.inlineKeyboard([[Markup.button.url(buttonLabel, link)]]).reply_markup,
+    });
+    await collection('posts').updateOne({ tokenHash: postToken.tokenHash }, { $set: { channelPostMessageId: published.message_id } });
+    await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { postDraft: '' } });
+    return ctx.reply(
+      '✅ Post published to ' + (channel.title || channel.username || channel.chatId) + '.\n\nTitle: ' + draft.title + '\nAccess: ' + (postDoc.stars > 0 ? postDoc.stars + ' Stars' : 'Free') + '\n\nLink: ' + link,
+      Markup.inlineKeyboard([[Markup.button.url('🔗 Open post link', link)], [Markup.button.callback('📢 Manage channels', 'post:channels:manage')]]),
+    );
+  } catch (error) {
+    await collection('posts').deleteOne({ tokenHash: postToken.tokenHash });
+    await collection('files').deleteOne({ _id: fileResult.insertedId });
+    console.error('[post] Publish failed:', error.message);
+    return ctx.reply('❌ I could not publish to that channel. Check that the bot can post photos and messages there. Your draft is still saved; choose a channel again.', postChannelsKeyboard(channels));
+  }
+});
+
 bot.command('premium', async (ctx) => sendPremiumInvoice(ctx));
 
 bot.on('pre_checkout_query', async (ctx) => {
   const query = ctx.update.pre_checkout_query;
-  const expected = `premium_${config.starsDays}d_${query.from.id}`;
+  if (query.invoice_payload.startsWith('post_')) {
+    const postHash = query.invoice_payload.slice(5);
+    const post = /^[a-f0-9]{64}$/i.test(postHash) ? await collection('posts').findOne({ tokenHash: postHash }) : null;
+    if (!post || post.stars < 1 || query.currency !== 'XTR' || query.total_amount !== post.stars) {
+      return ctx.answerPreCheckoutQuery(false, 'This paid-post invoice is invalid or expired.');
+    }
+    return ctx.answerPreCheckoutQuery(true);
+  }
+  const expected = 'premium_' + config.starsDays + 'd_' + query.from.id;
   if (query.currency !== 'XTR' || query.total_amount !== config.starsPrice || query.invoice_payload !== expected) {
     return ctx.answerPreCheckoutQuery(false, 'This payment invoice is invalid or expired.');
   }
@@ -395,7 +591,43 @@ bot.on('message', async (ctx) => {
 
   if (ctx.message.successful_payment) {
     const payment = ctx.message.successful_payment;
-    const expectedPayload = `premium_${config.starsDays}d_${ctx.from.id}`;
+    if (payment.invoice_payload.startsWith('post_')) {
+      const postHash = payment.invoice_payload.slice(5);
+      const post = /^[a-f0-9]{64}$/i.test(postHash) ? await collection('posts').findOne({ tokenHash: postHash }) : null;
+      if (!post || post.stars < 1 || payment.currency !== 'XTR' || payment.total_amount !== post.stars) {
+        return ctx.reply('❌ Payment details did not match this paid post. Please contact the bot owner.');
+      }
+      let record;
+      try {
+        const inserted = await collection('payments').insertOne({
+          telegramPaymentChargeId: payment.telegram_payment_charge_id,
+          providerPaymentChargeId: payment.provider_payment_charge_id || null,
+          userId: ctx.from.id,
+          currency: payment.currency,
+          totalAmount: payment.total_amount,
+          payload: payment.invoice_payload,
+          postTokenHash: postHash,
+          status: 'pending',
+          createdAt: now(),
+        });
+        record = await collection('payments').findOne({ _id: inserted.insertedId });
+      } catch (error) {
+        if (error?.code !== 11000) throw error;
+        record = await collection('payments').findOne({ telegramPaymentChargeId: payment.telegram_payment_charge_id });
+        if (!record) throw error;
+        if (record.status === 'processed') {
+          await collection('posts').updateOne({ tokenHash: postHash }, { $addToSet: { paidUsers: ctx.from.id } });
+          return sendSingleFile(ctx, post.fileTokenHash);
+        }
+      }
+      await collection('posts').updateOne({ tokenHash: postHash }, { $addToSet: { paidUsers: ctx.from.id } });
+      await collection('payments').updateOne(
+        { _id: record._id, status: 'pending' },
+        { $set: { status: 'processed', processedAt: now(), postTokenHash: postHash } },
+      );
+      return sendSingleFile(ctx, post.fileTokenHash);
+    }
+    const expectedPayload = 'premium_' + config.starsDays + 'd_' + ctx.from.id;
     if (payment.currency !== 'XTR' || payment.total_amount !== config.starsPrice || payment.invoice_payload !== expectedPayload) {
       return ctx.reply('❌ Payment details did not match this account. Please contact support.');
     }
@@ -431,6 +663,116 @@ bot.on('message', async (ctx) => {
       { $set: { status: 'processed', processedAt: now(), premiumUntil } },
     );
     return ctx.reply(`🎉 Payment successful! Premium is active until ${premiumUntil.toUTCString()}.`);
+  }
+
+
+  const workflowUser = await collection('users').findOne(
+    { userId: ctx.from.id },
+    { projection: { postDraft: 1, pendingChannelAdd: 1 } },
+  );
+
+  if (workflowUser?.pendingChannelAdd && ctx.message.text && !ctx.message.text.startsWith('/')) {
+    if (!isAdmin(ctx)) return ctx.reply('⛔ Only admins can manage posting channels.');
+    const raw = ctx.message.text.trim();
+    const requestedChat = /^-?\d+$/.test(raw) ? Number(raw) : raw;
+    try {
+      const chat = await ctx.telegram.getChat(requestedChat);
+      if (chat.type !== 'channel') return ctx.reply('That is not a Telegram channel. Send a channel @username or numeric channel ID.');
+      const me = await ctx.telegram.getMe();
+      const member = await ctx.telegram.getChatMember(chat.id, me.id);
+      if (!['administrator', 'creator'].includes(member.status)) {
+        return ctx.reply('❌ The bot is not an administrator in that channel. Promote the bot, then try again.');
+      }
+      const channels = await getPostChannels();
+      if (channels.some((channel) => String(channel.chatId) === String(chat.id))) {
+        await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { pendingChannelAdd: '' } });
+        return ctx.reply('That channel is already configured.', Markup.inlineKeyboard([[Markup.button.callback('📢 Manage channels', 'post:channels:manage')]]));
+      }
+      const channelRecord = {
+        chatId: chat.id,
+        title: chat.title || chat.username || String(chat.id),
+        username: chat.username || null,
+        addedAt: now(),
+        addedBy: ctx.from.id,
+      };
+      await collection('settings').updateOne(
+        { key: 'postChannels' },
+        { $set: { key: 'postChannels', channels: [...channels, channelRecord], updatedAt: now(), updatedBy: ctx.from.id } },
+        { upsert: true },
+      );
+      await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { pendingChannelAdd: '' } });
+      return ctx.reply('✅ Added channel: ' + channelRecord.title, Markup.inlineKeyboard([[Markup.button.callback('📢 Manage channels', 'post:channels:manage')]]));
+    } catch (error) {
+      console.error('[post] Channel validation failed:', error.message);
+      return ctx.reply('❌ Could not access that channel. Send a valid channel ID or @username and confirm the bot is an administrator.');
+    }
+  }
+
+  if (workflowUser?.postDraft) {
+    const draft = workflowUser.postDraft;
+    if (draft.step === 'thumbnail') {
+      const photo = ctx.message.photo?.at(-1);
+      const imageDocument = ctx.message.document?.mime_type?.startsWith('image/') ? ctx.message.document : null;
+      const image = photo || imageDocument;
+      if (!image) return ctx.reply('🖼 Please send the thumbnail as a photo or image document. Use /cancel to stop.');
+      await collection('users').updateOne(
+        { userId: ctx.from.id },
+        { $set: { 'postDraft.thumbnailFileId': image.file_id, 'postDraft.step': 'title' } },
+      );
+      return ctx.reply('✍️ Step 2/3: Now send the post title as text.');
+    }
+    if (draft.step === 'title') {
+      if (!ctx.message.text || ctx.message.text.startsWith('/')) return ctx.reply('Please send the title as a normal text message. Use /cancel to stop.');
+      const title = ctx.message.text.trim();
+      if (!title || title.length > 900) return ctx.reply('Title must be between 1 and 900 characters. Please send it again.');
+      await collection('users').updateOne(
+        { userId: ctx.from.id },
+        { $set: { 'postDraft.title': title, 'postDraft.step': 'video' } },
+      );
+      return ctx.reply('🎬 Step 3/3: Send the video now (as a Telegram video or a video document).');
+    }
+    if (draft.step === 'video') {
+      const info = getFileInfo(ctx.message);
+      const isVideo = info && (info.fileType === 'video' || (info.fileType === 'document' && String(info.mimeType || '').startsWith('video/')));
+      if (!isVideo) return ctx.reply('🎬 Please send a video or a document with a video MIME type. Use /cancel to stop.');
+      const status = await ctx.reply('📥 Saving video to the private storage channel…');
+      try {
+        const stored = await ctx.telegram.copyMessage(config.dbChannelId, ctx.chat.id, ctx.message.message_id);
+        await collection('users').updateOne(
+          { userId: ctx.from.id },
+          { $set: {
+            'postDraft.storageMessageId': stored.message_id,
+            'postDraft.fileType': info.fileType,
+            'postDraft.fileName': info.fileName,
+            'postDraft.mimeType': info.mimeType,
+            'postDraft.fileSize': info.fileSize,
+            'postDraft.step': 'pricing',
+          } },
+        );
+        return ctx.telegram.editMessageText(
+          ctx.chat.id,
+          status.message_id,
+          undefined,
+          '✅ Video saved. Choose whether this post is free or paid:',
+          { reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('🆓 Free link', 'post:pricing:free')],
+            [Markup.button.callback('⭐ Paid link', 'post:pricing:paid')],
+            [Markup.button.callback('🛑 Cancel post', 'post:cancel')],
+          ]).reply_markup },
+        );
+      } catch (error) {
+        console.error('[post] Video storage failed:', error.message);
+        return ctx.telegram.editMessageText(ctx.chat.id, status.message_id, undefined, '❌ Could not save the video. Check that the bot is an admin in the private storage channel and try again.').catch(() => {});
+      }
+    }
+    if (draft.step === 'stars') {
+      if (!ctx.message.text || ctx.message.text.startsWith('/')) return ctx.reply('Send a whole number of Stars, for example 5. Use /cancel to stop.');
+      const stars = Number(ctx.message.text.trim());
+      if (!Number.isSafeInteger(stars) || stars < 1 || stars > 100000) return ctx.reply('Stars must be a whole number between 1 and 100000. Try again.');
+      await collection('users').updateOne({ userId: ctx.from.id }, { $set: { 'postDraft.stars': stars, 'postDraft.step': 'channel' } });
+      return promptPostChannels(ctx);
+    }
+    if (draft.step === 'channel') return promptPostChannels(ctx);
   }
 
   if (ctx.message.text) {
