@@ -312,8 +312,8 @@ bot.command('batch', async (ctx) => {
 });
 
 bot.command('cancel', async (ctx) => {
-  await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { batchDraft: '', batchStartedAt: '' } });
-  return ctx.reply('🛑 Batch mode cancelled.');
+  await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { batchDraft: '', batchStartedAt: '', pendingPasswordPrompt: '', pendingBroadcast: '' } });
+  return ctx.reply('🛑 Current action cancelled.');
 });
 
 bot.command('done', async (ctx) => {
