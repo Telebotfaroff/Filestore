@@ -9,7 +9,7 @@ A **single-bot** Telegram file store. Files are copied to a private Telegram sto
 - Admin `/channels` manager to add/remove posting channels (the bot must be a channel administrator)
 - Channel posts use the thumbnail, title, and an inline button linking to a free or paid video post
 - Password-protected links using salted scrypt hashes
-- Optional force subscription
+- Admin-managed force subscription with an enable/disable toggle and multiple required channels; users must join every configured channel before using the bot
 - Optional auto-delete for new uploads, with a persisted expiry worker
 - Optional shortener verification using one-time sessions and signed server-to-server callbacks
 - Telegram Stars premium purchase (configurable price and duration); premium bypasses shortener verification
@@ -26,6 +26,7 @@ A **single-bot** Telegram file store. Files are copied to a private Telegram sto
 3. Set the channel ID (usually starts with `-100`) in `DB_CHANNEL_ID`.
 4. Set your numeric Telegram user ID in `OWNER_ID`. This account is always an admin.
 5. Optionally set `ADMIN_IDS` to a comma-separated list of additional numeric Telegram user IDs. Only these admins can create file links or batch links; other users can only open links shared with them.
+6. In the bot's private chat, run `/fsub` to enable force subscription and add multiple required channels. The bot must be an administrator in each channel. Public channels can be added with `@username`; private channels use `-1001234567890 | https://t.me/+inviteLink`.
 
 ## MongoDB Atlas
 
@@ -43,6 +44,10 @@ npm start
 ```
 
 Requires Node.js 20.11 or newer.
+
+## Force subscription
+
+Use `/fsub` or **Admin panel → Force subscription** to enable or disable the gate, add required channels, and remove channels. When enabled, users must be members of **every** configured channel. The bot checks membership when users interact with it and offers join links plus a recheck button. The bot must be an administrator in every required channel so Telegram permits membership checks. Existing `FORCE_SUB_CHANNEL` and `FORCE_SUB_URL` environment variables remain supported as a legacy initial configuration; admin-managed settings are saved in MongoDB.
 
 ## User commands
 
