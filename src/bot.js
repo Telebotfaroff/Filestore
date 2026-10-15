@@ -451,7 +451,7 @@ bot.command('adminlink', async (ctx) => {
     });
     const link = 'https://filestore-ozsv.onrender.com/admin/access/' + token;
     await ctx.reply(
-      '🔐 Your one-time admin dashboard link (expires in 5 minutes):\\n\\n' + link + '\\n\\nKeep this link private. Opening it signs you in and immediately invalidates it.',
+      '🔐 Your one-time admin dashboard link (expires in 5 minutes):\n\n' + link + '\n\nKeep this link private. Opening it signs you in and immediately invalidates it.',
       { disable_web_page_preview: true },
     );
   } catch (error) {
