@@ -1166,7 +1166,8 @@ bot.on('message', async (ctx) => {
       if (!verifyPassword(ctx.message.text, target.passwordHash)) {
         const failureKey = { userId: ctx.from.id, tokenHash: pending.tokenHash };
         const existingFailure = await collection('passwordAttempts').findOne(failureKey);
-        const attempts = (existingFailure?.expiresAt > now() ? existingFailure.attempts : 0) + 1;
+        const lockExpired = existingFailure?.lockedUntil && existingFailure.lockedUntil <= now();
+        const attempts = (existingFailure?.expiresAt > now() && !lockExpired ? existingFailure.attempts : 0) + 1;
         const update = { $set: { attempts, expiresAt: new Date(Date.now() + 30 * 60 * 1000) }, $setOnInsert: { ...failureKey, createdAt: now() } };
         if (attempts >= 5) update.$set.lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
         await collection('passwordAttempts').updateOne(failureKey, update, { upsert: true });
