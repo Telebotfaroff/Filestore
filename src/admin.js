@@ -113,6 +113,47 @@ export function registerAdminRoutes(app, bot) {
   app.get('/admin', (_req, res) => res.sendFile(pagePath));
   app.get('/admin/', (_req, res) => res.sendFile(pagePath));
 
+  app.get('/admin/access/:token', async (req, res) => {
+    const rawToken = String(req.params.token || '');
+    if (!/^[A-Za-z0-9_-]{40,60}$/.test(rawToken)) {
+      return res.status(400).send('Invalid or expired admin link. Request a new one with /adminlink in the bot.');
+    }
+    try {
+      const tokenHash = sha256(rawToken);
+      const accessLink = await collection('adminAccessLinks').findOneAndDelete({
+        tokenHash,
+        userId: config.ownerId,
+        expiresAt: { $gt: new Date() },
+        redeemedAt: { $exists: false },
+      });
+      const record = accessLink?.value || accessLink;
+      if (!record) {
+        return res.status(401).send('This admin link is invalid, expired, or already used. Request a new one with /adminlink in the bot.');
+      }
+      const sessionToken = randomBytes(32).toString('base64url');
+      const createdAt = new Date();
+      const expiresAt = new Date(createdAt.getTime() + ADMIN_SESSION_MS);
+      await collection('adminSessions').insertOne({
+        tokenHash: sha256(sessionToken),
+        userId: config.ownerId,
+        firstName: 'Owner',
+        lastName: '',
+        username: '',
+        photoUrl: '',
+        createdAt,
+        lastSeenAt: createdAt,
+        expiresAt,
+        authMethod: 'one_time_bot_link',
+      });
+      setSessionCookie(res, sessionToken);
+      await writeAuditEvent({ actorId: config.ownerId, action: 'admin.login', targetType: 'admin_session', details: { method: 'one_time_bot_link' } });
+      return res.redirect(303, '/admin');
+    } catch (error) {
+      console.error('[admin] One-time link redemption failed:', error.message);
+      return res.status(500).send('Could not sign in. Request a new admin link from the bot.');
+    }
+  });
+
   app.get('/admin/api/config', async (_req, res) => {
     try {
       const me = await bot.telegram.getMe();
