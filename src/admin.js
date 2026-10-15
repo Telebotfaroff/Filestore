@@ -414,8 +414,8 @@ export function registerAdminRoutes(app, bot) {
           const title = String(item.title ?? '').trim().slice(0, 120);
           const username = String(item.username ?? '').trim().replace(/^@/, '').slice(0, 64);
           const url = String(item.url ?? '').trim().slice(0, 2048);
-          if (!chatId || !/^(?:-?\\d{4,20}|@[A-Za-z0-9_]{5,})$/.test(chatId)) throw new Error('invalid_' + label);
-          if (url && (!url.startsWith('https://') || !/^https:\\/\\//i.test(url))) throw new Error('invalid_' + label);
+          if (!chatId || !/^(?:-?\d{4,20}|@[A-Za-z0-9_]{5,})$/.test(chatId)) throw new Error('invalid_' + label);
+          if (url && (!url.startsWith('https://') || !/^https:\/\//i.test(url))) throw new Error('invalid_' + label);
           if (seen.has(chatId)) throw new Error('duplicate_' + label);
           seen.add(chatId);
           return { chatId, title: title || username || chatId, username, url };
