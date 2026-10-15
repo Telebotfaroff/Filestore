@@ -144,6 +144,7 @@ export function registerAdminRoutes(app, bot) {
       expiresAt,
     });
     setSessionCookie(res, token);
+    await writeAuditEvent({ actorId: identity.userId, action: 'admin.login', targetType: 'admin_session' });
     return res.json({ ok: true, user: { userId: identity.userId, firstName: identity.firstName, lastName: identity.lastName, username: identity.username, photoUrl: identity.photoUrl }, expiresAt });
   });
 
@@ -265,6 +266,7 @@ export function registerAdminRoutes(app, bot) {
       } else {
         await collection('bans').deleteOne({ userId });
       }
+      await writeAuditEvent({ actorId: admin.userId, action: 'user.' + req.params.action, targetType: 'user', targetId: userId });
       return res.json({ ok: true, userId, banned: req.params.action === 'ban' });
     } catch (error) {
       console.error('[admin] User moderation failed:', error.message);
@@ -349,6 +351,7 @@ export function registerAdminRoutes(app, bot) {
         { $set: { revokedAt: new Date(), revokedBy: admin.userId } },
       );
       if (!result.matchedCount) return res.status(404).json({ ok: false, error: 'content_not_found_or_already_revoked' });
+      await writeAuditEvent({ actorId: admin.userId, action: 'content.revoke', targetType: kind, targetId: id });
       return res.json({ ok: true, kind, id, revoked: true });
     } catch (error) {
       console.error('[admin] Content revocation failed:', error.message);
@@ -441,6 +444,7 @@ export function registerAdminRoutes(app, bot) {
         collection('settings').updateOne({ key: 'forceSubConfig' }, { $set: { key: 'forceSubConfig', enabled, channels: forceSubChannels, updatedAt: now, updatedBy: admin.userId } }, { upsert: true }),
         collection('settings').updateOne({ key: 'postChannels' }, { $set: { key: 'postChannels', channels, updatedAt: now, updatedBy: admin.userId } }, { upsert: true }),
       ]);
+      await writeAuditEvent({ actorId: admin.userId, action: 'settings.update', targetType: 'settings', details: { autoDeleteSeconds: seconds, forceSubEnabled: enabled, forceSubChannelCount: forceSubChannels.length, postingChannelCount: channels.length } });
       return res.json({ ok: true, savedAt: now });
     } catch (error) {
       console.error('[admin] Settings save failed:', error.message);
@@ -460,6 +464,7 @@ export function registerAdminRoutes(app, bot) {
       if (!Number.isSafeInteger(days) || days < 0 || days > 3650) return res.status(400).json({ ok: false, error: 'invalid_premium_days' });
       if (days === 0) {
         await collection('users').updateOne({ userId }, { $unset: { premiumUntil: '' } });
+        await writeAuditEvent({ actorId: admin.userId, action: 'premium.remove', targetType: 'user', targetId: userId });
         return res.json({ ok: true, userId, premiumUntil: null });
       }
       const now = new Date();
@@ -467,6 +472,7 @@ export function registerAdminRoutes(app, bot) {
       const base = user?.premiumUntil && user.premiumUntil > now ? user.premiumUntil : now;
       const premiumUntil = new Date(base.getTime() + days * 86400000);
       await collection('users').updateOne({ userId }, { $set: { userId, premiumUntil, premiumUpdatedAt: now, premiumUpdatedBy: admin.userId } }, { upsert: true });
+      await writeAuditEvent({ actorId: admin.userId, action: 'premium.grant', targetType: 'user', targetId: userId, details: { days } });
       return res.json({ ok: true, userId, premiumUntil });
     } catch (error) {
       console.error('[admin] Premium update failed:', error.message);
