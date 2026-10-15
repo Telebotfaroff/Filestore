@@ -1,14 +1,14 @@
 {
   "name": "filestore-telegram-bot",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "Telegram FileStore bot built with Node.js, Telegraf, and MongoDB Atlas",
+  "description": "Single-bot Telegram FileStore using Telegraf and MongoDB Atlas",
   "type": "module",
   "engines": { "node": ">=20.11.0" },
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "check": "node --check src/index.js && node --check src/bot.js && node --check src/config.js && node --check src/database.js && node --check src/utils/tokens.js",
+    "check": "node --check src/index.js && node --check src/bot.js && node --check src/config.js && node --check src/database.js && node --check src/maintenance.js && node --check src/shortener.js && node --check src/security.js && node --check src/utils/tokens.js",
     "test": "node --test"
   },
   "dependencies": {
