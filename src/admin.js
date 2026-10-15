@@ -480,4 +480,51 @@ export function registerAdminRoutes(app, bot) {
     }
   });
 
+
+  app.get('/admin/api/activity', async (req, res) => {
+    try {
+      if (!await authorize(req, res)) return;
+      const page = parsePage(req.query.page);
+      const limit = parseLimit(req.query.limit);
+      const q = queryText(req.query.q);
+      const filter = q ? { $or: [
+        { action: { $regex: escapeRegex(q), $options: 'i' } },
+        { targetType: { $regex: escapeRegex(q), $options: 'i' } },
+        { targetId: { $regex: escapeRegex(q), $options: 'i' } },
+        ...( /^\\d+$/.test(q) ? [{ actorId: Number(q) }] : []),
+      ] } : {};
+      const [total, events] = await Promise.all([
+        collection('adminAuditLogs').countDocuments(filter),
+        collection('adminAuditLogs').find(filter, { projection: { actorId: 1, action: 1, targetType: 1, targetId: 1, details: 1, createdAt: 1 } }).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).toArray(),
+      ]);
+      return res.json({ ok: true, pagination: pagination(page, limit, total), items: events.map((event) => ({
+        id: String(event._id), actorId: event.actorId, action: event.action || 'unknown',
+        targetType: event.targetType || '', targetId: event.targetId ?? '',
+        details: event.details || {}, createdAt: event.createdAt || null,
+      })) });
+    } catch (error) {
+      console.error('[admin] Activity listing failed:', error.message);
+      return res.status(500).json({ ok: false, error: 'activity_unavailable' });
+    }
+  });
+
+  app.get('/admin/api/health', async (req, res) => {
+    try {
+      if (!await authorize(req, res)) return;
+      const [users, files, batches, posts, payments, sessions, auditEvents] = await Promise.all([
+        collection('users').estimatedDocumentCount(),
+        collection('files').estimatedDocumentCount(),
+        collection('batches').estimatedDocumentCount(),
+        collection('posts').estimatedDocumentCount(),
+        collection('payments').estimatedDocumentCount(),
+        collection('adminSessions').countDocuments({ expiresAt: { $gt: new Date() } }),
+        collection('adminAuditLogs').estimatedDocumentCount(),
+      ]);
+      return res.json({ ok: true, status: 'healthy', checkedAt: new Date(), database: 'connected', counts: { users, files, batches, posts, payments, activeAdminSessions: sessions, auditEvents } });
+    } catch (error) {
+      console.error('[admin] Health check failed:', error.message);
+      return res.status(503).json({ ok: false, status: 'degraded', error: 'health_check_failed' });
+    }
+  });
+
 }
