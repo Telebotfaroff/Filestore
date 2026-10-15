@@ -236,6 +236,7 @@
     }
     if (page === 'payments') { loadPaymentsPage(1, ''); return; }
     if (page === 'settings') { loadSettingsPage(); return; }
+    if (page === 'activity') { loadActivityPage(1, ''); return; }
     document.getElementById('pageContent').innerHTML = '<div class="notice"><span style="font-size:18px">✦</span><div><strong>'+escapeHtml(titles[page])+'</strong><br>Activity and audit history are planned for Stage 4.</div></div>';
   }
   function contentTabs() {
@@ -357,6 +358,29 @@
       if(panel) panel.innerHTML='<div class="empty">Could not load payments. '+escapeHtml(error.message)+'</div>';
     }
   }
+  async function loadActivityPage(page = 1, query = '') {
+    document.getElementById('headerTitle').textContent = titles.activity;
+    document.getElementById('crumbPage').textContent = titles.activity;
+    document.getElementById('pageContent').innerHTML = '<div class="manage-toolbar"><form class="search-form" id="activitySearch"><input class="search-input" id="activityQuery" maxlength="80" placeholder="Search action, target or admin ID" value="'+escapeHtml(query)+'"><button class="primary-btn" type="submit">Search</button></form><button class="secondary-btn" id="refreshActivity">Refresh</button></div><div class="manage-panel"><div class="loading">Loading audit history…</div></div><div id="activityHealth" class="muted-cell" style="padding:12px 2px">Checking service health…</div>';
+    document.getElementById('activitySearch').addEventListener('submit', event => { event.preventDefault(); loadActivityPage(1, document.getElementById('activityQuery').value.trim()); });
+    document.getElementById('refreshActivity').addEventListener('click', () => loadActivityPage(page, query));
+    try {
+      const [data, health] = await Promise.all([api('/admin/api/activity?page='+page+'&limit=10&q='+encodeURIComponent(query)), api('/admin/api/health')]);
+      const panel = document.querySelector('.manage-panel');
+      if (!panel) return;
+      const items = data.items || [];
+      panel.innerHTML = '<div class="table-wrap"><table><thead><tr><th>TIME</th><th>ADMIN</th><th>ACTION</th><th>TARGET</th><th>DETAILS</th></tr></thead><tbody>'+(items.length ? items.map(item => '<tr><td>'+escapeHtml(dateTime(item.createdAt))+'</td><td>'+escapeHtml(item.actorId || '—')+'</td><td><span class="state-pill active">'+escapeHtml(item.action)+'</span></td><td>'+escapeHtml([item.targetType,item.targetId].filter(Boolean).join(' · ') || '—')+'</td><td>'+escapeHtml(Object.entries(item.details || {}).map(([k,v])=>k+': '+v).join(', ') || '—')+'</td></tr>').join('') : '<tr><td colspan="5" class="empty">No audit events found yet. New admin actions will appear here.</td></tr>')+'</tbody></table></div><div class="pagination"><span class="muted-cell">'+formatNumber(data.pagination.total)+' events · Page '+data.pagination.page+' of '+data.pagination.pages+'</span><div><button class="secondary-btn" id="activityPrev" '+(page<=1?'disabled':'')+'>Previous</button> <button class="secondary-btn" id="activityNext" '+(page>=data.pagination.pages?'disabled':'')+'>Next</button></div></div>';
+      document.getElementById('activityHealth').textContent = 'Service: '+health.status+' · Database: '+health.database+' · Active admin sessions: '+formatNumber(health.counts.activeAdminSessions)+' · Checked '+new Date(health.checkedAt).toLocaleTimeString();
+      document.getElementById('activityPrev').addEventListener('click',()=>loadActivityPage(page-1,query));
+      document.getElementById('activityNext').addEventListener('click',()=>loadActivityPage(page+1,query));
+    } catch(error) {
+      const panel = document.querySelector('.manage-panel');
+      if(panel) panel.innerHTML = '<div class="empty">Could not load activity or health data. '+escapeHtml(error.message)+'</div>';
+      const health = document.getElementById('activityHealth');
+      if(health) health.textContent = 'Service health unavailable.';
+    }
+  }
+
   async function loadSettingsPage() {
     document.getElementById('headerTitle').textContent = titles.settings;
     document.getElementById('crumbPage').textContent = titles.settings;
