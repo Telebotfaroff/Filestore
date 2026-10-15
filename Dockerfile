@@ -7,6 +7,7 @@ COPY package*.json ./
 RUN npm install --omit=dev
 
 COPY src ./src
+COPY public ./public
 COPY README.md ./
 
 USER node
