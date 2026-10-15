@@ -7,6 +7,7 @@ import { getAutoDeleteSeconds } from './maintenance.js';
 import { createShortenerLink, needsVerification, shortenerEnabled } from './shortener.js';
 
 const bot = new Telegraf(config.botToken);
+const autoAlbumBuffers = new Map();
 const now = () => new Date();
 const isOwner = (ctx) => Number(ctx.from?.id) === config.ownerId;
 const isAdmin = (ctx) => config.adminIds.includes(Number(ctx.from?.id));
@@ -95,6 +96,78 @@ async function promptPostChannels(ctx) {
     ]));
   }
   return ctx.reply('📢 Choose which configured channel should receive this post:', postChannelsKeyboard(channels));
+}
+
+async function processAutoAlbum(ctx, messages) {
+  const userId = ctx.from.id;
+  const user = await collection('users').findOne({ userId }, { projection: { pendingAutoAlbum: 1 } });
+  if (!user?.pendingAutoAlbum) return;
+
+  await collection('users').updateOne({ userId }, { $unset: { pendingAutoAlbum: '' } });
+  const album = [...messages].sort((a, b) => a.message_id - b.message_id);
+  const photos = album.filter((message) => Array.isArray(message.photo) && message.photo.length);
+  const videos = album.filter((message) =>
+    Boolean(message.video) ||
+    Boolean(message.document && String(message.document.mime_type || '').startsWith('video/')),
+  );
+  const captionMessage = album.find((message) => typeof message.caption === 'string' && message.caption.trim());
+  const title = captionMessage?.caption.trim() || '';
+
+  if (photos.length !== 1 || !videos.length) {
+    return ctx.reply('❌ Album format not recognized. Send exactly one thumbnail photo and at least one video in the same media group, then run /auto again.');
+  }
+  if (!title) {
+    return ctx.reply('❌ Please add the post title as the caption on your thumbnail (or another item in the album). Run /auto again and resend the album with a caption.');
+  }
+  if (title.length > 900) {
+    return ctx.reply('❌ The title/caption must be 900 characters or fewer. Run /auto again with a shorter caption.');
+  }
+
+  const savedVideos = [];
+  try {
+    for (const message of videos) {
+      const info = getFileInfo(message);
+      const stored = await ctx.telegram.copyMessage(config.dbChannelId, ctx.chat.id, message.message_id);
+      savedVideos.push({
+        storageMessageId: stored.message_id,
+        fileType: info?.fileType || 'video',
+        fileName: info?.fileName || null,
+        mimeType: info?.mimeType || null,
+        fileSize: info?.fileSize || null,
+      });
+    }
+  } catch (error) {
+    console.error('[auto] Album video storage failed:', error.message);
+    for (const video of savedVideos) {
+      await ctx.telegram.deleteMessage(config.dbChannelId, video.storageMessageId).catch(() => {});
+    }
+    return ctx.reply('❌ Could not save every video. Check that the bot can post in the private storage channel, then run /auto again.');
+  }
+
+  await collection('users').updateOne(
+    { userId },
+    {
+      $set: {
+        postDraft: {
+          step: 'pricing',
+          title,
+          thumbnailFileId: photos[0].photo.at(-1).file_id,
+          videoFiles: savedVideos,
+          createdAt: now(),
+        },
+      },
+      $unset: { pendingAutoAlbum: '' },
+    },
+  );
+
+  return ctx.reply(
+    `✅ Album processed! Saved ${savedVideos.length} video(s). Choose pricing for this post:`,
+    Markup.inlineKeyboard([
+      [Markup.button.callback('🆓 Free post', 'post:pricing:free')],
+      [Markup.button.callback('⭐ Paid post', 'post:pricing:paid')],
+      [Markup.button.callback('🛑 Cancel', 'post:cancel')],
+    ]),
+  );
 }
 
 async function sendPostVideos(ctx, post) {
@@ -266,7 +339,7 @@ bot.action('menu:post', async (ctx) => {
   if (user?.postDraft?.storageMessageId) await ctx.telegram.deleteMessage(config.dbChannelId, user.postDraft.storageMessageId).catch(() => {});
   await collection('users').updateOne(
     { userId: ctx.from.id },
-    { $set: { postDraft: { step: 'thumbnail', videoFiles: [], createdAt: now() } }, $unset: { batchDraft: '', batchStartedAt: '' } },
+    { $set: { postDraft: { step: 'thumbnail', videoFiles: [], createdAt: now() } }, $unset: { batchDraft: '', batchStartedAt: '', pendingAutoAlbum: '' } },
   );
   return ctx.reply('🖼 Step 1/3: Send the thumbnail image for your post. Use /cancel to stop.');
 });
@@ -426,7 +499,7 @@ bot.action('check_sub', async (ctx) => {
 
 bot.command('help', async (ctx) => {
   const text = '📚 Filestore help\\n\\n/start — interactive menu or open a share link\\n/premium — buy premium with Stars\\n/help — show help\\n' +
-    (isAdmin(ctx) ? '/batch — start batch\\n/done — finish batch\\n/cancel — cancel current action\\n/setpassword PASSWORD — protect next link\\n/clearpassword — clear password\\n/post — publish a free or paid video post\\n/channels — manage posting channels\\n/fsub — manage required membership channels\\n' : '') +
+    (isAdmin(ctx) ? '/batch — start batch\\n/done — finish batch\\n/cancel — cancel current action\\n/setpassword PASSWORD — protect next link\\n/clearpassword — clear password\\n/post — publish a free or paid video post\\n/auto — create a post from a thumbnail/video album\\n/channels — manage posting channels\\nfsub — manage required membership channels\\n' : '') +
     (isOwner(ctx) ? '/stats — statistics\\n/autodelete SECONDS — expiry setting\\n/broadcast MESSAGE — broadcast\\n' : '') +
     '\\nUse the buttons for guided actions.';
   return ctx.reply(text, mainMenu(ctx));
@@ -472,6 +545,29 @@ bot.command('autodelete', async (ctx) => {
 });
 
 
+bot.command('auto', async (ctx) => {
+  if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
+  if (ctx.chat.type !== 'private') return ctx.reply('Please use /auto in a private chat with me.');
+
+  const oldUser = await collection('users').findOne({ userId: ctx.from.id }, { projection: { postDraft: 1 } });
+  for (const video of (oldUser?.postDraft?.videoFiles || [])) {
+    if (video.storageMessageId) await ctx.telegram.deleteMessage(config.dbChannelId, video.storageMessageId).catch(() => {});
+  }
+  if (oldUser?.postDraft?.storageMessageId) {
+    await ctx.telegram.deleteMessage(config.dbChannelId, oldUser.postDraft.storageMessageId).catch(() => {});
+  }
+  await collection('users').updateOne(
+    { userId: ctx.from.id },
+    {
+      $set: { pendingAutoAlbum: true },
+      $unset: { postDraft: '', pendingChannelAdd: '', pendingForceSubAdd: '' },
+    },
+  );
+  return ctx.reply(
+    '⚡ Auto-post mode enabled. Send ONE Telegram media group containing exactly one thumbnail photo and one or more videos. Add the post title as the album caption (preferably on the thumbnail). I will save the videos, then ask you to choose Free or Paid and the posting channel. Use /cancel to stop.',
+  );
+});
+
 bot.command('post', async (ctx) => {
   if (!isAdmin(ctx)) return ctx.reply(adminOnlyMessage);
   if (ctx.chat.type !== 'private') return ctx.reply('Please create posts in a private chat with me.');
@@ -481,7 +577,7 @@ bot.command('post', async (ctx) => {
   }
   await collection('users').updateOne(
     { userId: ctx.from.id },
-    { $set: { postDraft: { step: 'thumbnail', videoFiles: [], createdAt: now() } }, $unset: { batchDraft: '', batchStartedAt: '' } },
+    { $set: { postDraft: { step: 'thumbnail', videoFiles: [], createdAt: now() } }, $unset: { batchDraft: '', batchStartedAt: '', pendingAutoAlbum: '' } },
   );
   return ctx.reply('🖼 Step 1/3: Send the thumbnail image for your post. Use /cancel to stop.');
 });
@@ -578,7 +674,7 @@ bot.action('post:cancel', async (ctx) => {
   if (user?.postDraft?.storageMessageId) {
     await ctx.telegram.deleteMessage(config.dbChannelId, user.postDraft.storageMessageId).catch(() => {});
   }
-  await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { postDraft: '' } });
+  await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { postDraft: '', pendingAutoAlbum: '' } });
   return ctx.reply('🛑 Post creation cancelled.', Markup.inlineKeyboard([[Markup.button.callback('🏠 Main menu', 'menu:home')]]));
 });
 
@@ -679,7 +775,7 @@ bot.command('cancel', async (ctx) => {
   if (user?.postDraft?.storageMessageId) await ctx.telegram.deleteMessage(config.dbChannelId, user.postDraft.storageMessageId).catch(() => {});
   await collection('users').updateOne(
     { userId: ctx.from.id },
-    { $unset: { batchDraft: '', batchStartedAt: '', pendingPasswordPrompt: '', pendingBroadcast: '', pendingChannelAdd: '', pendingForceSubAdd: '', postDraft: '' } },
+    { $unset: { batchDraft: '', batchStartedAt: '', pendingPasswordPrompt: '', pendingBroadcast: '', pendingChannelAdd: '', pendingForceSubAdd: '', pendingAutoAlbum: '', postDraft: '' } },
   );
   return ctx.reply('🛑 Current action cancelled.');
 });
@@ -840,8 +936,27 @@ bot.on('message', async (ctx) => {
 
   const workflowUser = await collection('users').findOne(
     { userId: ctx.from.id },
-    { projection: { postDraft: 1, pendingChannelAdd: 1, pendingForceSubAdd: 1 } },
+    { projection: { postDraft: 1, pendingChannelAdd: 1, pendingForceSubAdd: 1, pendingAutoAlbum: 1 } },
   );
+
+  if (workflowUser?.pendingAutoAlbum && ctx.message.media_group_id) {
+    const key = `${ctx.from.id}:${ctx.message.media_group_id}`;
+    let buffer = autoAlbumBuffers.get(key);
+    if (!buffer) buffer = { ctx, messages: [], timer: null };
+    if (!buffer.messages.some((message) => message.message_id === ctx.message.message_id)) {
+      buffer.messages.push(ctx.message);
+    }
+    if (buffer.timer) clearTimeout(buffer.timer);
+    buffer.timer = setTimeout(() => {
+      autoAlbumBuffers.delete(key);
+      processAutoAlbum(buffer.ctx, buffer.messages).catch((error) => {
+        console.error('[auto] Album processing failed:', error.message);
+        buffer.ctx.reply('❌ Auto-post failed unexpectedly. Please run /auto and try again.').catch(() => {});
+      });
+    }, 1400);
+    autoAlbumBuffers.set(key, buffer);
+    return;
+  }
 
   if (workflowUser?.pendingForceSubAdd && ctx.message.text && !ctx.message.text.startsWith('/')) {
     if (!isAdmin(ctx)) return ctx.reply('⛔ Only admins can manage force subscription.');
