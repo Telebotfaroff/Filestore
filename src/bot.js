@@ -210,7 +210,7 @@ bot.command('premium', async (ctx) => {
 bot.on('pre_checkout_query', async (ctx) => {
   const query = ctx.update.pre_checkout_query;
   const expected = `premium_${config.starsDays}d_${query.from.id}`;
-  if (query.currency !== 'XTR' || query.invoice_payload !== expected) {
+  if (query.currency !== 'XTR' || query.total_amount !== config.starsPrice || query.invoice_payload !== expected) {
     return ctx.answerPreCheckoutQuery(false, 'This payment invoice is invalid or expired.');
   }
   return ctx.answerPreCheckoutQuery(true);
@@ -306,27 +306,40 @@ bot.on('message', async (ctx) => {
   if (ctx.message.successful_payment) {
     const payment = ctx.message.successful_payment;
     const expectedPayload = `premium_${config.starsDays}d_${ctx.from.id}`;
-    if (payment.currency !== 'XTR' || payment.invoice_payload !== expectedPayload) {
+    if (payment.currency !== 'XTR' || payment.total_amount !== config.starsPrice || payment.invoice_payload !== expectedPayload) {
       return ctx.reply('❌ Payment details did not match this account. Please contact support.');
     }
+    if (payment.total_amount !== config.starsPrice) {
+      return ctx.reply('❌ The payment amount did not match the configured plan. Please contact support.');
+    }
+    let paymentRecord;
     try {
-      await collection('payments').insertOne({
+      const inserted = await collection('payments').insertOne({
         telegramPaymentChargeId: payment.telegram_payment_charge_id,
         providerPaymentChargeId: payment.provider_payment_charge_id || null,
         userId: ctx.from.id,
         currency: payment.currency,
         totalAmount: payment.total_amount,
         payload: payment.invoice_payload,
+        status: 'pending',
         createdAt: now(),
       });
+      paymentRecord = await collection('payments').findOne({ _id: inserted.insertedId });
     } catch (error) {
-      if (error?.code === 11000) return ctx.reply('✅ This payment has already been processed.');
-      throw error;
+      if (error?.code !== 11000) throw error;
+      paymentRecord = await collection('payments').findOne({ telegramPaymentChargeId: payment.telegram_payment_charge_id });
+      if (!paymentRecord || paymentRecord.status === 'processed') {
+        return ctx.reply('✅ This payment has already been processed.');
+      }
     }
     const user = await collection('users').findOne({ userId: ctx.from.id }, { projection: { premiumUntil: 1 } });
     const base = user?.premiumUntil && user.premiumUntil > now() ? user.premiumUntil : now();
     const premiumUntil = new Date(base.getTime() + config.starsDays * 24 * 60 * 60 * 1000);
     await collection('users').updateOne({ userId: ctx.from.id }, { $set: { premiumUntil } });
+    await collection('payments').updateOne(
+      { _id: paymentRecord._id, status: 'pending' },
+      { $set: { status: 'processed', processedAt: now(), premiumUntil } },
+    );
     return ctx.reply(`🎉 Payment successful! Premium is active until ${premiumUntil.toUTCString()}.`);
   }
 
