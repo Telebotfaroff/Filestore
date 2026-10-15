@@ -15,6 +15,10 @@ function required(name) {
 }
 
 const ownerId = optionalInteger('OWNER_ID');
+const adminIds = (process.env.ADMIN_IDS || '').split(',').map((value) => value.trim()).filter(Boolean).map(Number);
+if (adminIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+  throw new Error('ADMIN_IDS must be a comma-separated list of positive numeric Telegram user IDs');
+}
 const dbChannelId = optionalInteger('DB_CHANNEL_ID');
 const shortenerUrlTemplate = process.env.SHORTENER_URL_TEMPLATE?.trim() || '';
 const shortenerCallbackSecret = process.env.SHORTENER_CALLBACK_SECRET?.trim() || '';
@@ -29,6 +33,7 @@ if (shortenerUrlTemplate && (!shortenerUrlTemplate.startsWith('https://') || !sh
 export const config = Object.freeze({
   botToken: required('BOT_TOKEN'),
   ownerId,
+  adminIds: [...new Set([ownerId, ...adminIds])],
   dbChannelId,
   mongoUri: required('MONGODB_URI'),
   mongoDbName: process.env.MONGODB_DB_NAME?.trim() || 'filestore',
