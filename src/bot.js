@@ -35,7 +35,7 @@ function adminMenu() {
   ]);
 }
 async function showMainMenu(ctx, edit = false) {
-  const text = `👋 Welcome to Filestore, ${ctx.from.first_name || 'there'}!\\n\\n${isAdmin(ctx) ? 'Use the buttons below to create file links, batches, and password-protected links.' : 'You can open links shared with you. Link creation is restricted to admins.'}`;
+  const text = `👋 Welcome to Filestore, ${ctx.from.first_name || 'there'}!\n\n${isAdmin(ctx) ? 'Use the buttons below to create file links, batches, and password-protected links.' : 'You can open links shared with you. Link creation is restricted to admins.'}`;
   if (edit && ctx.callbackQuery) return ctx.editMessageText(text, mainMenu(ctx)).catch(() => {});
   return ctx.reply(text, mainMenu(ctx));
 }
@@ -272,9 +272,9 @@ async function showForceSubSettings(ctx) {
   const data = await getForceSubConfig();
   const status = data.enabled ? 'ON' : 'OFF';
   const list = data.channels.length
-    ? data.channels.map((channel, index) => `${index + 1}. ${channel.title || channel.username || channel.chatId}${channel.url ? ' — ' + channel.url : ''}`).join('\\n')
+    ? data.channels.map((channel, index) => `${index + 1}. ${channel.title || channel.username || channel.chatId}${channel.url ? ' — ' + channel.url : ''}`).join('\n')
     : 'No required channels configured.';
-  return ctx.reply(`🔒 Force subscription: ${status}\\n\\nUsers must join every listed channel before using the bot.\\n\\n${list}\\n\\nThe bot must be an administrator in every required channel.`, forceSubKeyboard(data));
+  return ctx.reply(`🔒 Force subscription: ${status}\n\nUsers must join every listed channel before using the bot.\n\n${list}\n\nThe bot must be an administrator in every required channel.`, forceSubKeyboard(data));
 }
 
 async function isSubscribed(ctx) {
@@ -371,7 +371,7 @@ bot.action(/^menu:(home|file|batch|password|premium|help|admin)$/, async (ctx) =
     return ctx.reply('🔐 Password settings', Markup.inlineKeyboard([[Markup.button.callback('Set next-link password', 'menu:setpass')],[Markup.button.callback('Clear pending password', 'menu:clearpass')],[Markup.button.callback('🏠 Main menu', 'menu:home')]]));
   }
   if (action === 'premium') return sendPremiumInvoice(ctx);
-  if (action === 'help') return ctx.reply('📚 Help\\n\\nOpen links shared with you. Admins can create links using the menu or by sending media. For batches, send files and tap Finish batch. Password settings protect the next link. Premium uses Telegram Stars.', Markup.inlineKeyboard([[Markup.button.callback('🏠 Main menu', 'menu:home')]]));
+  if (action === 'help') return ctx.reply('📚 Help\n\nOpen links shared with you. Admins can create links using the menu or by sending media. For batches, send files and tap Finish batch. Password settings protect the next link. Premium uses Telegram Stars.', Markup.inlineKeyboard([[Markup.button.callback('🏠 Main menu', 'menu:home')]]));
   if (action === 'admin') {
     if (!isOwner(ctx)) return ctx.reply('⛔ Owner only.');
     return ctx.reply('🛠 Filestore Admin Panel', adminMenu());
@@ -389,7 +389,7 @@ bot.action('menu:finish', async (ctx) => {
   await collection('batches').insertOne(doc);
   await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { batchDraft: '', batchStartedAt: '', pendingPasswordHash: '' } });
   const me = await ctx.telegram.getMe(), link = buildLink(me.username, 'B', tokenData.token);
-  return ctx.reply(`✅ Batch link created\\nFiles: ${ids.length}\\n\\n${link}`, Markup.inlineKeyboard([[Markup.button.url('🔗 Open batch link', link)],[Markup.button.callback('🏠 Main menu', 'menu:home')]]));
+  return ctx.reply(`✅ Batch link created\nFiles: ${ids.length}\n\n${link}`, Markup.inlineKeyboard([[Markup.button.url('🔗 Open batch link', link)],[Markup.button.callback('🏠 Main menu', 'menu:home')]]));
 });
 bot.action('menu:cancel', async (ctx) => {
   await ctx.answerCbQuery().catch(() => {});
@@ -413,11 +413,11 @@ bot.action(/^admin:(stats|auto|broadcast)$/, async (ctx) => {
   if (!isOwner(ctx)) return ctx.reply('⛔ Owner only.');
   if (ctx.match[1] === 'stats') {
     const [users, files, batches, bans, payments] = await Promise.all([collection('users').countDocuments(), collection('files').countDocuments(), collection('batches').countDocuments(), collection('bans').countDocuments(), collection('payments').countDocuments()]);
-    return ctx.reply(`📊 Statistics\\nUsers: ${users}\\nFiles: ${files}\\nBatches: ${batches}\\nBanned: ${bans}\\nStar payments: ${payments}`, adminMenu());
+    return ctx.reply(`📊 Statistics\nUsers: ${users}\nFiles: ${files}\nBatches: ${batches}\nBanned: ${bans}\nStar payments: ${payments}`, adminMenu());
   }
   if (ctx.match[1] === 'auto') {
     const seconds = await getAutoDeleteSeconds();
-    return ctx.reply(`🧹 Current auto-delete: ${seconds ? seconds + ' seconds' : 'off'}\\nChoose expiry for new links:`, Markup.inlineKeyboard([[Markup.button.callback('Off', 'admin:expiry:0'),Markup.button.callback('1 hour', 'admin:expiry:3600')],[Markup.button.callback('1 day', 'admin:expiry:86400'),Markup.button.callback('7 days', 'admin:expiry:604800')],[Markup.button.callback('↩ Admin panel', 'menu:admin')]]));
+    return ctx.reply(`🧹 Current auto-delete: ${seconds ? seconds + ' seconds' : 'off'}\nChoose expiry for new links:`, Markup.inlineKeyboard([[Markup.button.callback('Off', 'admin:expiry:0'),Markup.button.callback('1 hour', 'admin:expiry:3600')],[Markup.button.callback('1 day', 'admin:expiry:86400'),Markup.button.callback('7 days', 'admin:expiry:604800')],[Markup.button.callback('↩ Admin panel', 'menu:admin')]]));
   }
   await collection('users').updateOne({ userId: ctx.from.id }, { $set: { pendingBroadcast: true } });
   return ctx.reply('📣 Send your broadcast as the next normal text message. Send /cancel to abort.');
@@ -506,10 +506,10 @@ bot.action('check_sub', async (ctx) => {
 });
 
 bot.command('help', async (ctx) => {
-  const text = '📚 Filestore help\\n\\n/start — interactive menu or open a share link\\n/premium — buy premium with Stars\\n/help — show help\\n' +
-    (isAdmin(ctx) ? '/batch — start batch\\n/done — finish batch\\n/cancel — cancel current action\\n/setpassword PASSWORD — protect next link\\n/clearpassword — clear password\\n/post — publish a free or paid video post\\n/auto — create a post from a thumbnail/video album\\n/channels — manage posting channels\\n/fsub — manage required membership channels\\n' : '') +
-    (isOwner(ctx) ? '/stats — statistics\\n/autodelete SECONDS — expiry setting\\n/broadcast MESSAGE — broadcast\\n' : '') +
-    '\\nUse the buttons for guided actions.';
+  const text = '📚 Filestore help\n\n/start — interactive menu or open a share link\n/premium — buy premium with Stars\n/help — show help\n' +
+    (isAdmin(ctx) ? '/batch — start batch\n/done — finish batch\n/cancel — cancel current action\n/setpassword PASSWORD — protect next link\n/clearpassword — clear password\n/post — publish a free or paid video post\n/auto — create a post from a thumbnail/video album\n/channels — manage posting channels\n/fsub — manage required membership channels\n' : '') +
+    (isOwner(ctx) ? '/stats — statistics\n/autodelete SECONDS — expiry setting\n/broadcast MESSAGE — broadcast\n' : '') +
+    '\nUse the buttons for guided actions.';
   return ctx.reply(text, mainMenu(ctx));
 });
 
@@ -1008,7 +1008,7 @@ bot.on('message', async (ctx) => {
       data.channels.push(record);
       await saveForceSubConfig(data, ctx.from.id);
       await collection('users').updateOne({ userId: ctx.from.id }, { $unset: { pendingForceSubAdd: '' } });
-      return ctx.reply('✅ Required channel added: ' + record.title + '\\nForce subscription is currently ' + (data.enabled ? 'ON' : 'OFF') + '.', forceSubKeyboard(data));
+      return ctx.reply('✅ Required channel added: ' + record.title + '\nForce subscription is currently ' + (data.enabled ? 'ON' : 'OFF') + '.', forceSubKeyboard(data));
     } catch (error) {
       console.error('[fsub] Channel validation failed:', error.message);
       return ctx.reply('❌ Could not access that channel. Check the ID or @username and confirm the bot is an administrator.');
@@ -1154,7 +1154,7 @@ bot.on('message', async (ctx) => {
         catch { failed++; }
         await new Promise((resolve) => setTimeout(resolve, 40));
       }
-      return ctx.reply(`📣 Broadcast finished.\\nSent: ${sent}\\nFailed: ${failed}`, adminMenu());
+      return ctx.reply(`📣 Broadcast finished.\nSent: ${sent}\nFailed: ${failed}`, adminMenu());
     }
     const userWithUnlock = await collection('users').findOne({ userId: ctx.from.id }, { projection: { pendingUnlock: 1 } });
     const pending = userWithUnlock?.pendingUnlock;
