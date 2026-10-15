@@ -499,7 +499,7 @@ bot.action('check_sub', async (ctx) => {
 
 bot.command('help', async (ctx) => {
   const text = '📚 Filestore help\\n\\n/start — interactive menu or open a share link\\n/premium — buy premium with Stars\\n/help — show help\\n' +
-    (isAdmin(ctx) ? '/batch — start batch\\n/done — finish batch\\n/cancel — cancel current action\\n/setpassword PASSWORD — protect next link\\n/clearpassword — clear password\\n/post — publish a free or paid video post\\n/auto — create a post from a thumbnail/video album\\n/channels — manage posting channels\\nfsub — manage required membership channels\\n' : '') +
+    (isAdmin(ctx) ? '/batch — start batch\\n/done — finish batch\\n/cancel — cancel current action\\n/setpassword PASSWORD — protect next link\\n/clearpassword — clear password\\n/post — publish a free or paid video post\\n/auto — create a post from a thumbnail/video album\\n/channels — manage posting channels\\n/fsub — manage required membership channels\\n' : '') +
     (isOwner(ctx) ? '/stats — statistics\\n/autodelete SECONDS — expiry setting\\n/broadcast MESSAGE — broadcast\\n' : '') +
     '\\nUse the buttons for guided actions.';
   return ctx.reply(text, mainMenu(ctx));
