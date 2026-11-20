@@ -142,3 +142,49 @@ export async function searchPaymentTransactions(pool, searchTerm, limit = 10) {
   );
   return { rows, total: Number(countResult.rows[0]?.total ?? 0), term, limit: safeLimit };
 }
+
+export async function getPaymentAnalytics(pool) {
+  const daily = await pool.query(`SELECT date_trunc('day', created_at)::date AS day, currency,
+      COUNT(*) FILTER (WHERE status = 'applied')::int AS successful_count,
+      COUNT(*) FILTER (WHERE status IN ('rejected','expired'))::int AS unsuccessful_count,
+      COALESCE(SUM(amount_minor) FILTER (WHERE status = 'applied'), 0)::bigint AS successful_minor,
+      COUNT(*)::int AS total_count
+    FROM payment_transactions WHERE created_at >= NOW() - INTERVAL '30 days'
+    GROUP BY 1, 2 ORDER BY 1, 2`);
+  const methods = await pool.query(`SELECT method, currency,
+      COUNT(*) FILTER (WHERE status = 'applied')::int AS successful_count,
+      COUNT(*) FILTER (WHERE status IN ('rejected','expired'))::int AS unsuccessful_count,
+      COALESCE(SUM(amount_minor) FILTER (WHERE status = 'applied'), 0)::bigint AS successful_minor,
+      COUNT(*)::int AS total_count
+    FROM payment_transactions WHERE created_at >= NOW() - INTERVAL '30 days'
+    GROUP BY method, currency ORDER BY method, currency`);
+  const totals = await pool.query(`SELECT currency,
+      COUNT(*) FILTER (WHERE status = 'applied')::int AS successful_count,
+      COUNT(*) FILTER (WHERE status IN ('rejected','expired'))::int AS unsuccessful_count,
+      COUNT(*)::int AS total_count,
+      COALESCE(SUM(amount_minor) FILTER (WHERE status = 'applied'), 0)::bigint AS successful_minor
+    FROM payment_transactions WHERE created_at >= NOW() - INTERVAL '30 days'
+    GROUP BY currency ORDER BY currency`);
+  const premium = await pool.query(`SELECT
+      COUNT(*) FILTER (WHERE status = 'active' AND starts_at <= NOW() AND (expires_at IS NULL OR expires_at > NOW()))::int AS active_members,
+      COUNT(*) FILTER (WHERE status = 'active' AND created_at >= NOW() - INTERVAL '30 days')::int AS new_members_30d,
+      COUNT(*)::int AS membership_records_30d
+    FROM premium_memberships WHERE created_at >= NOW() - INTERVAL '30 days'`);
+  const users = await pool.query(`SELECT COUNT(DISTINCT user_telegram_id)::int AS paying_users_30d
+    FROM payment_transactions WHERE status = 'applied' AND created_at >= NOW() - INTERVAL '30 days'`);
+  return { daily: daily.rows, methods: methods.rows, totals: totals.rows, premium: premium.rows[0] ?? {}, payingUsers: Number(users.rows[0]?.paying_users_30d ?? 0) };
+}
+
+export function formatPaymentAnalytics(analytics) {
+  const amount = (minor, currency) => (Number(minor ?? 0) / 100).toFixed(2) + ' ' + currency;
+  const lines = ['Payment Analytics · Last 30 days', '', 'Revenue and outcomes'];
+  for (const row of analytics.totals) lines.push(row.currency + ' · Revenue: ' + amount(row.successful_minor, row.currency) + ' · Successful: ' + row.successful_count + ' · Failed/expired: ' + row.unsuccessful_count + ' · Total: ' + row.total_count);
+  if (!analytics.totals.length) lines.push('No payment records in the selected period.');
+  lines.push('', 'Payment method breakdown');
+  for (const row of analytics.methods) lines.push(row.method + ' · ' + row.currency + ' · Revenue ' + amount(row.successful_minor, row.currency) + ' · Success ' + row.successful_count + ' · Failed/expired ' + row.unsuccessful_count + ' · Total ' + row.total_count);
+  if (!analytics.methods.length) lines.push('No method records.');
+  lines.push('', 'Premium conversion snapshot', 'Active memberships now: ' + Number(analytics.premium.active_members ?? 0), 'New active memberships (30d): ' + Number(analytics.premium.new_members_30d ?? 0), 'Membership records created (30d): ' + Number(analytics.premium.membership_records_30d ?? 0), 'Unique paying users (30d): ' + Number(analytics.payingUsers ?? 0), '', 'Daily applied revenue');
+  for (const row of analytics.daily) lines.push(new Date(row.day).toISOString().slice(0, 10) + ' · ' + row.currency + ' · ' + amount(row.successful_minor, row.currency) + ' · ' + row.successful_count + ' successful');
+  if (!analytics.daily.length) lines.push('No daily payment totals.');
+  return lines.join('\n');
+}
