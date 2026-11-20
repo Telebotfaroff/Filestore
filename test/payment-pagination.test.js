@@ -29,3 +29,29 @@ test('payment list safely clamps pagination and normalizes unknown filter', asyn
   assert.deepEqual(calls[1].params, [10, 0]);
   assert.doesNotMatch(calls[1].sql, /injected/);
 });
+
+import { searchPaymentTransactions } from '../src/admin/dashboard-repository.js';
+
+test('payment search supports IDs and reference text with a bounded result set', async () => {
+  const calls = [];
+  const pool = { query: async (sql, params) => {
+    calls.push({ sql, params });
+    if (sql.includes('COUNT(*)::int AS total')) return { rows: [{ total: 14 }] };
+    return { rows: [{ id: 3 }] };
+  } };
+  const result = await searchPaymentTransactions(pool, 'UTR_45%', 50);
+  assert.deepEqual(result, { rows: [{ id: 3 }], total: 14, term: 'UTR_45%', limit: 10 });
+  assert.deepEqual(calls[0].params, ['UTR_45%', '%UTR_45%%']);
+  assert.deepEqual(calls[1].params, ['UTR_45%', '%UTR_45%%', 10]);
+  assert.ok(calls[0].sql.includes('id::text = $1'));
+  assert.ok(calls[0].sql.includes('user_telegram_id::text = $1'));
+  assert.ok(calls[0].sql.includes('external_transaction_id ILIKE $2'));
+  assert.ok(calls[0].sql.includes('utr ILIKE $2'));
+});
+
+test('blank payment search performs no SQL', async () => {
+  let called = false;
+  const result = await searchPaymentTransactions({ query: async () => { called = true; } }, '   ');
+  assert.deepEqual(result, { rows: [], total: 0, term: '' });
+  assert.equal(called, false);
+});
