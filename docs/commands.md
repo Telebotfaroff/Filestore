@@ -60,6 +60,18 @@ Public file access remains locked until Access Manager and force-subscription en
 Delivery Bots check membership before continuing a user `/get` request; verification failures block access. The current public file-delivery flow remains closed pending the URL checkpoint and full Access Manager.
 
 
+## Force-subscription controls
+
+- `/force_sub` — show channels and global setting.
+- `/force_sub_add <channel_id or @username> <https_join_link>` — add a channel; Main Bot admin permission is checked.
+- `/force_sub_test <channel_id>` — retest Main Bot channel administrator status.
+- `/force_sub_enable <channel_id>` / `/force_sub_disable <channel_id>` — toggle a channel.
+- `/force_sub_remove <channel_id>` — remove a configured channel.
+- `/force_sub_global_on` / `/force_sub_global_off` — toggle global enforcement.
+
+Delivery Bots verify each user's membership before the user `/get` flow continues. Membership API errors fail closed. The current user file-delivery flow remains locked until checkpoint and Access Manager milestones are completed.
+
+
 ## Security
 
 Managed bot tokens are encrypted using AES-256-GCM. Set `TOKEN_ENCRYPTION_KEY` to a base64-encoded 32-byte key. Generate locally:
