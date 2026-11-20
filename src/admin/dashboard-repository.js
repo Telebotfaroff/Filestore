@@ -166,8 +166,8 @@ export async function getPaymentAnalytics(pool) {
     FROM payment_transactions WHERE created_at >= NOW() - INTERVAL '30 days'
     GROUP BY currency ORDER BY currency`);
   const premium = await pool.query(`SELECT
-      COUNT(*) FILTER (WHERE status = 'active' AND starts_at <= NOW() AND (expires_at IS NULL OR expires_at > NOW()))::int AS active_members,
-      COUNT(*) FILTER (WHERE status = 'active' AND created_at >= NOW() - INTERVAL '30 days')::int AS new_members_30d,
+      (SELECT COUNT(*)::int FROM premium_memberships WHERE status = 'active' AND starts_at <= NOW() AND (expires_at IS NULL OR expires_at > NOW())) AS active_members,
+      COUNT(*) FILTER (WHERE status = 'active' AND starts_at <= NOW() AND (expires_at IS NULL OR expires_at > NOW()))::int AS new_members_30d,
       COUNT(*)::int AS membership_records_30d
     FROM premium_memberships WHERE created_at >= NOW() - INTERVAL '30 days'`);
   const users = await pool.query(`SELECT COUNT(DISTINCT user_telegram_id)::int AS paying_users_30d
