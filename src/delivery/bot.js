@@ -79,11 +79,13 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
       const me = await bot.telegram.getMe();
       identity = me.username ? '@' + me.username : String(me.id);
       if (worker) return;
+      if (worker) return;
       worker = createDeliveryWorker(bot, pool, logger, identity);
       worker.start();
     },
     stopWorker() {
       worker?.stop();
+      worker = undefined;
     },
   };
 }
