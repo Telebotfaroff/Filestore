@@ -1,4 +1,4 @@
-import { getAdminDashboardStats, formatAdminDashboard, getPaymentReconciliationStats, listRecentPayments, listPaymentTransactions, getPaymentTransactionDetail, searchPaymentTransactions } from './dashboard-repository.js';
+import { getAdminDashboardStats, formatAdminDashboard, getPaymentReconciliationStats, listRecentPayments, listPaymentTransactions, getPaymentTransactionDetail, searchPaymentTransactions, getPaymentAnalytics, formatPaymentAnalytics } from './dashboard-repository.js';
 import { applyVerifiedPayment } from '../payments/fulfillment-repository.js';
 
 export function formatPaymentReconciliation(stats) {
@@ -136,6 +136,13 @@ export function registerDashboardCommands(bot, pool, logger) {
     } catch (error) {
       logger.error({ error: error.message }, 'Payment reconciliation dashboard query failed');
       await ctx.reply('Payment dashboard unavailable. Check database migrations and connection.');
+    }
+  });
+  bot.command('payment_analytics', async (ctx) => {
+    try { await ctx.reply(formatPaymentAnalytics(await getPaymentAnalytics(pool)), { disable_web_page_preview: true }); }
+    catch (error) {
+      logger.error({ error: error.message }, 'Payment analytics query failed');
+      await ctx.reply('Payment analytics unavailable. Check database schema and connection.');
     }
   });
   bot.command('payment_recent', async (ctx) => {
