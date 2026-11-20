@@ -96,6 +96,12 @@ export async function finishDelivery(pool, claim, deliveredMessageId, workerIden
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const ownership = await client.query(
+      `SELECT id FROM delivery_jobs WHERE id = $1 AND status = 'processing'
+       AND locked_by = $2 AND locked_until > NOW() FOR UPDATE`,
+      [claim.jobId, workerIdentity],
+    );
+    if (!ownership.rowCount) throw new Error('Delivery lease lost; refusing to finalize');
     await client.query("UPDATE delivery_attempts SET status = 'delivered', telegram_message_id = $2, finished_at = NOW() WHERE id = $1", [claim.attemptId, deliveredMessageId]);
     await client.query("UPDATE delivery_items SET status = 'delivered', delivered_to = $2, telegram_message_id = $3, delivered_at = NOW(), updated_at = NOW() WHERE id = $1", [claim.itemId, claim.requesterTelegramId, deliveredMessageId]);
     const setting = await client.query("SELECT setting_value FROM delivery_settings WHERE setting_key = 'auto_delete_minutes'");
