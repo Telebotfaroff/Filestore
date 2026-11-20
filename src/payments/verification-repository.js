@@ -1,0 +1,109 @@
+import { createHash } from 'node:crypto';
+
+const METHODS = new Set(['fampay', 'telegram_stars', 'stripe', 'crypto']);
+const PURPOSES = new Set(['premium', 'paid_file']);
+
+function safeHash(value) {
+  return createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
+}
+
+export function validatePaymentSessionInput(input) {
+  if (!input || !METHODS.has(input.method)) throw new Error('Unsupported payment method.');
+  if (!PURPOSES.has(input.purpose)) throw new Error('Unsupported payment purpose.');
+  if (!Number.isSafeInteger(Number(input.amountMinor)) || Number(input.amountMinor) < 0) throw new Error('Invalid payment amount.');
+  const currency = String(input.currency ?? '').toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) throw new Error('Invalid currency.');
+  if (!Number.isFinite(new Date(input.expiresAt).getTime())) throw new Error('Invalid session expiry.');
+  if (input.purpose === 'premium' && (!Number.isSafeInteger(Number(input.planId)) || Number(input.planId) <= 0)) throw new Error('Premium session requires planId.');
+  if (input.purpose === 'paid_file' && (!Number.isSafeInteger(Number(input.fileId)) || Number(input.fileId) <= 0)) throw new Error('Paid-file session requires fileId.');
+  return { ...input, amountMinor: Number(input.amountMinor), currency };
+}
+
+export async function createPaymentSession(pool, input) {
+  const normalized = validatePaymentSessionInput(input);
+  const { rows } = await pool.query(
+    `INSERT INTO payment_sessions (user_telegram_id, method, purpose, plan_id, file_id, expected_amount_minor, currency, expires_at, metadata)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+     RETURNING id, user_telegram_id, method, purpose, plan_id, file_id, expected_amount_minor, currency, status, expires_at, created_at`,
+    [normalized.userId, normalized.method, normalized.purpose, normalized.planId ?? null, normalized.fileId ?? null, normalized.amountMinor, normalized.currency, normalized.expiresAt, JSON.stringify(normalized.metadata ?? {})],
+  );
+  return rows[0];
+}
+
+/**
+ * Idempotently records provider webhook/event receipt. The event is only a receipt:
+ * this function does NOT mark any transaction paid or grant access.
+ */
+export async function recordProviderEvent(pool, { method, eventId, eventType, payload }) {
+  if (!METHODS.has(method)) throw new Error('Unsupported payment method.');
+  const id = String(eventId ?? '').trim();
+  if (!id || id.length > 255) throw new Error('Provider event ID is required (max 255 characters).');
+  const type = String(eventType ?? '').trim();
+  if (!type || type.length > 100) throw new Error('Provider event type is required (max 100 characters).');
+  const hash = safeHash(payload ?? {});
+  const { rows } = await pool.query(
+    `INSERT INTO payment_provider_events (method, provider_event_id, event_type, payload_hash)
+     VALUES ($1,$2,$3,$4)
+     ON CONFLICT (method, provider_event_id) DO NOTHING
+     RETURNING id, method, provider_event_id, event_type, payload_hash, processing_status, received_at`,
+    [method, id, type, hash],
+  );
+  if (rows[0]) return { duplicate: false, event: rows[0] };
+  const prior = await pool.query(
+    'SELECT id, method, provider_event_id, event_type, payload_hash, processing_status, received_at FROM payment_provider_events WHERE method = $1 AND provider_event_id = $2 LIMIT 1',
+    [method, id],
+  );
+  const event = prior.rows[0];
+  if (event.payload_hash !== hash) throw new Error('Provider event ID reused with different payload.');
+  return { duplicate: true, event };
+}
+
+export async function markProviderEvent(pool, eventId, status, transactionId = null, error = null) {
+  if (!['processed', 'ignored', 'failed'].includes(status)) throw new Error('Invalid event status.');
+  const { rows } = await pool.query(
+    `UPDATE payment_provider_events SET processing_status = $2, payment_transaction_id = $3,
+       processed_at = CASE WHEN $2 IN ('processed','ignored') THEN NOW() ELSE processed_at END,
+       last_error = $4 WHERE id = $1 RETURNING id, processing_status, payment_transaction_id, processed_at`,
+    [eventId, status, transactionId, error ? String(error).slice(0, 500) : null],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Provider adapters must independently verify signatures and fetch/validate the
+ * provider's authoritative payment state before calling this function.
+ * Unique provider transaction IDs prevent the same payment being applied twice.
+ */
+export async function recordVerifiedPayment(pool, payment) {
+  const method = payment.method;
+  if (!METHODS.has(method)) throw new Error('Unsupported payment method.');
+  const transactionId = String(payment.externalTransactionId ?? '').trim();
+  if (!transactionId || transactionId.length > 255) throw new Error('Verified external transaction ID is required.');
+  const userId = Number(payment.userId);
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error('Invalid Telegram user ID.');
+  const amountMinor = Number(payment.amountMinor);
+  if (!Number.isSafeInteger(amountMinor) || amountMinor < 0) throw new Error('Invalid verified amount.');
+  const currency = String(payment.currency ?? '').toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) throw new Error('Invalid verified currency.');
+  const purpose = payment.purpose;
+  if (!PURPOSES.has(purpose)) throw new Error('Invalid payment purpose.');
+  const { rows } = await pool.query(
+    `INSERT INTO payment_transactions (user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, amount_minor, currency, status, verified_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'verified',NOW())
+     ON CONFLICT (method, external_transaction_id) WHERE external_transaction_id IS NOT NULL DO NOTHING
+     RETURNING id, user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, amount_minor, currency, status, verified_at`,
+    [userId, method, transactionId, purpose, payment.planId ?? null, payment.fileId ?? null, amountMinor, currency],
+  );
+  if (rows[0]) return { duplicate: false, transaction: rows[0] };
+  const prior = await pool.query(
+    'SELECT id, user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, amount_minor, currency, status, verified_at FROM payment_transactions WHERE method = $1 AND external_transaction_id = $2 LIMIT 1',
+    [method, transactionId],
+  );
+  const tx = prior.rows[0];
+  const same = String(tx.user_telegram_id) === String(userId) && tx.purpose === purpose &&
+    Number(tx.amount_minor) === amountMinor && tx.currency === currency &&
+    (tx.plan_id == null ? payment.planId == null : String(tx.plan_id) === String(payment.planId)) &&
+    (tx.file_id == null ? payment.fileId == null : String(tx.file_id) === String(payment.fileId));
+  if (!same) throw new Error('Transaction ID already exists but does not match this payment.');
+  return { duplicate: true, transaction: tx };
+}
