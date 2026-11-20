@@ -3,11 +3,11 @@ name: FileStore CI
 on:
   push:
     branches: [main]
-  paths:
-    - 'src/**'
-    - 'test/**'
-    - 'package.json'
-    - '.github/workflows/**'
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'package.json'
+      - '.github/workflows/**'
   pull_request:
     branches: [main]
 
