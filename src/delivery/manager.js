@@ -186,6 +186,7 @@ export function createDeliveryBotManager(config, logger, pool) {
     const tester = runtime?.runtime.bot ?? new Telegraf(decryptBotToken(record.token_ciphertext, config.tokenEncryptionKey));
     const info = await tester.telegram.getMe();
     const channels = await pool.query('SELECT telegram_chat_id, title FROM storage_channels WHERE is_enabled = TRUE ORDER BY priority ASC');
+    const forceSubChannels = await pool.query('SELECT telegram_chat_id, title FROM force_sub_channels WHERE is_enabled = TRUE ORDER BY id ASC');
     const checks = [];
     for (const channel of channels.rows.slice(0, 12)) {
       try {
@@ -193,6 +194,14 @@ export function createDeliveryBotManager(config, logger, pool) {
         checks.push({ channel: channel.title ?? channel.telegram_chat_id, status: ['administrator', 'member'].includes(member.status) ? 'ok' : 'not_member' });
       } catch (error) {
         checks.push({ channel: channel.title ?? channel.telegram_chat_id, status: 'error', message: error.message.slice(0, 120) });
+      }
+    }
+    for (const channel of forceSubChannels.rows.slice(0, 12)) {
+      try {
+        const member = await tester.telegram.getChatMember(channel.telegram_chat_id, info.id);
+        checks.push({ channel: channel.title ?? channel.telegram_chat_id, status: member.status === 'administrator' ? 'force_sub_admin_ok' : 'force_sub_needs_admin' });
+      } catch (error) {
+        checks.push({ channel: channel.title ?? channel.telegram_chat_id, status: 'force_sub_error', message: error.message.slice(0, 120) });
       }
     }
     return { bot: info, checks };
