@@ -67,6 +67,17 @@ export async function claimNextDeliveryJob(pool, workerIdentity) {
   }
 }
 
+
+export async function renewDeliveryLease(pool, jobId, workerIdentity) {
+  const result = await pool.query(
+    `UPDATE delivery_jobs SET locked_until = NOW() + INTERVAL '90 seconds', updated_at = NOW()
+     WHERE id = $1 AND status = 'processing' AND locked_by = $2 AND locked_until > NOW()
+     RETURNING id`,
+    [jobId, workerIdentity],
+  );
+  return result.rowCount === 1;
+}
+
 export async function getDeliverySource(pool, fileId) {
   const result = await pool.query(
     `SELECT f.file_code, f.file_name, f.telegram_file_id, sm.telegram_message_id,
