@@ -7,19 +7,23 @@ import { checkForceSubscription } from '../access/force-subscription.js';
 import { upsertTelegramUser } from '../access/user-repository.js';
 
 function getMissingSubscriptionMarkup(missing) {
-  const rows = missing.map((channel) => [Markup.button.url('Join ' + String(channel.title ?? 'channel').slice(0, 40), channel.join_url)]);
+  const rows = missing.slice(0, 20).map((channel) => [Markup.button.url('Join ' + String(channel.title ?? 'channel').slice(0, 40), channel.join_url)]);
   rows.push([Markup.button.callback('I joined — Verify', 'fs_verify')]);
   return Markup.inlineKeyboard(rows);
 }
 
-async function logForceSubEvent(pool, eventType, userId, result) {
-  await pool.query('INSERT INTO activity_logs (event_type, actor_telegram_id, target_telegram_id, details) VALUES ($1, $2, $2, $3::jsonb)', [eventType, userId, JSON.stringify({ missingChannelIds: result.missing.map((channel) => channel.telegram_chat_id) })]);
+async function logForceSubEvent(pool, logger, eventType, userId, result) {
+  try {
+    await pool.query('INSERT INTO activity_logs (event_type, actor_telegram_id, target_telegram_id, details) VALUES ($1, $2, $2, $3::jsonb)', [eventType, userId, JSON.stringify({ missingChannelIds: result.missing.map((channel) => channel.telegram_chat_id) })]);
+  } catch (error) {
+    logger.warn({ userId, error: error.message }, 'Force-sub activity log write failed');
+  }
 }
 
 
 async function showForceSubStatus(ctx, telegram, pool, userId) {
   const result = await checkForceSubscription(telegram, pool, userId);
-  await logForceSubEvent(pool, result.passed ? 'force_sub_verified' : 'force_sub_blocked', userId, result);
+  await logForceSubEvent(pool, logger, result.passed ? 'force_sub_verified' : 'force_sub_blocked', userId, result);
   if (result.passed) {
     await ctx.reply('Subscription check passed. All required channels are joined.');
     return result;
@@ -67,7 +71,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
       await ctx.answerCbQuery('Checking subscriptions…');
       await upsertTelegramUser(pool, ctx.from);
       const result = await checkForceSubscription(ctx.telegram, pool, ctx.from.id);
-      await logForceSubEvent(pool, result.passed ? 'force_sub_verified' : 'force_sub_blocked', ctx.from.id, result);
+      await logForceSubEvent(pool, logger, result.passed ? 'force_sub_verified' : 'force_sub_blocked', ctx.from.id, result);
       if (result.passed) {
         try { await ctx.editMessageText('Subscription verification passed. All required channels are joined.'); } catch {}
       } else {
