@@ -43,7 +43,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
   bot.use(async (ctx, next) => {
     if (isAdmin(ctx.from?.id, config.adminIds)) return next();
     const command = ctx.message?.text?.trim().split(/\s+/)[0]?.split('@')[0] ?? '';
-    const allowed = ['/start', '/verify', '/get'].includes(command) || ctx.callbackQuery?.data === 'fs_verify';
+    const allowed = ['/start', '/verify', '/get', '/paid'].includes(command || ctx.callbackQuery?.data === 'fs_verify';
     if (allowed) return next();
     if (ctx.chat?.type === 'private') await ctx.reply('This bot is currently preparing its file access system.');
   });
