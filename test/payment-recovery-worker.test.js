@@ -35,9 +35,11 @@ test('failed payment recovery records bounded exponential backoff and error', as
       return { rows: [] };
     }, release(){} }),
   };
-  const logger = { info(){}, warn(){}, error(){} };
+  let resolveWarning;
+  const warned = new Promise(resolve => { resolveWarning = resolve; });
+  const logger = { info(){}, warn(){ resolveWarning(); }, error(){} };
   const worker = startPaymentRecoveryWorker(pool, logger, null, 60_000);
-  await new Promise(resolve => setTimeout(resolve, 20));
+  await warned;
   worker.stop();
   assert.equal(scheduled.length, 1);
   assert.equal(scheduled[0].params[0], 77);
