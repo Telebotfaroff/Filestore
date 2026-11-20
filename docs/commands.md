@@ -168,7 +168,7 @@ The timer starts after a delivery succeeds. Existing scheduled deletions remain 
 
 ## Payment reconciliation (admin)
 
-- `/payments` — Summary of payment, checkout-session, and provider-event states. Includes a shortcut to recent transactions.
+- `/payments` — Summary of payment, checkout-session, and provider-event states. Buttons open recent transactions or 30-day analytics.
 - `/payment_recent` — Latest 10 payment transactions with inline **Details** buttons.
 - Transaction detail view — Shows payment/session/event history. Verified transactions expose a **Retry safe fulfillment** button.
 - **Recent payments** — Return to the transaction list; **Refresh** reloads it.
