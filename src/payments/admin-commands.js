@@ -1,4 +1,4 @@
-import { configurePaymentMethod, disablePaymentMethod, listPaymentMethods, markPaymentMethodTest } from './repository.js';
+import { configurePaymentMethod, disablePaymentMethod, listPaymentMethods, markPaymentMethodTest, listPaymentTransactions } from './repository.js';
 import { applyVerifiedPayment } from './fulfillment-repository.js';
 
 const METHODS = ['fampay', 'telegram_stars', 'stripe', 'crypto'];
@@ -9,6 +9,25 @@ function hasSensitiveConfigKey(value) {
   return Object.entries(value).some(([key, item]) => /(secret|token|api.?key|password|credential|private.?key)/i.test(key) || hasSensitiveConfigKey(item));
 }
 export function registerPaymentAdminCommands(bot, pool, config, logger) {
+  bot.command('payment_transactions', async (ctx) => {
+    const status = args(ctx)[0] ?? null;
+    try {
+      const rows = await listPaymentTransactions(pool, status, 15);
+      if (!rows.length) return ctx.reply(status ? 'No payment transactions with status ' + status + '.' : 'No payment transactions recorded.');
+      const lines = rows.map((row) => {
+        const amount = (Number(row.amount_minor) / 100).toFixed(2) + ' ' + row.currency;
+        return `#${row.id} · ${String(row.status).toUpperCase()} · ${row.method}
+User: ${row.user_telegram_id ?? 'unknown'} · ${row.purpose}
+Amount: ${amount} · ${row.external_transaction_id ?? 'no provider ID'}
+Created: ${new Date(row.created_at).toISOString()}`;
+      });
+      await ctx.reply('Payment transactions (latest 15)' + (status ? ' · ' + status : '') + '\\n\\n' + lines.join('\\n\\n'));
+    } catch (error) {
+      logger.error({ error: error.message }, 'Payment transaction listing failed');
+      await ctx.reply('Could not list payment transactions. Valid filters: pending, verified, applied, rejected, expired.');
+    }
+  });
+
   bot.command('payment_methods', async (ctx) => {
     try {
       const rows = await listPaymentMethods(pool);
