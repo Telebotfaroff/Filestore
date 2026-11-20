@@ -20,7 +20,7 @@ async function main() {
   });
   if (migrations.rowCount === 0) throw new Error('No database migrations found. Run npm run migrate first.');
   const requiredTables = await pool.query(
-    "SELECT to_regclass('users') AS users, to_regclass('files') AS files, to_regclass('storage_channels') AS storage_channels, to_regclass('file_ingest_requests') AS file_ingest_requests, to_regclass('delivery_jobs') AS delivery_jobs, to_regclass('delivery_bots') AS delivery_bots",
+    "SELECT to_regclass('users') AS users, to_regclass('files') AS files, to_regclass('storage_channels') AS storage_channels, to_regclass('file_ingest_requests') AS file_ingest_requests, to_regclass('delivery_jobs') AS delivery_jobs, to_regclass('delivery_bots') AS delivery_bots, to_regclass('force_sub_channels') AS force_sub_channels",
   );
   if (Object.values(requiredTables.rows[0]).some((tableName) => tableName === null)) {
     throw new Error('Required FileStore tables are missing. Run npm run migrate first.');
