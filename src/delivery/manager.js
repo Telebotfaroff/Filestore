@@ -108,14 +108,14 @@ export function createDeliveryBotManager(config, logger, pool) {
       client.release();
     }
     for (const entry of runtimes.values()) entry.runtime.stopWorker();
-    runtimes.get(String(id))?.runtime.startWorker();
+    await runtimes.get(String(id))?.runtime.startWorker();
     return true;
   }
 
   async function ensurePrimary() {
     const current = await pool.query("SELECT id FROM delivery_bots WHERE role = 'primary' AND is_enabled = TRUE AND runtime_status = 'running' LIMIT 1");
     if (current.rowCount && runtimes.has(String(current.rows[0].id))) {
-      runtimes.get(String(current.rows[0].id)).runtime.startWorker();
+      await runtimes.get(String(current.rows[0].id)).runtime.startWorker();
       return current.rows[0].id;
     }
     const candidate = await pool.query("SELECT id FROM delivery_bots WHERE is_enabled = TRUE AND runtime_status = 'running' AND role = 'backup' ORDER BY priority ASC, id ASC LIMIT 1");
@@ -154,7 +154,7 @@ export function createDeliveryBotManager(config, logger, pool) {
     await pool.query("UPDATE delivery_bots SET runtime_status = 'running', last_health_at = NOW(), updated_at = NOW() WHERE id = $1", [id]);
     const runtimeEntry = runtimes.get(String(id));
     if (runtimeEntry) runtimeEntry.paused = false;
-    if (record.role === 'primary') runtime.runtime.startWorker();
+    if (record.role === 'primary') await runtime.runtime.startWorker();
     await ensurePrimary();
     return true;
   }
