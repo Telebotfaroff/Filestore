@@ -4,11 +4,12 @@ A modular Telegram file indexing and delivery platform built with Node.js, Teleg
 
 ## Progress
 
-- **Milestones 1–5:** foundation, configuration, database migrations, Main Bot runtime, and storage-channel manager implemented.
-- **Milestone 6:** media ingestion, metadata indexing, unique file codes, duplicate detection, and search implemented.
-- **Milestone 7:** persistent delivery jobs, separate administrator-only test Delivery Bot, attempt tracking, and conservative crash recovery implemented.
+- **Milestones 1–5:** foundation, configuration, migrations, Main Bot, and storage-channel manager.
+- **Milestone 6:** media ingestion, metadata, file codes, duplicate detection, and file search.
+- **Milestone 7:** persistent single-file delivery jobs, delivery attempts, and conservative recovery.
+- **Milestone 8:** dynamic Delivery Bot manager with encrypted tokens, independent runtimes, primary/backup role, priority, pause/resume/restart/remove, permission tests, and health-based failover.
 
-The code is committed in sequential pieces. Live PostgreSQL/Neon and Telegram API integration testing still requires project credentials and has not been run. The Delivery Bot intentionally remains administrator-only until Access Manager and force-subscription checks are implemented.
+Live PostgreSQL/Neon and Telegram integration testing is pending credentials. User delivery remains admin-only until access rules and force-subscription are implemented.
 
 ## Stack
 
@@ -17,25 +18,25 @@ The code is committed in sequential pieces. Live PostgreSQL/Neon and Telegram AP
 - PostgreSQL (Neon-compatible)
 - pg, Zod, dotenv, Pino
 
-## Local setup
+## Setup
 
-1. Install Node.js 22 or newer.
-2. Clone the repository.
-3. Copy `.env.example` to `.env`.
-4. Configure `MAIN_BOT_TOKEN`, `DATABASE_URL`, and at least one numeric `ADMIN_IDS`.
-5. Optionally configure `DELIVERY_BOT_TOKEN` for the admin-only Delivery Bot test runtime.
+1. Install Node.js 22+ and clone this repository.
+2. Copy `.env.example` to `.env`.
+3. Set `MAIN_BOT_TOKEN`, `DATABASE_URL`, and numeric `ADMIN_IDS`.
+4. Optionally set `DELIVERY_BOT_TOKEN` to bootstrap a Delivery Bot.
+5. For token management, generate a 32-byte base64 `TOKEN_ENCRYPTION_KEY` locally.
 6. Run `npm install`.
-7. Apply migrations: `npm run migrate`.
-8. Start: `npm start`.
+7. Run `npm run migrate`.
+8. Run `npm start`.
 
-## Admin commands
+## Command reference
 
 See [docs/commands.md](docs/commands.md).
 
-## Development rules
+## AI coding rules
 
-See [AGENTS.md](AGENTS.md). The user has authorized the roadmap; milestones are implemented sequentially and never collapsed into one giant change.
+See [AGENTS.md](AGENTS.md). Full roadmap permission is active; development proceeds sequentially and tests are reported honestly.
 
-## Security
+## Secrets
 
-Never commit Telegram bot tokens, database credentials, encryption keys, payment credentials, or other secrets. Configure secrets through local environment variables or the hosting provider's environment settings.
+Never commit tokens, database URLs, encryption keys, or payment credentials. Use environment variables or host secret settings.
