@@ -59,3 +59,14 @@ export async function listExpiredPaymentSessions(pool, limit = 20) {
   );
   return rows;
 }
+
+export async function listPaymentRecoveryFailures(pool, limit = 20) {
+  const safeLimit = Math.max(1, Math.min(50, Number(limit) || 20));
+  const { rows } = await pool.query(
+    `SELECT id,user_telegram_id,method,purpose,amount_minor,currency,recovery_attempts,recovery_next_at,recovery_last_error,verified_at
+     FROM payment_transactions WHERE status='verified' AND recovery_attempts > 0
+     ORDER BY recovery_next_at ASC,verified_at ASC NULLS FIRST,id ASC LIMIT $1`,
+    [safeLimit],
+  );
+  return rows;
+}
