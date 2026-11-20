@@ -131,7 +131,7 @@ export function registerDashboardCommands(bot, pool, logger) {
   bot.command('payments', async (ctx) => {
     try {
       await ctx.reply(formatPaymentReconciliation(await getPaymentReconciliationStats(pool)), {
-        reply_markup: { inline_keyboard: [[{ text: 'Recent transactions', callback_data: 'paymentrecent' }]] },
+        reply_markup: { inline_keyboard: [[{ text: 'Recent transactions', callback_data: 'paymentrecent' }], [{ text: '📊 Analytics (30 days)', callback_data: 'paymentanalytics' }]] },
       });
     } catch (error) {
       logger.error({ error: error.message }, 'Payment reconciliation dashboard query failed');
@@ -189,6 +189,15 @@ export function registerDashboardCommands(bot, pool, logger) {
     }
   });
 
+  bot.action('paymentanalytics', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      await ctx.editMessageText(formatPaymentAnalytics(await getPaymentAnalytics(pool)), { disable_web_page_preview: true });
+    } catch (error) {
+      logger.error({ error: error.message }, 'Payment analytics callback failed');
+      await ctx.answerCbQuery('Could not load payment analytics.', { show_alert: true });
+    }
+  });
   bot.action('paymentrecent', async (ctx) => {
     try { await ctx.answerCbQuery(); await showRecent(ctx, true, 'all', 0); }
     catch (error) {
