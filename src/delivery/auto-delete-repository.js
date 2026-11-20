@@ -11,11 +11,11 @@ export async function setAutoDeleteMinutes(pool, minutes, adminId) {
   );
 }
 
-export async function claimDueDeletion(pool, identity) {
+export async function claimDueDeletion(pool, identity, leaseOwner) {
   const result = await pool.query(
     `UPDATE scheduled_message_deletions
      SET status = 'processing', locked_until = NOW() + INTERVAL '60 seconds',
-         attempt_count = attempt_count + 1, updated_at = NOW()
+         locked_by = $2, attempt_count = attempt_count + 1, updated_at = NOW()
      WHERE id = (
        SELECT id FROM scheduled_message_deletions
        WHERE delivery_bot_identity = $1 AND delete_at <= NOW()
@@ -23,20 +23,26 @@ export async function claimDueDeletion(pool, identity) {
        ORDER BY delete_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
      )
      RETURNING id, chat_id, message_id`,
-    [identity],
+    [identity, leaseOwner],
   );
   const row = result.rows[0];
-  return row ? { id: row.id, chatId: row.chat_id, messageId: row.message_id } : null;
+  return row ? { id: row.id, chatId: row.chat_id, messageId: row.message_id, leaseOwner } : null;
 }
 
-export async function finishScheduledDeletion(pool, id) {
-  await pool.query("UPDATE scheduled_message_deletions SET status = 'deleted', locked_until = NULL, last_error = NULL, updated_at = NOW() WHERE id = $1", [id]);
+export async function finishScheduledDeletion(pool, id, leaseOwner) {
+  const result = await pool.query(
+    "UPDATE scheduled_message_deletions SET status = 'deleted', locked_until = NULL, locked_by = NULL, last_error = NULL, updated_at = NOW() WHERE id = $1 AND status = 'processing' AND locked_by = $2 AND locked_until > NOW()",
+    [id, leaseOwner],
+);
+  return result.rowCount === 1;
 }
 
-export async function failScheduledDeletion(pool, id, error) {
-  await pool.query(
+export async function failScheduledDeletion(pool, id, leaseOwner, error) {
+  const result = await pool.query(
     `UPDATE scheduled_message_deletions SET status = CASE WHEN attempt_count >= 5 THEN 'failed' ELSE 'pending' END,
-     locked_until = NULL, last_error = $2, updated_at = NOW() WHERE id = $1`,
-    [String(error).slice(0, 500), id],
+     locked_until = NULL, locked_by = NULL, last_error = $3, updated_at = NOW()
+     WHERE id = $1 AND status = 'processing' AND locked_by = $2 AND locked_until > NOW()`,
+    [id, leaseOwner, String(error).slice(0, 500)],
   );
+  return result.rowCount === 1;
 }
