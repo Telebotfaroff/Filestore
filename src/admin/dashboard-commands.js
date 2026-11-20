@@ -1,4 +1,4 @@
-import { getAdminDashboardStats, formatAdminDashboard, getPaymentReconciliationStats, listRecentPayments, listPaymentTransactions, getPaymentTransactionDetail } from './dashboard-repository.js';
+import { getAdminDashboardStats, formatAdminDashboard, getPaymentReconciliationStats, listRecentPayments, listPaymentTransactions, getPaymentTransactionDetail, searchPaymentTransactions } from './dashboard-repository.js';
 import { applyVerifiedPayment } from '../payments/fulfillment-repository.js';
 
 export function formatPaymentReconciliation(stats) {
@@ -102,6 +102,7 @@ export function registerDashboardCommands(bot, pool, logger) {
     const filterNames = { all: 'All', verified: 'Verified', applied: 'Applied', rejected: 'Rejected', expired: 'Expired' };
     const text = 'Payment Transactions · ' + filterNames[status] + '\nPage ' + (activePage + 1) + ' / ' + pages + ' · ' + data.total + ' total\n\n' + (rows.length ? rows.map(formatRecentPayment).join('\n\n') : 'No transactions in this filter.');
     const keyboard = rows.map((row) => [{ text: 'Details #' + row.id + ' · ' + String(row.status).toUpperCase(), callback_data: 'paydetail:' + row.id + ':' + status + ':' + activePage }]);
+    keyboard.push([{ text: '🔎 Search payments', callback_data: 'paymentsearchhelp' }]);
     keyboard.push([{ text: (status === 'all' ? '• ' : '') + 'All', callback_data: 'paybrowse:all:0' }, { text: (status === 'verified' ? '• ' : '') + 'Verified', callback_data: 'paybrowse:verified:0' }, { text: (status === 'applied' ? '• ' : '') + 'Applied', callback_data: 'paybrowse:applied:0' }]);
     keyboard.push([{ text: (status === 'rejected' ? '• ' : '') + 'Rejected', callback_data: 'paybrowse:rejected:0' }, { text: (status === 'expired' ? '• ' : '') + 'Expired', callback_data: 'paybrowse:expired:0' }]);
     const nav = [];
@@ -143,6 +144,24 @@ export function registerDashboardCommands(bot, pool, logger) {
       logger.error({ error: error.message }, 'Recent payment list failed');
       await ctx.reply('Could not load recent payment transactions.');
     }
+  });
+  bot.command('payment_search', async (ctx) => {
+    const term = ctx.message?.text?.trim().split(/\\s+/).slice(1).join(' ').trim();
+    if (!term) return ctx.reply('Usage: /payment_search <transaction ID, Telegram user ID, UTR, or external reference>');
+    try {
+      const result = await searchPaymentTransactions(pool, term, 10);
+      const text = 'Payment Search · "' + result.term + '"\\n' + result.total + ' match(es) · showing ' + result.rows.length + '\\n\\n' +
+        (result.rows.length ? result.rows.map(formatRecentPayment).join('\\n\\n') : 'No matching transactions.');
+      const keyboard = result.rows.map((row) => [{ text: 'Details #' + row.id + ' · ' + String(row.status).toUpperCase(), callback_data: 'paydetail:' + row.id + ':all:0' }]);
+      keyboard.push([{ text: '← Payment list', callback_data: 'paybrowse:all:0' }]);
+      await ctx.reply(text, { reply_markup: { inline_keyboard: keyboard }, disable_web_page_preview: true });
+    } catch (error) {
+      logger.error({ term, error: error.message }, 'Payment search failed');
+      await ctx.reply('Payment search failed. Please retry.');
+    }
+  });
+  bot.action('paymentsearchhelp', async (ctx) => {
+    await ctx.answerCbQuery('Use /payment_search followed by a transaction ID, Telegram user ID, UTR, or external reference.', { show_alert: true });
   });
   bot.command('payment_reconcile', async (ctx) => {
     const id = Number(ctx.message?.text?.trim().split(/\s+/)[1]);
