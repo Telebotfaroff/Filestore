@@ -172,6 +172,7 @@ The timer starts after a delivery succeeds. Existing scheduled deletions remain 
 - `/payment_recent` — Latest 10 payment transactions with inline **Details** buttons.
 - Transaction detail view — Shows payment/session/event history. Verified transactions expose a **Retry safe fulfillment** button.
 - **Recent payments** — Return to the transaction list; **Refresh** reloads it.
+- `/payment_analytics` — 30-day revenue by currency, successful vs failed/expired payments, payment-method breakdown, daily revenue, active/new Premium membership counts, and unique paying users.
 - `/payment_search <query>` — Search by transaction ID, Telegram user ID, UTR, or external transaction reference (up to 10 results).
 - `/payment_detail <transaction_id>` — Open transaction details directly.
 - `/payment_reconcile <transaction_id>` — Retry fulfillment for a verified payment. Fulfillment is idempotent.
