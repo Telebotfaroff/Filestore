@@ -50,7 +50,7 @@ export function createDeliveryWorker(bot, pool, logger, identity) {
       }
 
       try {
-        await finishDelivery(pool, claim, sent.message_id);
+        await finishDelivery(pool, claim, sent.message_id, identity);
         logger.info({ jobId: claim.jobId, fileCode: source.file_code, recipient: claim.requesterTelegramId }, 'File delivered');
       } catch (error) {
         // Telegram accepted the copy but the database confirmation failed: never retry blindly.
