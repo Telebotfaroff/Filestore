@@ -25,7 +25,7 @@ export function createMainBot(config, logger, pool) {
 
   bot.command('help', async (ctx) => {
     await ctx.reply(
-      '/start — Admin welcome\n/status — Database status\n/storage — Storage channels\n/storage_add — Add channel\n/storage_test — Test channel permissions\n/storage_enable — Enable channel\n/storage_disable — Disable channel\n/storage_primary — Set primary storage\n/storage_remove — Remove/disable channel\n/files — List indexed files\n/find — Search files\n/fileinfo — File metadata\n/delivery_bots — List delivery bots\n/delivery_bot_add — Add bot token\n/delivery_bot_pause — Pause worker\n/delivery_bot_resume — Resume bot\n/delivery_bot_restart — Restart bot\n/delivery_bot_remove — Remove bot\n/delivery_bot_primary — Set primary bot\n/delivery_bot_priority — Set backup priority\n/delivery_bot_test — Test bot permissions\n/help — Command list'
+      '/start — Admin welcome\n/status — Database status\n/storage — Storage channels\n/storage_add — Add channel\n/storage_test — Test channel permissions\n/storage_enable — Enable channel\n/storage_disable — Disable channel\n/storage_primary — Set primary storage\n/storage_remove — Remove/disable channel\n/files — List indexed files\n/find — Search files\n/fileinfo — File metadata\n/delivery_bots — List managed bots\n/delivery_bot_add — Add token\n/delivery_bot_pause — Pause worker\n/delivery_bot_resume — Resume bot\n/delivery_bot_restart — Restart runtime\n/delivery_bot_remove — Remove bot\n/delivery_bot_primary — Set primary\n/delivery_bot_priority — Set priority\n/delivery_bot_test — Test bot access\n/help — Command list'
     );
   });
 
@@ -49,7 +49,6 @@ export function createMainBot(config, logger, pool) {
   registerFileCommands(bot, pool, logger);
   registerFileIngestHandler(bot, pool, logger);
   registerDeliveryBotManagerCommands(bot, config.deliveryManager, logger);
-
   bot.catch((error, ctx) => {
     logger.error({ updateId: ctx.update?.update_id, error: error.message }, 'Telegram handler error');
   });
