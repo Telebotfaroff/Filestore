@@ -104,7 +104,7 @@ export async function applyVerifiedPayment(pool, transactionId) {
           `INSERT INTO access_grants (user_telegram_id,resource_type,resource_id,grant_reason,expires_at)
            VALUES ($1,'file',$2,$3,NULL) ON CONFLICT (user_telegram_id,resource_type,resource_id)
            DO UPDATE SET grant_reason=EXCLUDED.grant_reason,expires_at=NULL`,
-          [userId,'paid_batch_payment:'+purchase.rows[0].id],
+          [userId,item.file_id,'paid_batch_payment:'+purchase.rows[0].id],
         );
       }
       result = { type: 'paid_batch', batchId: batch.id, purchaseId: purchase.rows[0].id, fileCount: items.rowCount };
