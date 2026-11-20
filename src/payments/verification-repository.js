@@ -134,8 +134,8 @@ export async function recordVerifiedPayment(pool, payment) {
       [userId, method, transactionId, purpose, payment.planId ?? null, payment.fileId ?? null, payment.batchLinkId ?? null, payment.paidLinkId ?? null, amountMinor, currency, sessionId],
     );
     await client.query(
-      `UPDATE payment_sessions SET status = 'verified', provider_session_id = $2, updated_at = NOW() WHERE id = $1`,
-      [sessionId, transactionId],
+      `UPDATE payment_sessions SET status = 'verified', updated_at = NOW() WHERE id = $1`,
+      [sessionId],
     );
     await client.query('COMMIT');
     return { duplicate: false, transaction: inserted.rows[0] };
