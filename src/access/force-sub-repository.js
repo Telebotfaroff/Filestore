@@ -1,6 +1,6 @@
 export async function listForceSubChannels(pool) {
   const result = await pool.query(
-    'SELECT id, telegram_chat_id, title, username, join_url, is_enabled, last_test_status FROM force_sub_channels ORDER BY id ASC',
+    'SELECT id, telegram_chat_id, title, username, join_url, is_enabled, last_test_status FROM force_sub_channels ORDER BY id ASC LIMIT 15',
   );
   return result.rows;
 }
