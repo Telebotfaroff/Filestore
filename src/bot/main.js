@@ -1,6 +1,8 @@
 import { Telegraf } from 'telegraf';
 import { isAdmin } from './admin-guard.js';
 import { registerStorageAdminCommands } from '../storage/admin-commands.js';
+import { registerFileIngestHandler } from '../storage/ingest-handler.js';
+import { registerFileCommands } from '../storage/file-commands.js';
 
 export function createMainBot(config, logger, pool) {
   const bot = new Telegraf(config.mainBotToken);
@@ -20,7 +22,7 @@ export function createMainBot(config, logger, pool) {
     await ctx.reply(
       'FileStore Control Center\n\n' +
       'The admin bot is online. Use /status to check the current foundation services.\n\n' +
-      'Management modules are being implemented in milestones; unavailable features are not shown as active.'
+      'Storage channels: /storage\nAdd channel: /storage_add <channel_id or @username>\nFiles: /files · Search: /find <query>\nFile details: /fileinfo <code>'
     );
   });
 
@@ -45,6 +47,8 @@ export function createMainBot(config, logger, pool) {
   });
 
   registerStorageAdminCommands(bot, pool, logger);
+  registerFileCommands(bot, pool, logger);
+  registerFileIngestHandler(bot, pool, logger);
 
   bot.catch((error, ctx) => {
     logger.error({ updateId: ctx.update?.update_id, error: error.message }, 'Telegram handler error');
