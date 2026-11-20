@@ -7,4 +7,4 @@ ALTER TABLE payment_transactions
   ADD COLUMN IF NOT EXISTS recovery_notification_last_error TEXT;
 CREATE INDEX IF NOT EXISTS payment_recovery_notification_idx
   ON payment_transactions(applied_at,id)
-  WHERE status='applied' AND recovery_notification_sent_at IS NULL AND recovery_notification_attempts < 10;
+  WHERE status='applied' AND recovery_notification_required=TRUE AND recovery_notification_sent_at IS NULL AND recovery_notification_attempts < 10;
