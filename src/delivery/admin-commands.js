@@ -79,7 +79,7 @@ export function registerDeliveryBotManagerCommands(bot, manager, logger) {
   });
 
   bot.command('delivery_bot_priority', async (ctx) => {
-    const parts = ctx.message?.text?.trim().split(/\\s+/) ?? [];
+    const parts = ctx.message?.text?.trim().split(/\s+/) ?? [];
     const id = Number(parts[1]);
     const priority = Number(parts[2]);
     if (!Number.isSafeInteger(id) || id <= 0 || !Number.isInteger(priority) || priority < 1 || priority > 100000) {
