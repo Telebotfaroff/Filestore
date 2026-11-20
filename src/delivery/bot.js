@@ -10,6 +10,8 @@ import { upsertTelegramUser } from '../access/user-repository.js';
 import { evaluateAccess } from '../access/access-manager.js';
 import { getCheckpointRequirement } from '../access/checkpoint-engine.js';
 import { getPaidFileLink, requestPaidFilePurchase, hasPaidFileEntitlement } from '../paid-files/repository.js';
+import { listPremiumPlans } from '../premium/repository.js';
+import { sendStarsInvoice, handleStarsPreCheckout, handleStarsSuccessfulPayment, getTelegramStarsPrice } from '../payments/telegram-stars.js';
 
 async function getStarsConfig(pool) {
   const result = await pool.query('SELECT public_config,is_enabled FROM payment_methods WHERE method=$1', ['telegram_stars']);
@@ -55,10 +57,42 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
   bot.use(async (ctx, next) => {
     if (isAdmin(ctx.from?.id, config.adminIds)) return next();
     const command = ctx.message?.text?.trim().split(/\s+/)[0]?.split('@')[0] ?? '';
-    const allowed = ['/start', '/verify', '/get', '/paid', '/batch', '/batch_get', '/checkpoint_status', '/access_status'].includes(command) || (ctx.callbackQuery?.data === 'fs_verify' || ctx.callbackQuery?.data?.startsWith('fs_premium_'));
+    const allowed = ['/start', '/verify', '/get', '/paid', '/batch', '/batch_get', '/premium', '/checkpoint_status', '/access_status'].includes(command) || ctx.message?.successful_payment || ctx.preCheckoutQuery || (ctx.callbackQuery?.data === 'fs_verify' || ctx.callbackQuery?.data?.startsWith('fs_premium_'));
     if (allowed) return next();
     if (ctx.chat?.type === 'private') await ctx.reply('This bot is currently preparing its file access system.');
   });
+
+  bot.on('pre_checkout_query', (ctx) => handleStarsPreCheckout(bot, pool, ctx, token, logger));
+  bot.on('message', async (ctx, next) => {
+    if (!ctx.message?.successful_payment) return next();
+    return handleStarsSuccessfulPayment(pool, ctx, token, logger);
+  });
+
+  bot.command('premium', async (ctx) => {
+    try {
+      const cfg = await getStarsConfig(pool);
+      if (!cfg) return ctx.reply('Telegram Stars checkout is currently disabled.');
+      const plans = await listPremiumPlans(pool);
+      const available = plans.filter(plan => plan.is_enabled && getTelegramStarsPrice(cfg, 'premium', { planId: plan.id }));
+      if (!available.length) return ctx.reply('No Premium plans have Stars pricing configured yet.');
+      const buttons = available.map(plan => [Markup.button.callback(plan.name + ' · ' + getTelegramStarsPrice(cfg, 'premium', { planId: plan.id }) + ' ⭐', 'fs_premium_' + plan.id)]);
+      return ctx.reply('Choose a Premium plan:', Markup.inlineKeyboard(buttons));
+    } catch (error) { logger.warn({ error: error.message }, 'Premium Stars listing failed'); return ctx.reply('Could not load Premium plans.'); }
+  });
+
+
+  bot.action(/^fs_premium_(\\d+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      await upsertTelegramUser(pool, ctx.from);
+      const planId = Number(ctx.match[1]);
+      const planResult = await pool.query('SELECT id,name,duration_days FROM premium_plans WHERE id=$1 AND is_enabled=TRUE', [planId]);
+      if (!planResult.rowCount) return ctx.reply('Plan is unavailable.');
+      const plan = planResult.rows[0];
+      await sendStarsInvoice(bot, pool, ctx, 'premium', { planId }, plan.name + ' Premium', plan.name + ' · ' + plan.duration_days + ' days access', token);
+    } catch (error) { logger.warn({ error: error.message, userId: ctx.from.id }, 'Premium Stars invoice failed'); return ctx.reply('Premium checkout unavailable: ' + error.message); }
+  });
+
 
   bot.command('start', async (ctx) => {
     await upsertTelegramUser(pool, ctx.from);
