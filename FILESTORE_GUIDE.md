@@ -175,7 +175,7 @@ Stars setup (example price map; IDs are database plan/link/batch IDs and amounts
 /payment_enable telegram_stars
 ```
 
-- `/payment_sessions_expired` — inspect recent expired checkout sessions\n- `/payment_transactions [status]` — list recent transaction records (status filter optional)
+- `/payment_sessions_expired` — inspect recent expired checkout sessions\n- `/payment_recovery_pending` — inspect verified transactions that have failed fulfillment and their scheduled retries\n- `/payment_transactions [status]` — list recent transaction records (status filter optional)
 - `/payment_methods` — list methods
 - `/payment_set METHOD|SECRET|PUBLIC_CONFIG_JSON` — store method config; secrets are encrypted and command is deleted where possible
 - `/payment_test METHOD` — config validation only, not a live transaction test
