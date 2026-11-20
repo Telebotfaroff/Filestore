@@ -28,7 +28,7 @@ export function createDeliveryBot(config, logger, pool) {
     try {
       const file = await getIndexedFile(pool, code);
       if (!file) return ctx.reply('File code not found.');
-      if (!file.telegram_message_id || !file.storage_chat_id) return ctx.reply('This file has no usable storage message.');
+      if (!file.telegram_message_id || !file.storage_chat_id || !file.storage_channel_enabled) return ctx.reply('This file has no usable message in an enabled storage channel.');
       const jobId = await createSingleDeliveryJob(pool, ctx.from.id, file.id, ctx.from.id);
       await ctx.reply(`Delivery queued.\nJob ID: ${jobId}\nFile: ${file.file_name}`);
     } catch (error) {
@@ -53,11 +53,11 @@ export function createDeliveryBot(config, logger, pool) {
       if (!channels.rowCount) return ctx.reply('No enabled storage channels found.');
       const me = await ctx.telegram.getMe();
       const results = [];
-      for (const channel of channels.rows.slice(0, 20)) {
+      for (const channel of channels.rows.slice(0, 12)) {
         try {
           const member = await ctx.telegram.getChatMember(channel.telegram_chat_id, me.id);
           const access = ['administrator', 'member'].includes(member.status) ? 'OK' : 'NOT A MEMBER';
-          results.push(`${access} · ${channel.title ?? channel.telegram_chat_id}`);
+          results.push(`${access} · ${String(channel.title ?? channel.telegram_chat_id).slice(0, 100)}`);
         } catch (error) {
           results.push(`FAILED · ${channel.title ?? channel.telegram_chat_id} · ${error.message.slice(0, 120)}`);
         }
