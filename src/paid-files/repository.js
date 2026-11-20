@@ -144,3 +144,12 @@ export async function confirmPaidFilePurchase(pool, publicCode, userId, adminId)
     throw error;
   } finally { client.release(); }
 }
+
+export async function hasPaidFileEntitlement(pool, userId, fileId) {
+  const result = await pool.query(
+    `SELECT 1 FROM access_grants WHERE user_telegram_id = $1 AND resource_type = 'file' AND resource_id = $2
+       AND (expires_at IS NULL OR expires_at > NOW()) LIMIT 1`,
+    [userId, fileId],
+  );
+  return result.rowCount > 0;
+}
