@@ -5,12 +5,14 @@ import { createMainBot } from './bot/main.js';
 import { createDeliveryBotManager } from './delivery/manager.js';
 import { startCheckpointSessionCleanup } from './access/checkpoint-cleanup-worker.js';
 import { startPaymentRecoveryWorker } from './payments/recovery-worker.js';
+import { startPaymentSessionExpiryWorker } from './payments/session-expiry-worker.js';
 
 let shutdownStarted = false;
 let mainBot;
 let deliveryManager;
 let checkpointCleanupWorker;
 let paymentRecoveryWorker;
+let paymentSessionExpiryWorker;
 
 async function main() {
   const config = loadConfig();
@@ -34,6 +36,7 @@ async function main() {
   checkpointCleanupWorker = startCheckpointSessionCleanup(pool, logger);
   mainBot = createMainBot({ ...config, deliveryManager }, logger, pool);
   paymentRecoveryWorker = startPaymentRecoveryWorker(pool, logger, mainBot.telegram);
+  paymentSessionExpiryWorker = startPaymentSessionExpiryWorker(pool, logger);
   registerShutdown();
 
   await mainBot.launch({ handleSignals: false });
@@ -49,6 +52,7 @@ async function shutdown(signal) {
   console.info('[FileStore] Shutdown requested:', signal);
   try { checkpointCleanupWorker?.stop(); } catch {}
   try { paymentRecoveryWorker?.stop(); } catch {}
+  try { paymentSessionExpiryWorker?.stop(); } catch {}
   try { await deliveryManager?.stopAll(); } catch (error) {
     console.error('[FileStore] Delivery runtimes shutdown failed:', error.message);
   }
