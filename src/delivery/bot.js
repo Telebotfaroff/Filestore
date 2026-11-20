@@ -1,7 +1,8 @@
 import { Telegraf, Markup } from 'telegraf';
 import { isAdmin } from '../bot/admin-guard.js';
 import { getIndexedFile } from '../storage/file-query.js';
-import { createSingleDeliveryJob, getDeliveryStats } from './repository.js';
+import { createSingleDeliveryJob, createBatchDeliveryJob, getDeliveryStats } from './repository.js';
+import { getPaidBatch, requestPaidBatchPurchase, getBatchItems } from '../paid-files/batch-repository.js';
 import { createDeliveryWorker } from './worker.js';
 import { checkForceSubscription } from '../access/force-subscription.js';
 import { upsertTelegramUser } from '../access/user-repository.js';
@@ -43,7 +44,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
   bot.use(async (ctx, next) => {
     if (isAdmin(ctx.from?.id, config.adminIds)) return next();
     const command = ctx.message?.text?.trim().split(/\s+/)[0]?.split('@')[0] ?? '';
-    const allowed = ['/start', '/verify', '/get', '/paid'].includes(command) || ctx.callbackQuery?.data === 'fs_verify';
+    const allowed = ['/start', '/verify', '/get', '/paid', '/batch', '/batch_get'].includes(command) || ctx.callbackQuery?.data === 'fs_verify';
     if (allowed) return next();
     if (ctx.chat?.type === 'private') await ctx.reply('This bot is currently preparing its file access system.');
   });
@@ -79,6 +80,56 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
     }
   });
 
+
+  bot.command('batch', async (ctx) => {
+    const code = ctx.message?.text?.trim().split(/\s+/).slice(1)[0] ?? '';
+    if (!code) return ctx.reply('Usage: /batch <batch_link_code>');
+    try {
+      await upsertTelegramUser(pool, ctx.from);
+      const forceSub = await checkForceSubscription(ctx.telegram, pool, ctx.from.id);
+      await logForceSubEvent(pool, logger, forceSub.passed ? 'force_sub_verified' : 'force_sub_blocked', ctx.from.id, forceSub);
+      if (!forceSub.passed) {
+        const labels = forceSub.missing.slice(0, 20).map((channel) => `• ${channel.title ?? channel.telegram_chat_id}`).join('\n');
+        return ctx.reply('Join required channels first:\n\n' + labels + '\n\nThen verify and retry /batch.', getMissingSubscriptionMarkup(forceSub.missing));
+      }
+      const batch = await getPaidBatch(pool, code);
+      if (!batch || !batch.is_active) return ctx.reply('Batch link invalid, expired, or disabled.');
+      const result = await requestPaidBatchPurchase(pool, code, ctx.from);
+      if (result.alreadyPaid) return ctx.reply('You have already unlocked this batch. Use /batch_get ' + code + ' to deliver all files.');
+      return ctx.reply('Batch purchase request recorded.\\n\\n' + result.title + '\\nFiles: ' + batch.item_count + '\\nPrice: ' + (Number(result.priceMinor) / 100).toFixed(2) + ' ' + result.currency + '\\n\\nPayment is not automatic yet. Contact admin with your Telegram ID: ' + ctx.from.id + '.');
+    } catch (error) {
+      logger.error({ userId: ctx.from.id, error: error.message }, 'Batch purchase request failed');
+      return ctx.reply('Could not create batch purchase request.');
+    }
+  });
+
+  bot.command('batch_get', async (ctx) => {
+    const code = ctx.message?.text?.trim().split(/\s+/).slice(1)[0] ?? '';
+    if (!code) return ctx.reply('Usage: /batch_get <batch_link_code>');
+    try {
+      await upsertTelegramUser(pool, ctx.from);
+      const forceSub = await checkForceSubscription(ctx.telegram, pool, ctx.from.id);
+      await logForceSubEvent(pool, logger, forceSub.passed ? 'force_sub_verified' : 'force_sub_blocked', ctx.from.id, forceSub);
+      if (!forceSub.passed) {
+        const labels = forceSub.missing.slice(0, 20).map((channel) => `• ${channel.title ?? channel.telegram_chat_id}`).join("\\n");
+        return ctx.reply('Join required channels first:\\n\\n' + labels + '\\n\\nVerify before requesting delivery.', getMissingSubscriptionMarkup(forceSub.missing));
+      }
+      const batch = await getPaidBatch(pool, code);
+      if (!batch || !batch.is_active) return ctx.reply('Batch link invalid, expired, or disabled.');
+      const items = await getBatchItems(pool, code);
+      if (!items.length) return ctx.reply('This batch has no files.');
+      for (const item of items) {
+        const entitled = await hasPaidFileEntitlement(pool, ctx.from.id, item.id);
+        if (!entitled) return ctx.reply('Batch is not unlocked for your account. Request it using /batch ' + code + ' and complete payment first.');
+        if (!item.telegram_message_id || !item.storage_chat_id || !item.storage_channel_enabled) return ctx.reply('One or more files have no usable storage message. Admin needs to repair the batch storage.');
+      }
+      const jobId = await createBatchDeliveryJob(pool, ctx.from.id, items.map((item) => item.id), ctx.from.id);
+      return ctx.reply('Batch delivery queued. Files will be delivered sequentially.\\nJob ID: ' + jobId + '\\nCollection: ' + batch.title + '\\nFiles: ' + items.length);
+    } catch (error) {
+      logger.error({ userId: ctx.from.id, error: error.message }, 'Batch delivery request failed');
+      return ctx.reply('Could not queue this batch.');
+    }
+  });
 
   bot.command('verify', async (ctx) => {
     try {
