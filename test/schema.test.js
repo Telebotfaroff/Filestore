@@ -118,7 +118,7 @@ test('user access status commands are registered and allowed through delivery bo
 });
 
 test('admin dashboard includes operational counts and command aliases', () => {
-  for (const key of ['users_total', 'files_active', 'jobs_pending', 'premium_active', 'paid_file_requests_pending', 'revenue_minor', 'events_24h']) assert.match(dashboardSource, new RegExp(key));
+  for (const key of ['users_total', 'files_active', 'jobs_pending', 'premium_active', 'paid_file_requests_pending', 'revenue_by_currency', 'events_24h']) assert.match(dashboardSource, new RegExp(key));
   assert.match(dashboardCommands, /bot\.command\('dashboard'/);
   assert.match(dashboardCommands, /bot\.command\('stats'/);
 });
