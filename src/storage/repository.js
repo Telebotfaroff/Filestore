@@ -96,7 +96,7 @@ export async function setPrimaryStorageChannel(pool, channelId) {
 
 async function promoteNextPrimary(client) {
   const candidate = await client.query(
-    "SELECT telegram_chat_id FROM storage_channels WHERE is_enabled = TRUE ORDER BY priority ASC, id ASC LIMIT 1 FOR UPDATE",
+    "SELECT telegram_chat_id FROM storage_channels WHERE is_enabled = TRUE AND last_test_status = 'ok' ORDER BY priority ASC, id ASC LIMIT 1 FOR UPDATE",
   );
   if (candidate.rowCount) {
     await client.query(
