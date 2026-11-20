@@ -112,7 +112,7 @@ Four methods are reserved and seeded as disabled:
 - `/payment_enable <method>` — Activation is blocked until checkout and server-side verification are implemented.
 - `/payment_disable <method>`
 
-All payment methods remain disabled. Payment sessions and transaction tables are prepared; live payment checkout, signatures/webhooks, UTR verification, and automatic premium activation are not implemented yet.
+Telegram Stars checkout is implemented and can be enabled when its price map is configured. FamPay/UPI, Stripe, and Crypto adapters are not connected. The `/payment_test` command validates configuration only; it is not a live gateway test.
 
 ## Paid file links
 
@@ -124,7 +124,7 @@ All payment methods remain disabled. Payment sessions and transaction tables are
 
 Users on Delivery Bots:
 - `/paid <link_code>` — request a purchase. Force-sub is checked first. Payment gateways are not connected yet, so users are directed to the admin for manual verification.
-- `/get <file_code>` — paid file delivery only works after entitlement is granted and force-sub passes. Free public delivery is still pending.
+- `/get <file_code>` — access is checked through the Access Manager. Free delivery follows checkpoint/Premium policy; paid files require entitlement and force-sub passes.
 
 Paid links have random codes, hashed lookup values, optional expiry, purchase request tracking, and per-user uniqueness. Payment must not be marked verified automatically until a gateway verifier is integrated.
 
