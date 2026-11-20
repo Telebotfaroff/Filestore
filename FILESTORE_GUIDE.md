@@ -227,9 +227,9 @@ Batch purchase records are unique per batch/user. The batch's file membership is
 
 - `/auto_delete` — show current setting
 - `/auto_delete MINUTES` — set auto-delete for newly delivered messages (1–10080 minutes)
-- `/auto_delete_off` — disable scheduling for future deliveries
+- `/auto_delete_failed` — inspect terminal auto-delete failures\n- `/auto_delete_off` — disable scheduling for future deliveries
 
-Delete tasks are persisted. The countdown starts after successful delivery. Existing scheduled deletions continue after the setting is disabled. Bots delete only their own sent messages. Failed deletion is retried, with terminal failure after five attempts.
+Delete tasks are persisted. The countdown starts after successful delivery. Existing scheduled deletions continue after the setting is disabled. Bots delete only their own sent messages. Deletion workers use owner-checked leases to prevent stale workers overwriting a newer claim. Failures retry with exponential delay from 30 seconds up to one hour and stop after five attempts. `/auto_delete_failed` lists terminal failures for diagnosis.
 
 ## 16. Monitoring and payment operations
 
