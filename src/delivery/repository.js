@@ -7,7 +7,7 @@ export async function createSingleDeliveryJob(pool, requesterTelegramId, fileId,
       ['single', requesterTelegramId, requestedBy],
     );
     await client.query(
-      'INSERT INTO delivery_items (job_id, file_id, position) VALUES ($1, $2, $0)',
+      'INSERT INTO delivery_items (job_id, file_id, position) VALUES ($1, $2, 0)',
       [job.rows[0].id, fileId],
     );
     await client.query('COMMIT');
