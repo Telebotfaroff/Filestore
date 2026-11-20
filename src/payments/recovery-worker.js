@@ -8,7 +8,7 @@ async function notifyRecoveredPayments(pool, logger, telegram) {
   const claimed = await pool.query(
     `WITH claimed AS (
        SELECT id FROM payment_transactions
-       WHERE status='applied' AND recovery_notification_sent_at IS NULL
+       WHERE status='applied' AND recovery_notification_required=TRUE AND recovery_notification_sent_at IS NULL
          AND recovery_notification_attempts < $1
          AND (recovery_notification_claimed_at IS NULL OR recovery_notification_claimed_at < NOW()-INTERVAL '2 minutes')
        ORDER BY applied_at ASC NULLS FIRST, id ASC
@@ -21,7 +21,7 @@ async function notifyRecoveredPayments(pool, logger, telegram) {
   );
   for (const tx of claimed.rows) {
     if (!tx.user_telegram_id) {
-      await pool.query(`UPDATE payment_transactions SET recovery_notification_sent_at=NOW(),recovery_notification_claimed_at=NULL WHERE id=$1 AND recovery_notification_claimed_at IS NOT NULL`, [tx.id]);
+      await pool.query(`UPDATE payment_transactions SET recovery_notification_required=FALSE,recovery_notification_sent_at=NOW(),recovery_notification_claimed_at=NULL WHERE id=$1 AND recovery_notification_claimed_at IS NOT NULL`, [tx.id]);
       continue;
     }
     const message = tx.purpose === 'premium'
@@ -65,7 +65,7 @@ export function startPaymentRecoveryWorker(pool, logger, telegram = null, interv
         try {
           const result = await applyVerifiedPayment(pool, tx.id);
           if (result.applied) {
-            await pool.query(`UPDATE payment_transactions SET recovery_last_error=NULL,recovery_next_at=NOW() WHERE id=$1 AND status='applied'`, [tx.id]);
+            await pool.query(`UPDATE payment_transactions SET recovery_last_error=NULL,recovery_next_at=NOW(),recovery_notification_required=TRUE WHERE id=$1 AND status='applied'`, [tx.id]);
             logger.info({ transactionId: tx.id, userId: tx.user_telegram_id, purpose: tx.purpose, method: tx.method }, 'Recovered verified payment fulfillment');
           }
         } catch (error) {
