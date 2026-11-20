@@ -27,3 +27,38 @@ export function decryptBotToken(envelope, encodedKey) {
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
 }
+
+const RUNTIME_KEY_SETTING = 'runtime_token_encryption_key';
+
+export async function resolveTokenEncryptionKey(pool, configuredKey = '') {
+  const trimmed = String(configuredKey ?? '').trim();
+  if (trimmed) {
+    getEncryptionKey(trimmed);
+    return trimmed;
+  }
+  if (!pool || pool.isMock) return '';
+
+  const existing = await pool.query(
+    'SELECT value->>\'key\' AS key FROM app_settings WHERE key = $1 LIMIT 1',
+    [RUNTIME_KEY_SETTING],
+  );
+  const existingKey = String(existing.rows[0]?.key ?? '').trim();
+  if (existingKey && Buffer.from(existingKey, 'base64').length === 32) {
+    return existingKey;
+  }
+
+  const generated = randomBytes(32).toString('base64');
+  await pool.query(
+    `INSERT INTO app_settings (key, value)
+     VALUES ($1, jsonb_build_object('key', $2::text))
+     ON CONFLICT (key) DO NOTHING`,
+    [RUNTIME_KEY_SETTING, generated],
+  );
+  const saved = await pool.query(
+    'SELECT value->>\'key\' AS key FROM app_settings WHERE key = $1 LIMIT 1',
+    [RUNTIME_KEY_SETTING],
+  );
+  const resolved = String(saved.rows[0]?.key ?? '').trim();
+  getEncryptionKey(resolved);
+  return resolved;
+}

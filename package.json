@@ -10,6 +10,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
+    "build": "npm run check",
+    "lint": "npm run check",
     "test": "node --test",
     "check": "find src -name '*.js' -print0 | xargs -0 -n1 node --check",
     "migrate": "node src/database/migrate.js"

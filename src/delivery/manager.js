@@ -9,7 +9,14 @@ export function createDeliveryBotManager(config, logger, pool) {
 
   async function validateToken(token) {
     const tester = new Telegraf(token);
-    return tester.telegram.getMe();
+    try {
+      return await tester.telegram.getMe();
+    } catch (error) {
+      if (/404|401|not found|unauthorized/i.test(String(error?.message))) {
+        throw new Error('Telegram rejected this bot token (' + error.message + '). Verify the full BotFather token.');
+      }
+      throw error;
+    }
   }
 
   async function storeToken(token, createdBy) {
@@ -63,6 +70,19 @@ export function createDeliveryBotManager(config, logger, pool) {
     runtimes.delete(String(id));
   }
 
+  function launchDeliveryBot(bot, onRuntimeError) {
+    return new Promise((resolve, reject) => {
+      let launched = false;
+      bot.launch({ handleSignals: false }, () => {
+        launched = true;
+        resolve();
+      }).catch((error) => {
+        if (!launched) reject(error);
+        else onRuntimeError?.(error);
+      });
+    });
+  }
+
   async function startRuntime(record) {
     const id = String(record.id);
     if (runtimes.has(id)) return runtimes.get(id);
@@ -71,7 +91,10 @@ export function createDeliveryBotManager(config, logger, pool) {
       const token = decryptBotToken(record.token_ciphertext, config.tokenEncryptionKey);
       const runtime = createDeliveryBot(config, logger, pool, token);
       if (!runtime) throw new Error('Delivery runtime could not be created');
-      await runtime.bot.launch({ handleSignals: false });
+      await launchDeliveryBot(runtime.bot, (error) => {
+        logger.error({ botId: record.telegram_bot_id, error: error.message }, 'Delivery Bot polling stopped unexpectedly');
+        pool.query("UPDATE delivery_bots SET runtime_status = 'error', last_error = $2, updated_at = NOW() WHERE id = $1", [record.id, String(error.message).slice(0, 500)]).catch(() => {});
+      });
       runtimes.set(id, { runtime, botId: record.telegram_bot_id, username: record.username, paused: false });
       if (record.role === 'primary') await runtime.startWorker();
       await pool.query("UPDATE delivery_bots SET runtime_status = 'running', last_health_at = NOW(), last_error = NULL, updated_at = NOW() WHERE id = $1", [record.id]);
@@ -79,7 +102,7 @@ export function createDeliveryBotManager(config, logger, pool) {
       return runtimes.get(id);
     } catch (error) {
       stopRuntime(record.id);
-      await pool.query("UPDATE delivery_bots SET runtime_status = 'error', last_error = $2, updated_at = NOW() WHERE id = $1", [error.message.slice(0, 500), record.id]);
+      await pool.query("UPDATE delivery_bots SET runtime_status = 'error', last_error = $2, updated_at = NOW() WHERE id = $1", [record.id, error.message.slice(0, 500)]);
       logger.error({ botId: record.telegram_bot_id, error: error.message }, 'Delivery Bot failed to start');
       return null;
     }
@@ -215,7 +238,7 @@ export function createDeliveryBotManager(config, logger, pool) {
         await pool.query("UPDATE delivery_bots SET runtime_status = 'running', last_health_at = NOW(), last_error = NULL WHERE id = $1", [id]);
       } catch (error) {
         entry.runtime.stopWorker();
-        await pool.query("UPDATE delivery_bots SET runtime_status = 'error', last_error = $2, updated_at = NOW() WHERE id = $1", [error.message.slice(0, 500), id]);
+        await pool.query("UPDATE delivery_bots SET runtime_status = 'error', last_error = $2, updated_at = NOW() WHERE id = $1", [id, error.message.slice(0, 500)]);
         logger.warn({ botId: entry.botId, error: error.message }, 'Delivery Bot health check failed');
       }
     }
@@ -225,7 +248,13 @@ export function createDeliveryBotManager(config, logger, pool) {
   async function startAll() {
     const mainInfo = await new Telegraf(config.mainBotToken).telegram.getMe();
     mainBotId = mainInfo.id;
-    if (config.deliveryBotToken) await storeToken(config.deliveryBotToken, 0);
+    if (config.deliveryBotToken) {
+      try {
+        await storeToken(config.deliveryBotToken, 0);
+      } catch (error) {
+        logger.warn({ error: error.message }, 'Bootstrap DELIVERY_BOT_TOKEN skipped; continuing with registered delivery bots');
+      }
+    }
     const rows = await pool.query("SELECT * FROM delivery_bots WHERE is_enabled = TRUE AND runtime_status <> 'paused' ORDER BY priority ASC, id ASC");
     for (const row of rows.rows) await startRuntime(row);
     await ensurePrimary();
