@@ -8,10 +8,10 @@ function getRecordId(ctx) {
   return id;
 }
 
-export function registerDeliveryBotManagerCommands(bot, manager, logger) {
+export function registerDeliveryBotManagerCommands(bot, manager, logger, pool) {
   bot.command('delivery_retry', async (ctx) => {
-    const raw = ctx.message?.text?.trim().split(/\\s+/).slice(1)[0] ?? '';
-    if (!/^\\d+$/.test(raw)) return ctx.reply('Usage: /delivery_retry <failed_job_id>');
+    const raw = ctx.message?.text?.trim().split(/\s+/).slice(1)[0] ?? '';
+    if (!/^\d+$/.test(raw)) return ctx.reply('Usage: /delivery_retry <failed_job_id>');
     const jobId = Number(raw);
     if (!Number.isSafeInteger(jobId) || jobId <= 0) return ctx.reply('Invalid delivery job ID.');
     try {
