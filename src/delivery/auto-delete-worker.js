@@ -17,7 +17,7 @@ export function createAutoDeleteWorker(bot, pool, logger, identity) {
         // Telegram returns "message to delete not found" when the user deleted it
         // manually or a previous attempt already succeeded; treat that as complete.
         const description = error.response?.description ?? error.message ?? '';
-        if (/message to delete not found|message can't be deleted|message cannot be deleted/i.test(description)) {
+        if (/message to delete not found||/i.test(description)) {
           await finishScheduledDeletion(pool, claim.id);
         } else {
           await failScheduledDeletion(pool, claim.id, description);
