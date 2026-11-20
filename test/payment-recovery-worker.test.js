@@ -47,3 +47,26 @@ test('failed payment recovery records bounded exponential backoff and error', as
   assert.match(scheduled[0].params[2], /Session unavailable/);
   assert.match(scheduled[0].sql, /recovery_next_at=NOW/);
 });
+
+
+test('recovery notifications retry after Telegram failure and record bounded diagnostics', async () => {
+  const claimed = [];
+  const tx = { id: 93, user_telegram_id: 777, purpose: 'paid_file' };
+  const pool = { query: async (sql, params) => {
+    if (sql.includes("WHERE status='verified'")) return { rows: [] };
+    if (sql.includes('WITH claimed')) return { rows: [tx] };
+    if (sql.includes('recovery_notification_attempts=recovery_notification_attempts+1')) { claimed.push({ sql, params }); return { rows: [] };
+    throw new Error('Unexpected SQL: '+sql);
+  } };
+  let resolveWarning;
+  const warning = new Promise(resolve => resolveWarning=resolve);
+  const logger = { info(){}, warn(){resolveWarning()}, error(){} };
+  const telegram = { sendMessage: async () => { throw new Error('Telegram temporarily unavailable'); } };
+  const worker = startPaymentRecoveryWorker(pool, logger, telegram, 60_000);
+  await warning;
+  worker.stop();
+  assert.equal(claimed.length,1);
+  assert.equal(claimed[0].params[0],93);
+  assert.match(claimed[0].params[1],/Telegram temporarily unavailable/);
+  assert.match(claimed[0].sql,/recovery_notification_claimed_at=NULL/);
+});
