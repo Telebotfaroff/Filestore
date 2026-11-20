@@ -3,10 +3,12 @@ import { createLogger } from './logger.js';
 import { createDatabasePool, closeDatabasePool } from './database/pool.js';
 import { createMainBot } from './bot/main.js';
 import { createDeliveryBotManager } from './delivery/manager.js';
+import { startCheckpointSessionCleanup } from './access/checkpoint-cleanup-worker.js';
 
 let shutdownStarted = false;
 let mainBot;
 let deliveryManager;
+let checkpointCleanupWorker;
 
 async function main() {
   const config = loadConfig();
@@ -27,6 +29,7 @@ async function main() {
   }
 
   deliveryManager = createDeliveryBotManager(config, logger, pool);
+  checkpointCleanupWorker = startCheckpointSessionCleanup(pool, logger);
   mainBot = createMainBot({ ...config, deliveryManager }, logger, pool);
   registerShutdown();
 
@@ -41,6 +44,7 @@ async function shutdown(signal) {
   if (shutdownStarted) return;
   shutdownStarted = true;
   console.info('[FileStore] Shutdown requested:', signal);
+  try { checkpointCleanupWorker?.stop(); } catch {}
   try { await deliveryManager?.stopAll(); } catch (error) {
     console.error('[FileStore] Delivery runtimes shutdown failed:', error.message);
   }
