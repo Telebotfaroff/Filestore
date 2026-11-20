@@ -25,7 +25,10 @@ export async function applyVerifiedPayment(pool, transactionId) {
     const session = sessionResult.rows[0];
     if (session.status !== 'verified' || String(session.user_telegram_id) !== String(tx.user_telegram_id) ||
         session.purpose !== tx.purpose || Number(session.expected_amount_minor) !== Number(tx.amount_minor) ||
-        session.currency !== tx.currency) throw new Error('Checkout session does not match verified transaction.');
+        session.currency !== tx.currency || String(session.plan_id ?? '') !== String(tx.plan_id ?? '') ||
+        String(session.file_id ?? '') !== String(tx.file_id ?? '') ||
+        String(session.batch_link_id ?? '') !== String(tx.batch_link_id ?? '') ||
+        String(session.paid_link_id ?? '') !== String(tx.paid_link_id ?? '')) throw new Error('Checkout session does not match verified transaction.');
     const userId = tx.user_telegram_id;
     await client.query('INSERT INTO users (telegram_id) VALUES ($1) ON CONFLICT (telegram_id) DO NOTHING', [userId]);
     let result;
