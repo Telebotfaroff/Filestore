@@ -33,7 +33,7 @@ export async function applyVerifiedPayment(pool, transactionId) {
     await client.query('INSERT INTO users (telegram_id) VALUES ($1) ON CONFLICT (telegram_id) DO NOTHING', [userId]);
     let result;
     if (tx.purpose === 'premium') {
-      const plan = await client.query('SELECT id,name,price_minor,currency,duration_days FROM premium_plans WHERE id=$1 AND is_enabled=TRUE FOR UPDATE', [tx.plan_id]);
+      const plan = await client.query('SELECT id,name,price_minor,currency,duration_days FROM premium_plans WHERE id=$1 FOR UPDATE', [tx.plan_id]);
       if (!plan.rowCount) throw new Error('Premium plan is unavailable.');
       const p = plan.rows[0];
       if ((tx.method !== 'telegram_stars' && (Number(p.price_minor) !== Number(tx.amount_minor) || p.currency !== tx.currency)) || String(session.plan_id) !== String(tx.plan_id)) throw new Error('Paid amount does not match current Premium plan price.');
@@ -65,7 +65,7 @@ export async function applyVerifiedPayment(pool, transactionId) {
       }
     } else if (tx.purpose === 'paid_file') {
       const linkResult = await client.query(
-        `SELECT id,file_id,price_minor,currency FROM paid_file_links WHERE id=$1 AND is_enabled=TRUE AND (expires_at IS NULL OR expires_at>NOW()) FOR UPDATE`,
+        `SELECT id,file_id,price_minor,currency FROM paid_file_links WHERE id=$1 FOR UPDATE`,
         [tx.paid_link_id],
       );
       if (!linkResult.rowCount) throw new Error('Paid file link is expired, disabled, or missing.');
@@ -87,7 +87,7 @@ export async function applyVerifiedPayment(pool, transactionId) {
       result = { type: 'paid_file', fileId: link.file_id, purchaseId: purchase.rows[0].id };
     } else if (tx.purpose === 'paid_batch') {
       const batchResult = await client.query(
-        `SELECT id,title,price_minor,currency FROM paid_batch_links WHERE id=$1 AND is_enabled=TRUE AND (expires_at IS NULL OR expires_at>NOW()) FOR UPDATE`,
+        `SELECT id,title,price_minor,currency FROM paid_batch_links WHERE id=$1 FOR UPDATE`,
         [tx.batch_link_id],
       );
       if (!batchResult.rowCount) throw new Error('Paid batch is expired, disabled, or missing.');
