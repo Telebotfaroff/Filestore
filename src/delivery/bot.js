@@ -56,7 +56,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
   bot.command('start', async (ctx) => {
     await upsertTelegramUser(pool, ctx.from);
     if (isAdmin(ctx.from.id, config.adminIds)) {
-      await ctx.reply('FileStore Delivery Bot (admin test mode)\n\n/get <file_code> — queue a delivery\n/delivery_status — queue status\n/delivery_test — test storage access\n/verify — check subscriptions');
+      await ctx.reply('FileStore Delivery Bot (admin test mode)\n\n/get <file_code> — queue a delivery\n/delivery_status — queue status\n/delivery_test — test storage access\n/verify — check subscriptions\n/checkpoint_status — checkpoint state\n/access_status — access and premium status');
     } else {
       await ctx.reply('Welcome to FileStore. Use /verify to check required channel subscriptions. Free delivery is available when access checks pass. Use /get <file_code> to request a file.');
     }
