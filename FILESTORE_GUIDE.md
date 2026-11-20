@@ -107,6 +107,8 @@ Keep storage channels private and ensure FileStore's bots have the required chan
 ## 8. Delivery Bot management
 
 - `/delivery_bots` — list managed bots
+- `/delivery_jobs` — list the 10 most recent jobs and delivery item counts
+- `/delivery_retry <job_id>` — safely requeue failed items from a failed job; uncertain outcomes are never blindly retried
 - `/delivery_bot_add TOKEN` — register a bot token (stored encrypted)
 - `/delivery_bot_pause ID` / `/delivery_bot_resume ID` — pause/resume runtime
 - `/delivery_bot_restart ID` — restart
