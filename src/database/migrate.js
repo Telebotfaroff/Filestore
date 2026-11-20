@@ -55,7 +55,7 @@ export async function runMigrations(pool) {
         console.info(`[FileStore] Applied migration ${version}`);
       } catch (error) {
         await client.query('ROLLBACK');
-        throw new Error(`Migration ${version} failed: ${error.message`);
+        throw new Error(`Migration ${version} failed: ${error.message}`);
       }
     }
     return { discovered: files.length, applied: files.filter((file) => !checksums.has(file.replace(/\.sql$/, ''))).length };
