@@ -1,4 +1,4 @@
-import { configurePaymentMethod, disablePaymentMethod, listPaymentMethods, markPaymentMethodTest, listPaymentTransactions, listExpiredPaymentSessions } from './repository.js';
+import { configurePaymentMethod, disablePaymentMethod, listPaymentMethods, markPaymentMethodTest, listPaymentTransactions, listExpiredPaymentSessions, listPaymentRecoveryFailures } from './repository.js';
 import { applyVerifiedPayment } from './fulfillment-repository.js';
 
 const METHODS = ['fampay', 'telegram_stars', 'stripe', 'crypto'];
@@ -37,6 +37,19 @@ Created: ${new Date(row.created_at).toISOString()}`;
     } catch (error) {
       logger.error({ error: error.message }, 'Expired payment session listing failed');
       await ctx.reply('Could not list expired checkout sessions.');
+    }
+  });
+
+
+  bot.command('payment_recovery_pending', async (ctx) => {
+    try {
+      const rows = await listPaymentRecoveryFailures(pool, 20);
+      if (!rows.length) return ctx.reply('No payment fulfillment recovery failures recorded.');
+      const lines = rows.map((tx) => `#${tx.id} · ${tx.method} · ${tx.purpose}\nUser: ${tx.user_telegram_id ?? 'unknown'} · ${(Number(tx.amount_minor) / 100).toFixed(2)} ${tx.currency}\nAttempts: ${tx.recovery_attempts} · Next retry: ${new Date(tx.recovery_next_at).toISOString()}\nError: ${tx.recovery_last_error ?? 'unknown'}`);
+      await ctx.reply('Verified payments awaiting recovery (latest 20)\n\n' + lines.join('\n\n'));
+    } catch (error) {
+      logger.error({ error: error.message }, 'Payment recovery diagnostic listing failed');
+      await ctx.reply('Could not list payment recovery failures.');
     }
   });
 
