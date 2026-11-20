@@ -5,6 +5,7 @@ import { createSingleDeliveryJob, getDeliveryStats } from './repository.js';
 import { createDeliveryWorker } from './worker.js';
 import { checkForceSubscription } from '../access/force-subscription.js';
 import { upsertTelegramUser } from '../access/user-repository.js';
+import { getPaidFileLink, requestPaidFilePurchase, hasPaidFileEntitlement } from '../paid-files/repository.js';
 
 function getMissingSubscriptionMarkup(missing) {
   const rows = missing.slice(0, 20).map((channel) => [Markup.button.url('Join ' + String(channel.title ?? 'channel').slice(0, 40), channel.join_url)]);
@@ -55,6 +56,29 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
       await ctx.reply('Welcome to FileStore. Use /verify to check required channel subscriptions. File access is not yet enabled.');
     }
   });
+
+  bot.command('paid', async (ctx) => {
+    const linkCode = ctx.message?.text?.trim().split(/\\s+/).slice(1)[0] ?? '';
+    if (!linkCode) return ctx.reply('Usage: /paid <paid_link_code>');
+    try {
+      await upsertTelegramUser(pool, ctx.from);
+      const forceSub = await checkForceSubscription(ctx.telegram, pool, ctx.from.id);
+      await logForceSubEvent(pool, logger, forceSub.passed ? 'force_sub_verified' : 'force_sub_blocked', ctx.from.id, forceSub);
+      if (!forceSub.passed) {
+        const labels = forceSub.missing.slice(0, 20).map((channel) => `• ${channel.title ?? channel.telegram_chat_id}`).join('\\n');
+        return ctx.reply('Join required channels first:\\n\\n' + labels + '\\n\\nThen use /verify and retry /paid.', getMissingSubscriptionMarkup(forceSub.missing));
+      }
+      const link = await getPaidFileLink(pool, linkCode);
+      if (!link || !link.is_active) return ctx.reply('Paid link is invalid, expired, or disabled.');
+      const purchase = await requestPaidFilePurchase(pool, linkCode, ctx.from);
+      if (purchase.alreadyPaid) return ctx.reply('You already unlocked this file. Use /get ' + link.file_code + ' to request delivery.');
+      await ctx.reply('Paid file purchase request recorded.\\n\\nFile: ' + link.file_name + '\\nPrice: ' + (Number(link.price_minor) / 100).toFixed(2) + ' ' + link.currency + '\\n\\nPayments are not connected yet. Contact the bot administrator with your Telegram ID: ' + ctx.from.id + '. Once payment is manually verified, use /get ' + link.file_code + '.');
+    } catch (error) {
+      logger.error({ error: error.message, userId: ctx.from.id }, 'Paid file request failed');
+      await ctx.reply('Could not create purchase request. Please try again later.');
+    }
+  });
+
 
   bot.command('verify', async (ctx) => {
     try {
