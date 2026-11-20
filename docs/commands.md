@@ -121,6 +121,21 @@ Users on Delivery Bots:
 Paid links have random codes, hashed lookup values, optional expiry, purchase request tracking, and per-user uniqueness. Payment must not be marked verified automatically until a gateway verifier is integrated.
 
 
+## Paid batch links
+
+- `/batch_link_create TITLE|FILE_CODE1,FILE_CODE2,...|PRICE|CURRENCY|expiry_days(optional)` — create a paid collection with 2–100 unique files. Example: `/batch_link_create Summer Pack|A1B2,C3D4,E5F6|299|INR|30`.
+- `/batch_links` — list batch links, file counts, purchases and expiry.
+- `/batch_requests` — pending requests with user IDs and copy-ready confirmation commands.
+- `/batch_link_disable <code>` — disable a batch link.
+- `/batch_confirm <code> <user_id>` — manually verify payment and unlock all batch files.
+
+Delivery Bot users:
+- `/batch <code>` — request the batch purchase (force-sub checked first).
+- `/batch_get <code>` — enqueue all entitled files as a single job; worker delivers sequentially.
+
+Batch codes use random 80-bit codes and hashed lookups. Purchase records are unique per batch/user. Admin payment verification grants file-level entitlements for all items in the batch. Payment automation is not connected yet.
+
+
 ## Security
 
 - Never commit Telegram tokens, API secrets, encryption keys, or database credentials.
