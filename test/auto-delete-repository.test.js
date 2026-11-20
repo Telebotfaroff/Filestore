@@ -42,7 +42,7 @@ test('deletion retries use exponential backoff and terminal failures stop retryi
   let call;
   const pool={query:async(sql,args)=>{call={sql,args};return {rowCount:1};}};
   assert.equal(await failScheduledDeletion(pool,5,'worker-b','timeout'),true);
-  assert.match(call.sql,/retry_after\\s*=\\s*CASE WHEN attempt_count >= 5 THEN NULL ELSE NOW\\(\\) \\+ make_interval/);
+  assert.match(call.sql,/retry_after = CASE WHEN attempt_count >= 5 THEN NULL ELSE NOW\\(\\) \\+ make_interval/);
   assert.match(call.sql,/LEAST\(3600/);
   assert.deepEqual(call.args,[5,'worker-b','timeout']);
 });
