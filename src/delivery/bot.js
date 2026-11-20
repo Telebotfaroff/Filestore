@@ -198,6 +198,37 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
     }
   });
 
+  bot.command('checkpoint_status', async (ctx) => {
+    try {
+      await upsertTelegramUser(pool, ctx.from);
+      const requirement = await getCheckpointRequirement(pool, ctx.from.id);
+      if (requirement.reason === 'checkpoint_active') return ctx.reply('Checkpoint active until: ' + new Date(requirement.expiresAt).toLocaleString());
+      if (requirement.reason === 'no_active_providers') return ctx.reply('No active checkpoint providers. Checkpoints are not currently required.');
+      if (requirement.blocked) return ctx.reply('Checkpoint provider ' + (requirement.provider?.name ?? 'unknown') + ' is configured but has no trusted verification adapter. Free access remains locked when checkpoints are enabled.');
+      return ctx.reply('Checkpoint required: provider ' + requirement.provider.name + ' (' + requirement.step + '/' + requirement.total + '). Verification adapter is not yet connected, so a valid checkpoint cannot be completed.');
+    } catch (error) {
+      logger.warn({ userId: ctx.from.id, error: error.message }, 'Checkpoint status failed');
+      return ctx.reply('Checkpoint status unavailable. Try again later.');
+    }
+  });
+
+  bot.command('access_status', async (ctx) => {
+    try {
+      await upsertTelegramUser(pool, ctx.from);
+      const forceSub = await checkForceSubscription(ctx.telegram, pool, ctx.from.id);
+      const premium = await pool.query(`SELECT p.name, m.expires_at FROM premium_memberships m LEFT JOIN premium_plans p ON p.id = m.plan_id
+        WHERE m.user_telegram_id = $1 AND m.status = 'active' AND m.starts_at <= NOW() AND (m.expires_at IS NULL OR m.expires_at > NOW())
+        ORDER BY m.expires_at DESC NULLS FIRST LIMIT 1`, [ctx.from.id]);
+      const checkpoint = await getCheckpointRequirement(pool, ctx.from.id);
+      const lines = ['Access status', '', 'Force-sub: ' + (forceSub.passed ? 'Passed' : 'Required (' + forceSub.missing.length + ' channel(s))'), 'Premium: ' + (premium.rowCount ? 'Active' + (premium.rows[0].expires_at ? ' until ' + new Date(premium.rows[0].expires_at).toLocaleString() : ' (permanent)') : 'Inactive')];
+      lines.push('Checkpoint: ' + (checkpoint.reason === 'checkpoint_active' ? 'Active until ' + new Date(checkpoint.expiresAt).toLocaleString() : checkpoint.reason === 'no_active_providers' ? 'No provider available' : checkpoint.blocked ? 'Unavailable (provider verification not connected)' : 'Required, verification unavailable'));
+      return ctx.reply(lines.join('\n'));
+    } catch (error) {
+      logger.warn({ userId: ctx.from.id, error: error.message }, 'Access status failed');
+      return ctx.reply('Access status unavailable. Try again later.');
+    }
+  });
+
   bot.command('delivery_status', async (ctx) => {
     if (!isAdmin(ctx.from.id, config.adminIds)) return;
     try {
