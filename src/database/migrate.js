@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createDatabasePool, closeDatabasePool } from './pool.js';
-import { loadConfig } from '../config/env.js';
+import { loadDatabaseConfig } from '../config/env.js';
 
 const MIGRATIONS_DIR = path.dirname(fileURLToPath(import.meta.url)) + '/migrations';
 const MIGRATION_LOCK_ID = 74290136;
@@ -68,7 +68,7 @@ export async function runMigrations(pool) {
 }
 
 async function main() {
-  const config = loadConfig();
+  const config = loadDatabaseConfig();
   const pool = createDatabasePool(config);
   try {
     const result = await runMigrations(pool);
