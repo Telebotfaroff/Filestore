@@ -126,7 +126,7 @@ export async function recordVerifiedPayment(pool, payment) {
       await client.query('COMMIT');
       return { duplicate: true, transaction: tx };
     }
-    if (session.status !== 'pending') throw new Error('Payment session is no longer pending.');
+    if (session.status !== 'pending' && !(method === 'telegram_stars' && payment.allowExpiredSession === true && session.status === 'expired')) throw new Error('Payment session is no longer pending.');
     const inserted = await client.query(
       `INSERT INTO payment_transactions (user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, batch_link_id, paid_link_id, amount_minor, currency, status, session_id, verified_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'verified',$11,NOW())
