@@ -5,7 +5,7 @@ export async function claimIngestRequest(pool, sourceChatId, sourceMessageId) {
      ON CONFLICT (source_chat_id, source_message_id) DO UPDATE SET
        status = 'processing', processing_until = NOW() + INTERVAL '5 minutes',
        last_error = NULL, updated_at = NOW()
-     WHERE file_ingest_requests.status <> 'completed'
+     WHERE file_ingest_requests.status NOT IN ('completed', 'duplicate')
        AND (file_ingest_requests.status <> 'processing' OR file_ingest_requests.processing_until < NOW())
      RETURNING id`,
     [sourceChatId, sourceMessageId],
