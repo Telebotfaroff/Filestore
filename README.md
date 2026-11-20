@@ -23,6 +23,8 @@ A modular Telegram file indexing and delivery platform built with Node.js, Teleg
 
 Live Telegram and PostgreSQL integration testing is pending configured credentials. Public `/get` is wired to the Access Manager. Free delivery is allowed when checkpoints are disabled or a valid Premium/checkpoint state permits it; when checkpoint enforcement requires an unverified provider, requests remain blocked.
 
+- **Milestone 24 (payment audit):** Admin `/payment_transactions [status]` query for recent payment records, with validated filters and bounded results; never displays payment secrets.
+
 ## Stack
 
 - Node.js 22+ / ES Modules
