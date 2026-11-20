@@ -96,3 +96,29 @@ test('auto-delete schema stores global setting and persisted deletion queue', ()
   assert.match(migration12, /delivery_bot_identity/);
   assert.match(migration12, /delete_at/);
 });
+
+
+const deliveryBotSource = await readFile(new URL('../src/delivery/bot.js', import.meta.url), 'utf8');
+const accessManagerSource = await readFile(new URL('../src/access/access-manager.js', import.meta.url), 'utf8');
+const dashboardSource = await readFile(new URL('../src/admin/dashboard-repository.js', import.meta.url), 'utf8');
+const dashboardCommands = await readFile(new URL('../src/admin/dashboard-commands.js', import.meta.url), 'utf8');
+
+test('public get handler is wired to centralized access manager and checkpoint messaging', () => {
+  assert.match(deliveryBotSource, /evaluateAccess/);
+  assert.match(deliveryBotSource, /type: paidEntitled \? 'paid_file' : 'free_file'/);
+  assert.match(deliveryBotSource, /checkpoint_required/);
+  assert.match(accessManagerSource, /checkpoint_enabled/);
+  assert.match(accessManagerSource, /premium/);
+});
+
+test('user access status commands are registered and allowed through delivery bot middleware', () => {
+  assert.match(deliveryBotSource, /bot\.command\('checkpoint_status'/);
+  assert.match(deliveryBotSource, /bot\.command\('access_status'/);
+  assert.match(deliveryBotSource, /'\/checkpoint_status', '\/access_status'/);
+});
+
+test('admin dashboard includes operational counts and command aliases', () => {
+  for (const key of ['users_total', 'files_active', 'jobs_pending', 'premium_active', 'paid_file_requests_pending', 'revenue_minor', 'events_24h']) assert.match(dashboardSource, new RegExp(key));
+  assert.match(dashboardCommands, /bot\.command\('dashboard'/);
+  assert.match(dashboardCommands, /bot\.command\('stats'/);
+});
