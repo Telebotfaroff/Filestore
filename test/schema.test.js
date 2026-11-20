@@ -10,6 +10,7 @@ const migration5 = await readFile(new URL('../src/database/migrations/005_delive
 const migration6 = await readFile(new URL('../src/database/migrations/006_force_subscription.sql', import.meta.url), 'utf8');
 const migration7 = await readFile(new URL('../src/database/migrations/007_shortener_checkpoint.sql', import.meta.url), 'utf8');
 const migration8 = await readFile(new URL('../src/database/migrations/008_access_manager.sql', import.meta.url), 'utf8');
+const migration9 = await readFile(new URL('../src/database/migrations/009_payment_foundation.sql', import.meta.url), 'utf8');
 
 test('initial schema defines core tables and constraints', () => {
   for (const table of ['users', 'app_settings', 'storage_channels', 'files', 'storage_messages', 'tags', 'file_tags', 'activity_logs']) {
@@ -54,6 +55,13 @@ test('Access Manager schema includes premium memberships and entitlements', () =
   assert.match(migration8, /premium_memberships/);
   assert.match(migration8, /access_grants/);
   assert.match(migration8, /checkpoint_enabled/);
+});
+
+test('payment foundation seeds the four requested methods and uses unique transaction IDs', () => {
+  for (const method of ['fampay', 'telegram_stars', 'stripe', 'crypto']) assert.match(migration9, new RegExp(method));
+  assert.match(migration9, /payment_sessions/);
+  assert.match(migration9, /payment_transactions/);
+  assert.match(migration9, /payment_transactions_utr_unique_idx/);
 });
 
 test('active media identifiers are unique and schema contains no duplicate primary declaration', () => {
