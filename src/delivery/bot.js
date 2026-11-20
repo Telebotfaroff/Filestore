@@ -11,6 +11,13 @@ import { evaluateAccess } from '../access/access-manager.js';
 import { getCheckpointRequirement } from '../access/checkpoint-engine.js';
 import { getPaidFileLink, requestPaidFilePurchase, hasPaidFileEntitlement } from '../paid-files/repository.js';
 
+async function getStarsConfig(pool) {
+  const result = await pool.query('SELECT public_config,is_enabled FROM payment_methods WHERE method=$1', ['telegram_stars']);
+  if (!result.rowCount || !result.rows[0].is_enabled) return null;
+  return result.rows[0].public_config ?? {};
+}
+
+
 function getMissingSubscriptionMarkup(missing) {
   const rows = missing.slice(0, 20).map((channel) => [Markup.button.url('Join ' + String(channel.title ?? 'channel').slice(0, 40), channel.join_url)]);
   rows.push([Markup.button.callback('I joined — Verify', 'fs_verify')]);
@@ -48,7 +55,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
   bot.use(async (ctx, next) => {
     if (isAdmin(ctx.from?.id, config.adminIds)) return next();
     const command = ctx.message?.text?.trim().split(/\s+/)[0]?.split('@')[0] ?? '';
-    const allowed = ['/start', '/verify', '/get', '/paid', '/batch', '/batch_get', '/checkpoint_status', '/access_status'].includes(command) || ctx.callbackQuery?.data === 'fs_verify';
+    const allowed = ['/start', '/verify', '/get', '/paid', '/batch', '/batch_get', '/checkpoint_status', '/access_status'].includes(command) || (ctx.callbackQuery?.data === 'fs_verify' || ctx.callbackQuery?.data?.startsWith('fs_premium_'));
     if (allowed) return next();
     if (ctx.chat?.type === 'private') await ctx.reply('This bot is currently preparing its file access system.');
   });
@@ -77,7 +84,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
       if (!link || !link.is_active) return ctx.reply('Paid link is invalid, expired, or disabled.');
       const purchase = await requestPaidFilePurchase(pool, linkCode, ctx.from);
       if (purchase.alreadyPaid) return ctx.reply('You already unlocked this file. Use /get ' + link.file_code + ' to request delivery.');
-      await ctx.reply('Paid file purchase request recorded.\n\nFile: ' + link.file_name + '\nPrice: ' + (Number(link.price_minor) / 100).toFixed(2) + ' ' + link.currency + '\n\nPayments are not connected yet. Contact the bot administrator with your Telegram ID: ' + ctx.from.id + '. Once payment is manually verified, use /get ' + link.file_code + '.');
+      await sendStarsInvoice(bot, pool, ctx, 'paid_file', { paidLinkId: link.id, fileId: link.file_id }, 'Unlock file', 'Unlock ' + String(link.file_name).slice(0, 100), token);
     } catch (error) {
       logger.error({ error: error.message, userId: ctx.from.id }, 'Paid file request failed');
       await ctx.reply('Could not create purchase request. Please try again later.');
