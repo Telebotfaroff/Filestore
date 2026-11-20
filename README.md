@@ -10,7 +10,7 @@ A modular Telegram file indexing and delivery platform built with Node.js, Teleg
 - **Milestone 8:** dynamic Delivery Bot manager with encrypted tokens, primary/backup roles, priority, pause/resume/restart/remove, permission tests, and health-based failover.
 - **Milestone 9:** force-subscription manager, channel controls, user registration, join/verify buttons, and fail-closed checks.
 
-Live Telegram and PostgreSQL integration testing is pending configured credentials. Delivery remains admin-only until the Access Manager and force-subscription milestones are complete.
+Live Telegram and PostgreSQL integration testing is pending configured credentials. Force-subscription is implemented; public file delivery remains closed until the Access Manager and checkpoint milestones are complete.
 
 ## Stack
 
