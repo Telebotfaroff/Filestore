@@ -33,7 +33,7 @@
 3. Implement only that task.
 4. Run relevant checks/tests.
 5. Report files changed, test results, known limitations.
-6. Stop and wait for the next user approval.
+6. Continue to the next authorized milestone unless a credential, cost, or unresolved product decision requires user input.
 
 ## Initial product boundaries
 
