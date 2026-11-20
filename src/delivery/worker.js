@@ -3,6 +3,7 @@ import {
   getDeliverySource,
   finishDelivery,
   failDelivery,
+  renewDeliveryLease,
   recoverExpiredDeliveryJobs,
 } from './repository.js';
 import { classifyDeliverySendError } from './error-classifier.js';
@@ -31,6 +32,14 @@ export function createDeliveryWorker(bot, pool, logger, identity) {
       const claim = await claimNextDeliveryJob(pool, identity);
       if (!claim) return;
 
+      // Refresh the lease during slow Telegram operations to prevent other workers reclaiming it.
+      const leaseTimer = setInterval(() => {
+        void renewDeliveryLease(pool, claim.jobId, identity).then((renewed) => {
+          if (!renewed) logger.warn({ jobId: claim.jobId, identity }, 'Delivery lease renewal rejected');
+        }).catch((error) => logger.warn({ jobId: claim.jobId, error: error.message }, 'Delivery lease renewal failed'));
+      }, 30_000);
+      leaseTimer.unref?.();
+      try {
       const source = await getDeliverySource(pool, claim.fileId);
       if (!source) {
         await failDelivery(pool, claim, 'failed', 'SOURCE_UNAVAILABLE', 'Indexed file has no enabled storage source.');
@@ -64,6 +73,9 @@ export function createDeliveryWorker(bot, pool, logger, identity) {
       }
     } catch (error) {
       logger.error({ error: error.message }, 'Delivery worker poll failed');
+      } finally {
+        clearInterval(leaseTimer);
+      }
     } finally {
       busy = false;
     }
