@@ -1,11 +1,11 @@
-export async function searchIndexedFiles(pool, searchTerm, limit = 15) {
+export async function searchIndexedFiles(pool, searchTerm, limit = 8) {
   const term = searchTerm.trim();
   if (!term) return [];
   const result = await pool.query(
     `SELECT file_code, file_name, file_type, file_size, created_at
      FROM files WHERE status = 'active' AND (file_name ILIKE $1 OR file_code ILIKE $1)
      ORDER BY created_at DESC LIMIT $2`,
-    [`%${term}%`, Math.min(Math.max(limit, 1), 50)],
+    [`%${term}%`, Math.min(Math.max(limit, 1), 20)],
   );
   return result.rows;
 }
