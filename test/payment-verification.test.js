@@ -72,7 +72,7 @@ test('expired checkout sessions accept late authoritative Stars receipts but not
     if ( ['BEGIN','COMMIT','ROLLBACK'].includes(sql) ) return { rows: [] };
     if (sql.includes('FROM payment_sessions')) return { rows: [expiredSession], rowCount: 1 };
     if (sql.includes('FROM payment_transactions')) return { rows: [], rowCount: 0 };
-    if (sql.includes('INSERT INTO payment_transactions')) { inserted = true; return { rows: [{ id: 89, status: 'verified' }], rowCount: 1 };
+    if (sql.includes('INSERT INTO payment_transactions')) { inserted = true; return { rows: [{ id: 89, status: 'verified' }], rowCount: 1 }; }
     if (sql.includes('UPDATE payment_sessions')) return { rows: [], rowCount: 1 };
     throw new Error('Unexpected query ' + sql);
   }, release() {} };
