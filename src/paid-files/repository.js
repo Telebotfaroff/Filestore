@@ -9,7 +9,7 @@ export async function createPaidFileLink(pool, fileCode, priceMinor, currency, e
     await client.query('BEGIN');
     const file = await client.query("SELECT id, file_code, file_name FROM files WHERE file_code = $1 AND status = 'active' LIMIT 1 FOR SHARE", [String(fileCode).trim().toUpperCase()]);
     if (!file.rowCount) throw new Error('File code not found or inactive.');
-    const publicCode = randomBytes(5).toString('hex').toUpperCase();
+    const publicCode = randomBytes(10).toString('hex').toUpperCase();
     const hash = hashCode(publicCode);
     const result = await client.query(
       `INSERT INTO paid_file_links (public_code, public_code_hash, file_id, price_minor, currency, expires_at, created_by)
