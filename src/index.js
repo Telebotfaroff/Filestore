@@ -19,6 +19,12 @@ async function main() {
     throw new Error('Database migrations are not applied. Run npm run migrate first. ' + error.message);
   });
   if (migrations.rowCount === 0) throw new Error('No database migrations found. Run npm run migrate first.');
+  const requiredTables = await pool.query(
+    "SELECT to_regclass('users') AS users, to_regclass('files') AS files, to_regclass('storage_channels') AS storage_channels, to_regclass('file_ingest_requests') AS file_ingest_requests, to_regclass('delivery_jobs') AS delivery_jobs",
+  );
+  if (Object.values(requiredTables.rows[0]).some((tableName) => tableName === null)) {
+    throw new Error('Required FileStore tables are missing. Run npm run migrate first.');
+  }
 
   mainBot = createMainBot(config, logger, pool);
   deliveryRuntime = createDeliveryBot(config, logger, pool);
