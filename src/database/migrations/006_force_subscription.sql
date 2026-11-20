@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS force_sub_channels (
-  id BIGSERIAL PRIMARY PRIMARY KEY,
+  id BIGSERIAL PRIMARY KEY,
   telegram_chat_id BIGINT NOT NULL UNIQUE,
   title TEXT,
   username TEXT,
