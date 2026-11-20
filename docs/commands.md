@@ -16,6 +16,16 @@ These commands are restricted to Telegram user IDs configured in `ADMIN_IDS`.
 - `/fileinfo <file_code>` — show metadata and stored Telegram message reference.
 
 
+## Delivery Bot (administrator-only test mode)
+
+- Set `DELIVERY_BOT_TOKEN` to enable the optional Delivery Bot runtime.
+- `/get <file_code>` — queue a test delivery to the administrator.
+- `/delivery_status` — view pending, processing, completed, failed, and uncertain jobs.
+- `/delivery_test` — test the Delivery Bot's membership/access to enabled storage channels.
+
+User-facing delivery is intentionally locked to configured administrators until the Access Manager and force-subscription milestones are implemented.
+
+
 ## Storage channels
 
 - `/storage` — list configured storage channels.
