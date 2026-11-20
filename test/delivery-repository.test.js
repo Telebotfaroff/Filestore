@@ -120,7 +120,7 @@ test('lists recent delivery jobs with a bounded limit and item outcome counts', 
   } };
   const jobs = await getRecentDeliveryJobs(pool, 10);
   assert.equal(jobs[0].id, 99);
-  assert.match(calls[0].sql, /COUNT\\(di.id\\) FILTER \\(WHERE di.status = 'uncertain'\\)/);
+  assert.ok(calls[0].sql.includes("COUNT(di.id) FILTER (WHERE di.status = 'uncertain')"));
   assert.deepEqual(calls[0].args, [10]);
 });
 
