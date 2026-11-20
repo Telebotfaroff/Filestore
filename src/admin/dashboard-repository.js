@@ -49,7 +49,7 @@ export async function getPaymentReconciliationStats(pool) {
   const { rows } = await pool.query(`SELECT
     (SELECT COUNT(*)::int FROM payment_transactions WHERE status='verified') AS verified_pending,
     (SELECT COUNT(*)::int FROM payment_transactions WHERE status='applied') AS applied,
-    (SELECT COUNT(*)::int FROM payment_transactions WHERE status IN ('rejected','expired')) AS rejected_or_expired,
+    (SELECT COUNT(*)::int FROM payment_transactions WHERE status IN ('failed','rejected','expired')) AS rejected_or_expired,
     (SELECT COUNT(*)::int FROM payment_sessions WHERE status='pending' AND expires_at > NOW()) AS checkout_pending,
     (SELECT COUNT(*)::int FROM payment_sessions WHERE status='failed') AS checkout_failed,
     (SELECT COUNT(*)::int FROM payment_sessions WHERE status='expired' OR (status='pending' AND expires_at <= NOW())) AS checkout_expired,
@@ -146,21 +146,21 @@ export async function searchPaymentTransactions(pool, searchTerm, limit = 10) {
 export async function getPaymentAnalytics(pool) {
   const daily = await pool.query(`SELECT date_trunc('day', created_at)::date AS day, currency,
       COUNT(*) FILTER (WHERE status = 'applied')::int AS successful_count,
-      COUNT(*) FILTER (WHERE status IN ('rejected','expired'))::int AS unsuccessful_count,
+      COUNT(*) FILTER (WHERE status IN ('failed','rejected','expired'))::int AS unsuccessful_count,
       COALESCE(SUM(amount_minor) FILTER (WHERE status = 'applied'), 0)::bigint AS successful_minor,
       COUNT(*)::int AS total_count
     FROM payment_transactions WHERE created_at >= NOW() - INTERVAL '30 days'
     GROUP BY 1, 2 ORDER BY 1, 2`);
   const methods = await pool.query(`SELECT method, currency,
       COUNT(*) FILTER (WHERE status = 'applied')::int AS successful_count,
-      COUNT(*) FILTER (WHERE status IN ('rejected','expired'))::int AS unsuccessful_count,
+      COUNT(*) FILTER (WHERE status IN ('failed','rejected','expired'))::int AS unsuccessful_count,
       COALESCE(SUM(amount_minor) FILTER (WHERE status = 'applied'), 0)::bigint AS successful_minor,
       COUNT(*)::int AS total_count
     FROM payment_transactions WHERE created_at >= NOW() - INTERVAL '30 days'
     GROUP BY method, currency ORDER BY method, currency`);
   const totals = await pool.query(`SELECT currency,
       COUNT(*) FILTER (WHERE status = 'applied')::int AS successful_count,
-      COUNT(*) FILTER (WHERE status IN ('rejected','expired'))::int AS unsuccessful_count,
+      COUNT(*) FILTER (WHERE status IN ('failed','rejected','expired'))::int AS unsuccessful_count,
       COUNT(*)::int AS total_count,
       COALESCE(SUM(amount_minor) FILTER (WHERE status = 'applied'), 0)::bigint AS successful_minor
     FROM payment_transactions WHERE created_at >= NOW() - INTERVAL '30 days'
