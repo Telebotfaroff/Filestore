@@ -178,7 +178,9 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
           return ctx.reply('Subscribe to the required channels before requesting files:\n\n' + labels + '\n\nThen tap Verify.', getMissingSubscriptionMarkup(forceSub.missing));
         }
         const paidEntitled = await hasPaidFileEntitlement(pool, ctx.from.id, file.id);
-        const access = await evaluateAccess(pool, { userId: ctx.from.id, type: paidEntitled ? 'paid_file' : 'free_file', resourceId: file.id }, forceSub);
+        const paidLink = await pool.query('SELECT EXISTS (SELECT 1 FROM paid_file_links WHERE file_id = $1 AND is_enabled = TRUE AND (expires_at IS NULL OR expires_at > NOW())) OR EXISTS (SELECT 1 FROM paid_batch_items i JOIN paid_batch_links b ON b.id = i.batch_link_id WHERE i.file_id = $1 AND b.is_enabled = TRUE AND (b.expires_at IS NULL OR b.expires_at > NOW()) AS locked', [file.id]);
+        const paidLocked = paidLink.rows[0]?.locked === true;
+        const access = await evaluateAccess(pool, { userId: ctx.from.id, type: (paidEntitled || paidLocked) ? 'paid_file' : 'free_file', resourceId: file.id }, forceSub);
         if (!access.allowed) {
           if (access.reason === 'purchase_required') return ctx.reply('This file is locked. Use /paid <link_code> to request purchase.');
           if (access.reason === 'checkpoint_required') return ctx.reply('Checkpoint required before free delivery. Provider: ' + (access.provider?.name ?? 'unknown') + '. Verification link integration is not yet available, so access remains locked.');
