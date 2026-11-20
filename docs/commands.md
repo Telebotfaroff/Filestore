@@ -164,3 +164,13 @@ The timer starts after a delivery succeeds. Existing scheduled deletions remain 
 
 - `/dashboard` — Summary of user activity, indexed files, storage channels, enabled Delivery Bots, delivery queue states, Premium memberships, paid links, pending purchase requests, applied payment totals, and 24-hour activity.
 - `/stats` — Alias for the dashboard.
+
+
+## Payment reconciliation (admin)
+
+- `/payments` — Summary of payment, checkout-session, and provider-event states. Includes a shortcut to recent transactions.
+- `/payment_recent` — Latest 10 payment transactions with inline **Details** buttons.
+- Transaction detail view — Shows payment/session/event history. Verified transactions expose a **Retry safe fulfillment** button.
+- **Recent payments** — Return to the transaction list; **Refresh** reloads it.
+- `/payment_detail <transaction_id>` — Open transaction details directly.
+- `/payment_reconcile <transaction_id>` — Retry fulfillment for a verified payment. Fulfillment is idempotent.
