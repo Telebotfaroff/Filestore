@@ -58,7 +58,7 @@ export async function claimNextDeliveryJob(pool, workerIdentity) {
       [item.id, workerIdentity],
     );
     await client.query('COMMIT');
-    return { jobId: job.id, requesterTelegramId: job.requester_telegram_id, itemId: item.id, fileId: item.file_id, attemptId: attempt.rows[0].id };
+    return { jobId: job.id, requesterTelegramId: job.requester_telegram_id, itemId: item.id, fileId: item.file_id, attemptId: attempt.rows[0].id, workerIdentity };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -126,6 +126,12 @@ export async function failDelivery(pool, claim, status, errorCode, errorDescript
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const ownership = await client.query(
+      `SELECT id FROM delivery_jobs WHERE id = $1 AND status = 'processing'
+       AND locked_by = $2 AND locked_until > NOW() FOR UPDATE`,
+      [claim.jobId, claim.workerIdentity],
+    );
+    if (!ownership.rowCount) throw new Error('Delivery lease lost; refusing to mark failure');
     await client.query('UPDATE delivery_attempts SET status = $2, error_code = $3, error_description = $4, finished_at = NOW() WHERE id = $1', [claim.attemptId, status, errorCode, errorDescription?.slice(0, 500) ?? null]);
     await client.query('UPDATE delivery_items SET status = $2, last_error = $3, updated_at = NOW() WHERE id = $1', [claim.itemId, status, errorDescription?.slice(0, 500) ?? null]);
     await client.query('UPDATE delivery_jobs SET status = $2, last_error = $3, locked_by = NULL, locked_until = NULL, updated_at = NOW() WHERE id = $1', [claim.jobId, status, errorDescription?.slice(0, 500) ?? null]);
