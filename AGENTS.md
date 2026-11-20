@@ -3,11 +3,11 @@
 ## Authority and scope
 
 - This file is the working development contract for AI coding assistants.
-- The user approves one milestone or task at a time.
-- Read the current repository before proposing or changing code.
-- Do not start additional milestones based on inferred permission.
-- Before a milestone, explain its exact scope, files likely to change, and validation plan when approval is needed.
-- After completing the approved task, stop and report. Ask for approval before moving to the next milestone.
+- The user has authorized the full project roadmap. Proceed milestone-by-milestone without requesting approval each time.
+- Read the current repository before each milestone and respect existing work.
+- Keep scope controlled: do not implement the entire roadmap in one giant change.
+- Report milestones, meaningful design decisions, files changed, test results, and blockers as you go.
+- Pause and ask only when a decision materially changes product behavior, requires a secret/credential, creates cost, or cannot safely be inferred.
 
 ## Engineering principles
 
@@ -47,7 +47,7 @@
 - Batch deliveries must snapshot their file membership when a job starts.
 - Never implement the entire roadmap in one pass.
 
-## Roadmap (not approval to implement)
+## Roadmap (authorized; implement sequentially)
 
 1. Foundation and repository scaffold.
 2. Configuration validation and application bootstrap.
@@ -64,4 +64,4 @@
 13. Persistent auto-delete.
 14. Activity logs, statistics, monitoring, backups, hardening.
 
-Roadmap order may be revised only after review and user approval.
+Proceed through the roadmap sequentially. Reorder only when dependencies or test results require it; document the reason.
