@@ -1,0 +1,169 @@
+export async function createSingleDeliveryJob(pool, requesterTelegramId, fileId, requestedBy = requesterTelegramId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const job = await client.query(
+      'INSERT INTO delivery_jobs (job_type, requester_telegram_id, requested_by) VALUES ($1, $2, $3) RETURNING id',
+      ['single', requesterTelegramId, requestedBy],
+    );
+    await client.query(
+      'INSERT INTO delivery_items (job_id, file_id, position) VALUES ($1, $2, $0)',
+      [job.rows[0].id, fileId],
+    );
+    await client.query('COMMIT');
+    return job.rows[0].id;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function claimNextDeliveryJob(pool, workerIdentity) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const jobResult = await client.query(
+      `SELECT id, requester_telegram_id FROM delivery_jobs
+       WHERE status = 'pending' ORDER BY created_at ASC
+       FOR UPDATE SKIP LOCKED LIMIT 1`,
+    );
+    if (!jobResult.rowCount) {
+      await client.query('COMMIT');
+      return null;
+    }
+    const job = jobResult.rows[0];
+    await client.query(
+      `UPDATE delivery_jobs SET status = 'processing', locked_by = $2,
+       locked_until = NOW() + INTERVAL '90 seconds', attempt_count = attempt_count + 1,
+       updated_at = NOW() WHERE id = $1`,
+      [job.id, workerIdentity],
+    );
+    const itemResult = await client.query(
+      `SELECT id, file_id FROM delivery_items WHERE job_id = $1 AND status = 'pending'
+       ORDER BY position ASC LIMIT 1 FOR UPDATE`,
+      [job.id],
+    );
+    if (!itemResult.rowCount) {
+      await client.query("UPDATE delivery_jobs SET status = 'failed', last_error = 'No pending delivery items', locked_by = NULL, locked_until = NULL WHERE id = $1", [job.id]);
+      await client.query('COMMIT');
+      return null;
+    }
+    const item = itemResult.rows[0];
+    await client.query("UPDATE delivery_items SET status = 'processing', updated_at = NOW() WHERE id = $1", [item.id]);
+    const attempt = await client.query(
+      `INSERT INTO delivery_attempts (delivery_item_id, delivery_bot_identity, status)
+       VALUES ($1, $2, 'started') RETURNING id`,
+      [item.id, workerIdentity],
+    );
+    await client.query('COMMIT');
+    return { jobId: job.id, requesterTelegramId: job.requester_telegram_id, itemId: item.id, fileId: item.file_id, attemptId: attempt.rows[0].id };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getDeliverySource(pool, fileId) {
+  const result = await pool.query(
+    `SELECT f.file_code, f.file_name, f.telegram_file_id, sm.telegram_message_id,
+       sc.telegram_chat_id AS storage_chat_id, sc.title AS storage_title
+     FROM files f
+     JOIN storage_messages sm ON sm.file_id = f.id AND sm.is_primary = TRUE
+     JOIN storage_channels sc ON sc.id = sm.storage_channel_id
+     WHERE f.id = $1 AND f.status = 'active' AND sc.is_enabled = TRUE
+     LIMIT 1`,
+    [fileId],
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function finishDelivery(pool, claim, deliveredMessageId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("UPDATE delivery_attempts SET status = 'delivered', telegram_message_id = $2, finished_at = NOW() WHERE id = $1", [claim.attemptId, deliveredMessageId]);
+    await client.query("UPDATE delivery_items SET status = 'delivered', delivered_to = $2, telegram_message_id = $3, delivered_at = NOW(), updated_at = NOW() WHERE id = $1", [claim.itemId, claim.requesterTelegramId, deliveredMessageId]);
+    await client.query("UPDATE delivery_jobs SET status = 'completed', locked_by = NULL, locked_until = NULL, completed_at = NOW(), updated_at = NOW() WHERE id = $1", [claim.jobId]);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function failDelivery(pool, claim, status, errorCode, errorDescription) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE delivery_attempts SET status = $2, error_code = $3, error_description = $4, finished_at = NOW() WHERE id = $1', [claim.attemptId, status, errorCode, errorDescription?.slice(0, 500) ?? null]);
+    await client.query('UPDATE delivery_items SET status = $2, last_error = $3, updated_at = NOW() WHERE id = $1', [claim.itemId, status, errorDescription?.slice(0, 500) ?? null]);
+    await client.query('UPDATE delivery_jobs SET status = $2, last_error = $3, locked_by = NULL, locked_until = NULL, updated_at = NOW() WHERE id = $1', [claim.jobId, status, errorDescription?.slice(0, 500) ?? null]);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function recoverExpiredDeliveryJobs(pool) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE delivery_attempts da SET status = 'uncertain', finished_at = NOW(),
+       error_description = COALESCE(error_description, 'Worker lease expired during send')
+       FROM delivery_items di JOIN delivery_jobs dj ON dj.id = di.job_id
+       WHERE da.delivery_item_id = di.id AND da.status = 'started'
+         AND di.status = 'processing' AND dj.status = 'processing' AND dj.locked_until < NOW()`,
+    );
+    await client.query(
+      `UPDATE delivery_items di SET status = 'uncertain', last_error = 'Worker lease expired; send outcome uncertain', updated_at = NOW()
+       FROM delivery_jobs dj WHERE dj.id = di.job_id AND dj.status = 'processing'
+         AND dj.locked_until < NOW() AND di.status = 'processing'
+         AND EXISTS (SELECT 1 FROM delivery_attempts da WHERE da.delivery_item_id = di.id AND da.status = 'uncertain')`,
+    );
+    await client.query(
+      `UPDATE delivery_items di SET status = 'pending', updated_at = NOW()
+       FROM delivery_jobs dj WHERE dj.id = di.job_id AND dj.status = 'processing'
+         AND dj.locked_until < NOW() AND di.status = 'processing'
+         AND NOT EXISTS (SELECT 1 FROM delivery_attempts da WHERE da.delivery_item_id = di.id AND da.status = 'uncertain')`,
+    );
+    await client.query(
+      `UPDATE delivery_jobs dj SET status = 'uncertain', locked_by = NULL, locked_until = NULL,
+       updated_at = NOW() WHERE dj.status = 'processing' AND dj.locked_until < NOW()
+       AND EXISTS (SELECT 1 FROM delivery_items di WHERE di.job_id = dj.id AND di.status = 'uncertain')`,
+    );
+    await client.query(
+      `UPDATE delivery_jobs dj SET status = 'pending', locked_by = NULL, locked_until = NULL,
+       updated_at = NOW() WHERE dj.status = 'processing' AND dj.locked_until < NOW()
+       AND NOT EXISTS (SELECT 1 FROM delivery_items di WHERE di.job_id = dj.id AND di.status = 'uncertain')`,
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getDeliveryStats(pool) {
+  const result = await pool.query(
+    `SELECT
+      COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
+      COUNT(*) FILTER (WHERE status = 'processing')::int AS processing,
+      COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
+      COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
+      COUNT(*) FILTER (WHERE status = 'uncertain')::int AS uncertain
+     FROM delivery_jobs`,
+  );
+  return result.rows[0];
+}
