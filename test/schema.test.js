@@ -7,6 +7,7 @@ const migration2 = await readFile(new URL('../src/database/migrations/002_file_i
 const migration3 = await readFile(new URL('../src/database/migrations/003_unique_active_file_ids.sql', import.meta.url), 'utf8');
 const migration4 = await readFile(new URL('../src/database/migrations/004_delivery_queue.sql', import.meta.url), 'utf8');
 const migration5 = await readFile(new URL('../src/database/migrations/005_delivery_bot_manager.sql', import.meta.url), 'utf8');
+const migration6 = await readFile(new URL('../src/database/migrations/006_force_subscription.sql', import.meta.url), 'utf8');
 
 test('initial schema defines core tables and constraints', () => {
   for (const table of ['users', 'app_settings', 'storage_channels', 'files', 'storage_messages', 'tags', 'file_tags', 'activity_logs']) {
@@ -31,6 +32,12 @@ test('dynamic Delivery Bot table includes encrypted token and runtime fields', (
   assert.match(migration5, /token_ciphertext/);
   assert.match(migration5, /runtime_status/);
   assert.match(migration5, /delivery_bots_single_primary_idx/);
+});
+
+test('force-subscription channel manager schema includes join links', () => {
+  assert.match(migration6, /force_sub_channels/);
+  assert.match(migration6, /join_url/);
+  assert.match(migration6, /is_enabled/);
 });
 
 test('active media identifiers are unique and schema contains no duplicate primary declaration', () => {
