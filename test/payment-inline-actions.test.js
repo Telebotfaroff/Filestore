@@ -39,7 +39,7 @@ test('recent payments shows inline transaction detail buttons and filter options
   assert.match(message.text, /#23/);
   assert.equal(message.options.reply_markup.inline_keyboard[0][0].callback_data, 'paydetail:23:all:0');
   assert.ok(message.options.reply_markup.inline_keyboard.some((buttons) => buttons.some((button) => button.callback_data === 'paybrowse:verified:0')));
-  assert.ok(message.options.reply_markup.inline_keyboard.some((buttons) => buttons.some((button) => button.callback_data === 'paymentsearchhelp'));
+  assert.ok(message.options.reply_markup.inline_keyboard.some((buttons) => buttons.some((button) => button.callback_data === 'paymentsearchhelp')));
 });
 
 test('transaction detail callback includes recovery action and retains browse filter/page', async () => {
