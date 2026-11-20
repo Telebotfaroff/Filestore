@@ -14,6 +14,8 @@ test('rejects invalid encryption key size', () => {
 });
 test('rejects tampered ciphertext', () => {
   const encrypted = encryptBotToken('token', key).split('.');
-  encrypted[3] = encrypted[3].slice(0, -1) + (encrypted[3].endsWith('A') ? 'B' : 'A');
+  const ciphertext = Buffer.from(encrypted[3], 'base64url');
+  ciphertext[0] ^= 0xff;
+  encrypted[3] = ciphertext.toString('base64url');
   assert.throws(() => decryptBotToken(encrypted.join('.'), key));
 });
