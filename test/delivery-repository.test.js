@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSingleDeliveryJob, claimNextDeliveryJob } from '../src/delivery/repository.js';
+import { createSingleDeliveryJob, claimNextDeliveryJob, retryFailedDeliveryJob } from '../src/delivery/repository.js';
 
 test('creates a job and item inside a transaction', async () => {
   const statements = [];
@@ -75,5 +75,37 @@ test('finish delivery refuses to write completion when worker lease is lost', as
   assert.match(statements[1].query, /locked_by = \$2 AND locked_until > NOW\(\) FOR UPDATE/);
   assert.deepEqual(statements[1].args, [5, 'bot-A']);
   assert.equal(statements.some(x => x.query.includes('UPDATE delivery_attempts SET status =')), false);
+  assert.equal(statements.at(-1).query, 'ROLLBACK');
+});
+
+test('requeues only failed items in a failed job and preserves delivered items', async () => {
+  const statements = [];
+  const client = { query: async (sql, args) => {
+    const query = String(sql).trim();
+    statements.push({ query, args });
+    if (query.startsWith('SELECT id, status FROM delivery_jobs')) return { rowCount: 1, rows: [{ id: 88, status: 'failed' }] };
+    if (query.startsWith('SELECT')) return { rowCount: 1, rows: [{ failed: 2, uncertain: 0, processing: 0 }] };
+    return { rows: [] };
+  }, release: () => {} };
+  const pool = { connect: async () => client };
+  const result = await retryFailedDeliveryJob(pool, 88);
+  assert.deepEqual(result, { ok: true, retriedItems: 2 });
+  assert.ok(statements.some(s => /WHERE job_id = \$1 AND status = 'failed'/.test(s.query)));
+  assert.ok(statements.some(s => /UPDATE delivery_jobs SET status = 'pending'/.test(s.query)));
+  assert.equal(statements.at(-1).query, 'COMMIT');
+});
+
+test('blocks failed-job retry when an item has uncertain delivery outcome', async () => {
+  const statements = [];
+  const client = { query: async (sql, args) => {
+    const query = String(sql).trim();
+    statements.push({ query, args });
+    if (query.startsWith('SELECT id, status FROM delivery_jobs')) return { rowCount: 1, rows: [{ id: 88, status: 'failed' }] };
+    if (query.startsWith('SELECT')) return { rowCount: 1, rows: [{ failed: 1, uncertain: 1, processing: 0 }] };
+    return { rows: [] };
+  }, release: () => {} };
+  const pool = { connect: async () => client };
+  assert.deepEqual(await retryFailedDeliveryJob(pool, 88), { ok: false, reason: 'unsafe_state' });
+  assert.equal(statements.some(s => s.query.startsWith('UPDATE delivery_items')), false);
   assert.equal(statements.at(-1).query, 'ROLLBACK');
 });
