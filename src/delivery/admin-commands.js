@@ -1,4 +1,4 @@
-import { retryFailedDeliveryJob } from './repository.js';
+import { retryFailedDeliveryJob, getRecentDeliveryJobs } from './repository.js';
 
 function getRecordId(ctx) {
   const value = ctx.message?.text?.trim().split(/\s+/).slice(1)[0] ?? '';
@@ -9,6 +9,22 @@ function getRecordId(ctx) {
 }
 
 export function registerDeliveryBotManagerCommands(bot, manager, logger, pool) {
+  bot.command('delivery_jobs', async (ctx) => {
+    try {
+      const jobs = await getRecentDeliveryJobs(pool, 10);
+      if (!jobs.length) return ctx.reply('No delivery jobs found.');
+      const lines = jobs.map((job) =>
+        `#${job.id} · ${String(job.status).toUpperCase()} · ${job.job_type}
+Requester: ${job.requester_telegram_id}
+Files: ${job.delivered_count}/${job.item_count} delivered · ${job.failed_count} failed · ${job.uncertain_count} uncertain${job.last_error ? '\\nError: ' + String(job.last_error).slice(0, 180) : ''}`,
+      );
+      return ctx.reply('Recent delivery jobs (latest 10):\\n\\n' + lines.join('\\n\\n') + '\\n\\nRetry a failed job: /delivery_retry <job_id>');
+    } catch (error) {
+      logger.error({ error: error.message }, 'Recent delivery jobs query failed');
+      return ctx.reply('Could not load recent delivery jobs.');
+    }
+  });
+
   bot.command('delivery_retry', async (ctx) => {
     const raw = ctx.message?.text?.trim().split(/\s+/).slice(1)[0] ?? '';
     if (!/^\d+$/.test(raw)) return ctx.reply('Usage: /delivery_retry <failed_job_id>');
