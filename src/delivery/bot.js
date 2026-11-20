@@ -4,9 +4,9 @@ import { getIndexedFile } from '../storage/file-query.js';
 import { createSingleDeliveryJob, getDeliveryStats } from './repository.js';
 import { createDeliveryWorker } from './worker.js';
 
-export function createDeliveryBot(config, logger, pool) {
-  if (!config.deliveryBotToken) return null;
-  const bot = new Telegraf(config.deliveryBotToken);
+export function createDeliveryBot(config, logger, pool, token = config.deliveryBotToken) {
+  if (!token) return null;
+  const bot = new Telegraf(token);
   let worker;
   let identity = 'delivery-bot';
 
