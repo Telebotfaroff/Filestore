@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { claimDueDeletion, finishScheduledDeletion, failScheduledDeletion } from './auto-delete-repository.js';
 
 export function isTelegramDeletionAlreadyComplete(error) {
@@ -6,6 +7,7 @@ export function isTelegramDeletionAlreadyComplete(error) {
 }
 
 export function createAutoDeleteWorker(bot, pool, logger, identity) {
+  const leaseOwner = randomUUID();
   let timer;
   let busy = false;
 
@@ -13,20 +15,22 @@ export function createAutoDeleteWorker(bot, pool, logger, identity) {
     if (busy) return;
     busy = true;
     try {
-      const claim = await claimDueDeletion(pool, identity);
+      const claim = await claimDueDeletion(pool, identity, leaseOwner);
       if (!claim) return;
       try {
         await bot.telegram.deleteMessage(claim.chatId, claim.messageId);
-        await finishScheduledDeletion(pool, claim.id);
+        const completed = await finishScheduledDeletion(pool, claim.id, claim.leaseOwner);
+        if (!completed) logger.warn({ deletionId: claim.id }, 'Auto-delete lease lost before completion');
       } catch (error) {
-        // Telegram returns "message to delete not found" when the user deleted it
-        // manually or a previous attempt already succeeded; treat that as complete.
+        // Telegram reports "message to delete not found" if deletion already occurred.
         const description = error.response?.description ?? error.message ?? '';
         if (isTelegramDeletionAlreadyComplete(error)) {
-          await finishScheduledDeletion(pool, claim.id);
+          const completed = await finishScheduledDeletion(pool, claim.id, claim.leaseOwner);
+          if (!completed) logger.warn({ deletionId: claim.id }, 'Auto-delete lease lost before completion');
         } else {
-          await failScheduledDeletion(pool, claim.id, description);
-          logger.warn({ deletionId: claim.id, error: description }, 'Auto-delete failed');
+          const failed = await failScheduledDeletion(pool, claim.id, claim.leaseOwner, description);
+          if (failed) logger.warn({ deletionId: claim.id, error: description }, 'Auto-delete failed');
+          else logger.warn({ deletionId: claim.id }, 'Auto-delete lease lost before failure update');
         }
       }
     } catch (error) {
