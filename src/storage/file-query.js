@@ -10,11 +10,11 @@ export async function searchIndexedFiles(pool, searchTerm, limit = 8) {
   return result.rows;
 }
 
-export async function listRecentFiles(pool, limit = 15) {
+export async function listRecentFiles(pool, limit = 8) {
   const result = await pool.query(
     `SELECT file_code, file_name, file_type, file_size, created_at
      FROM files WHERE status = 'active' ORDER BY created_at DESC LIMIT $1`,
-    [Math.min(Math.max(limit, 1), 50)],
+    [Math.min(Math.max(limit, 1), 20)],
   );
   return result.rows;
 }
