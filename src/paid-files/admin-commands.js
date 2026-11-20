@@ -1,4 +1,4 @@
-import { createPaidFileLink, disablePaidFileLink, listPaidFileLinks, confirmPaidFilePurchase } from './repository.js';
+import { createPaidFileLink, disablePaidFileLink, listPaidFileLinks, confirmPaidFilePurchase, getPaidFileLink } from './repository.js';
 
 function commandArgs(ctx) { return ctx.message?.text?.trim().split(/\s+/).slice(1) ?? []; }
 function parseAmount(value) {
@@ -55,6 +55,11 @@ export function registerPaidFileAdminCommands(bot, pool, logger) {
       const userId = parseAdminId(userRaw);
       const result = await confirmPaidFilePurchase(pool, code, userId, ctx.from.id);
       await ctx.reply(result.alreadyConfirmed ? 'Purchase was already confirmed.' : 'Purchase confirmed. Access grant recorded.');
+      if (!result.alreadyConfirmed) {
+        const link = await getPaidFileLink(pool, code);
+        try { await ctx.telegram.sendMessage(userId, 'Your payment has been manually verified. Paid access is unlocked for ' + (link?.file_name ?? 'your file') + '.\\nUse /get ' + (link?.file_code ?? '') + ' to request delivery.'); }
+        catch (notifyError) { logger.warn({ userId, error: notifyError.message }, 'Paid purchase confirmation notification failed'); }
+      }
     } catch (error) { await ctx.reply('Confirmation failed: ' + error.message); }
   });
 }
