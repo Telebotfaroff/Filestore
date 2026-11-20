@@ -1,0 +1,21 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Runtime files
+logs/
+tmp/
+uploads/
+
+# Coverage and test artifacts
+coverage/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
