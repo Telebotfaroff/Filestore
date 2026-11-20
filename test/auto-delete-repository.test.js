@@ -37,3 +37,22 @@ test('stale deletion failure cannot overwrite newer claim',async()=>{
   const pool={query:async()=>({rowCount:0})};
   assert.equal(await failScheduledDeletion(pool,9,'old-worker','late error'),false);
 });
+
+test('deletion retries use exponential backoff and terminal failures stop retrying',async()=>{
+  let call;
+  const pool={query:async(sql,args)=>{call={sql,args};return {rowCount:1};}};
+  assert.equal(await failScheduledDeletion(pool,5,'worker-b','timeout'),true);
+  assert.match(call.sql,/retry_after = CASE WHEN attempt_count >= 5 THEN NULL ELSE NOW() + make_interval/);
+  assert.match(call.sql,/LEAST\(3600/);
+  assert.deepEqual(call.args,[5,'worker-b','timeout']);
+});
+
+test('failed deletion inspection query is bounded and returns only terminal failures',async()=>{
+  let call;
+  const pool={query:async(sql,args)=>{call={sql,args};return {rows:[{id:1,status:'failed'}]};}};
+  const rows=await (await import('../src/delivery/auto-delete-repository.js')).listFailedScheduledDeletions(pool,999);
+  assert.equal(rows.length,1);
+  assert.match(call.sql,/WHERE status = 'failed'/);
+  assert.match(call.sql,/LIMIT \$1/);
+  assert.deepEqual(call.args,[25]);
+});
