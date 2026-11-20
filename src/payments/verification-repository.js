@@ -10,10 +10,11 @@ function safeHash(value) {
 export function validatePaymentSessionInput(input) {
   if (!input || !METHODS.has(input.method)) throw new Error('Unsupported payment method.');
   if (!PURPOSES.has(input.purpose)) throw new Error('Unsupported payment purpose.');
-  if (!Number.isSafeInteger(Number(input.amountMinor)) || Number(input.amountMinor) < 0) throw new Error('Invalid payment amount.');
+  if (!Number.isSafeInteger(Number(input.amountMinor)) || Number(input.amountMinor) <= 0) throw new Error('Invalid payment amount.');
   const currency = String(input.currency ?? '').toUpperCase();
   if (!/^[A-Z]{3}$/.test(currency)) throw new Error('Invalid currency.');
-  if (!Number.isFinite(new Date(input.expiresAt).getTime())) throw new Error('Invalid session expiry.');
+  if (!Number.isFinite(new Date(input.expiresAt).getTime()) || new Date(input.expiresAt).getTime() <= Date.now()) throw new Error('Session expiry must be in the future.');
+  if (!Number.isSafeInteger(Number(input.userId)) || Number(input.userId) <= 0) throw new Error('Invalid Telegram user ID.');
   if (input.purpose === 'premium' && (!Number.isSafeInteger(Number(input.planId)) || Number(input.planId) <= 0)) throw new Error('Premium session requires planId.');
   if (input.purpose === 'paid_file' && (!Number.isSafeInteger(Number(input.fileId)) || Number(input.fileId) <= 0)) throw new Error('Paid-file session requires fileId.');
   return { ...input, amountMinor: Number(input.amountMinor), currency };
@@ -79,31 +80,63 @@ export async function recordVerifiedPayment(pool, payment) {
   if (!METHODS.has(method)) throw new Error('Unsupported payment method.');
   const transactionId = String(payment.externalTransactionId ?? '').trim();
   if (!transactionId || transactionId.length > 255) throw new Error('Verified external transaction ID is required.');
+  const sessionId = Number(payment.sessionId);
+  if (!Number.isSafeInteger(sessionId) || sessionId <= 0) throw new Error('Payment session ID is required.');
   const userId = Number(payment.userId);
   if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error('Invalid Telegram user ID.');
   const amountMinor = Number(payment.amountMinor);
-  if (!Number.isSafeInteger(amountMinor) || amountMinor < 0) throw new Error('Invalid verified amount.');
+  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) throw new Error('Invalid verified amount.');
   const currency = String(payment.currency ?? '').toUpperCase();
   if (!/^[A-Z]{3}$/.test(currency)) throw new Error('Invalid verified currency.');
   const purpose = payment.purpose;
   if (!PURPOSES.has(purpose)) throw new Error('Invalid payment purpose.');
-  const { rows } = await pool.query(
-    `INSERT INTO payment_transactions (user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, amount_minor, currency, status, verified_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'verified',NOW())
-     ON CONFLICT (method, external_transaction_id) WHERE external_transaction_id IS NOT NULL DO NOTHING
-     RETURNING id, user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, amount_minor, currency, status, verified_at`,
-    [userId, method, transactionId, purpose, payment.planId ?? null, payment.fileId ?? null, amountMinor, currency],
-  );
-  if (rows[0]) return { duplicate: false, transaction: rows[0] };
-  const prior = await pool.query(
-    'SELECT id, user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, amount_minor, currency, status, verified_at FROM payment_transactions WHERE method = $1 AND external_transaction_id = $2 LIMIT 1',
-    [method, transactionId],
-  );
-  const tx = prior.rows[0];
-  const same = String(tx.user_telegram_id) === String(userId) && tx.purpose === purpose &&
-    Number(tx.amount_minor) === amountMinor && tx.currency === currency &&
-    (tx.plan_id == null ? payment.planId == null : String(tx.plan_id) === String(payment.planId)) &&
-    (tx.file_id == null ? payment.fileId == null : String(tx.file_id) === String(payment.fileId));
-  if (!same) throw new Error('Transaction ID already exists but does not match this payment.');
-  return { duplicate: true, transaction: tx };
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const sessionResult = await client.query(
+      'SELECT id, user_telegram_id, method, purpose, plan_id, file_id, expected_amount_minor, currency, status, expires_at FROM payment_sessions WHERE id = $1 FOR UPDATE',
+      [sessionId],
+    );
+    if (!sessionResult.rowCount) throw new Error('Payment session not found.');
+    const session = sessionResult.rows[0];
+    const sessionMatches = String(session.user_telegram_id) === String(userId) && session.method === method &&
+      session.purpose === purpose && Number(session.expected_amount_minor) === amountMinor && session.currency === currency &&
+      (session.plan_id == null ? payment.planId == null : String(session.plan_id) === String(payment.planId)) &&
+      (session.file_id == null ? payment.fileId == null : String(session.file_id) === String(payment.fileId));
+    if (!sessionMatches) throw new Error('Verified payment does not match the checkout session.');
+    if (new Date(session.expires_at) <= new Date() && session.status === 'pending') throw new Error('Payment session expired.');
+    const prior = await client.query(
+      'SELECT id, user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, amount_minor, currency, status, session_id, verified_at FROM payment_transactions WHERE method = $1 AND external_transaction_id = $2 LIMIT 1 FOR UPDATE',
+      [method, transactionId],
+    );
+    if (prior.rowCount) {
+      const tx = prior.rows[0];
+      const matches = String(tx.user_telegram_id) === String(userId) && tx.purpose === purpose &&
+        Number(tx.amount_minor) === amountMinor && tx.currency === currency &&
+        String(tx.session_id) === String(sessionId) &&
+        (tx.plan_id == null ? payment.planId == null : String(tx.plan_id) === String(payment.planId)) &&
+        (tx.file_id == null ? payment.fileId == null : String(tx.file_id) === String(payment.fileId));
+      if (!matches) throw new Error('Transaction ID already exists but does not match this payment.');
+      await client.query('COMMIT');
+      return { duplicate: true, transaction: tx };
+    }
+    if (session.status !== 'pending') throw new Error('Payment session is no longer pending.');
+    const inserted = await client.query(
+      `INSERT INTO payment_transactions (user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, amount_minor, currency, status, session_id, verified_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'verified',$9,NOW())
+       RETURNING id, user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, amount_minor, currency, status, session_id, verified_at`,
+      [userId, method, transactionId, purpose, payment.planId ?? null, payment.fileId ?? null, amountMinor, currency, sessionId],
+    );
+    await client.query(
+      `UPDATE payment_sessions SET status = 'verified', provider_session_id = $2, updated_at = NOW() WHERE id = $1`,
+      [sessionId, transactionId],
+    );
+    await client.query('COMMIT');
+    return { duplicate: false, transaction: inserted.rows[0] };
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
 }
