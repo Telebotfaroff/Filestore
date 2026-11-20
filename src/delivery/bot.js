@@ -201,6 +201,8 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
   bot.command('checkpoint_status', async (ctx) => {
     try {
       await upsertTelegramUser(pool, ctx.from);
+      const setting = await pool.query("SELECT value FROM app_settings WHERE key = 'checkpoint_enabled' LIMIT 1");
+      if (!setting.rowCount || setting.rows[0].value !== true) return ctx.reply('Checkpoint enforcement is OFF.');
       const requirement = await getCheckpointRequirement(pool, ctx.from.id);
       if (requirement.reason === 'checkpoint_active') return ctx.reply('Checkpoint active until: ' + new Date(requirement.expiresAt).toLocaleString());
       if (requirement.reason === 'no_active_providers') return ctx.reply('No active checkpoint providers. Checkpoints are not currently required.');
@@ -219,9 +221,11 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
       const premium = await pool.query(`SELECT p.name, m.expires_at FROM premium_memberships m LEFT JOIN premium_plans p ON p.id = m.plan_id
         WHERE m.user_telegram_id = $1 AND m.status = 'active' AND m.starts_at <= NOW() AND (m.expires_at IS NULL OR m.expires_at > NOW())
         ORDER BY m.expires_at DESC NULLS FIRST LIMIT 1`, [ctx.from.id]);
-      const checkpoint = await getCheckpointRequirement(pool, ctx.from.id);
+      const checkpointSetting = await pool.query("SELECT value FROM app_settings WHERE key = 'checkpoint_enabled' LIMIT 1");
+      const checkpointEnabled = checkpointSetting.rowCount && checkpointSetting.rows[0].value === true;
+      const checkpoint = checkpointEnabled ? await getCheckpointRequirement(pool, ctx.from.id) : { reason: 'checkpoint_disabled' };
       const lines = ['Access status', '', 'Force-sub: ' + (forceSub.passed ? 'Passed' : 'Required (' + forceSub.missing.length + ' channel(s))'), 'Premium: ' + (premium.rowCount ? 'Active' + (premium.rows[0].expires_at ? ' until ' + new Date(premium.rows[0].expires_at).toLocaleString() : ' (permanent)') : 'Inactive')];
-      lines.push('Checkpoint: ' + (checkpoint.reason === 'checkpoint_active' ? 'Active until ' + new Date(checkpoint.expiresAt).toLocaleString() : checkpoint.reason === 'no_active_providers' ? 'No provider available' : checkpoint.blocked ? 'Unavailable (provider verification not connected)' : 'Required, verification unavailable'));
+      lines.push('Checkpoint: ' + (checkpoint.reason === 'checkpoint_disabled' ? 'Off' : checkpoint.reason === 'checkpoint_active' ? 'Active until ' + new Date(checkpoint.expiresAt).toLocaleString() : checkpoint.reason === 'no_active_providers' ? 'No provider available' : checkpoint.blocked ? 'Unavailable (provider verification not connected)' : 'Required, verification unavailable'));
       return ctx.reply(lines.join('\n'));
     } catch (error) {
       logger.warn({ userId: ctx.from.id, error: error.message }, 'Access status failed');
