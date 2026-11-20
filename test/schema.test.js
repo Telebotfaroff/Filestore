@@ -11,6 +11,7 @@ const migration6 = await readFile(new URL('../src/database/migrations/006_force_
 const migration7 = await readFile(new URL('../src/database/migrations/007_shortener_checkpoint.sql', import.meta.url), 'utf8');
 const migration8 = await readFile(new URL('../src/database/migrations/008_access_manager.sql', import.meta.url), 'utf8');
 const migration9 = await readFile(new URL('../src/database/migrations/009_payment_foundation.sql', import.meta.url), 'utf8');
+const migration10 = await readFile(new URL('../src/database/migrations/010_paid_file_links.sql', import.meta.url), 'utf8');
 
 test('initial schema defines core tables and constraints', () => {
   for (const table of ['users', 'app_settings', 'storage_channels', 'files', 'storage_messages', 'tags', 'file_tags', 'activity_logs']) {
@@ -62,6 +63,14 @@ test('payment foundation seeds the four requested methods and uses unique transa
   assert.match(migration9, /payment_sessions/);
   assert.match(migration9, /payment_transactions/);
   assert.match(migration9, /payment_transactions_utr_unique_idx/);
+});
+
+test('paid file links and purchase rows have unique user-link records and lifecycle states', () => {
+  assert.match(migration10, /paid_file_links/);
+  assert.match(migration10, /public_code_hash/);
+  assert.match(migration10, /paid_file_purchases/);
+  assert.match(migration10, /UNIQUE \(paid_link_id, user_telegram_id\)/);
+  for (const status of ['pending', 'paid', 'delivered', 'refunded', 'cancelled']) assert.match(migration10, new RegExp(status));
 });
 
 test('active media identifiers are unique and schema contains no duplicate primary declaration', () => {
