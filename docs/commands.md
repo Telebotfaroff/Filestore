@@ -28,6 +28,8 @@ Send supported media (video, document, photo, audio, voice, video note, or anima
 ## Dynamic Delivery Bots
 
 - `/delivery_bots` — List bot runtimes.
+- `/delivery_jobs` — Show the 10 most recent jobs, item counts, and failed/uncertain states.
+- `/delivery_retry <job_id>` — Requeue failed items in a failed job; uncertain jobs/items are blocked to prevent duplicate sends.
 - `/delivery_bot_add <token>` — Add a bot; token is encrypted.
 - `/delivery_bot_pause <record_id>`, `/delivery_bot_resume <record_id>`
 - `/delivery_bot_restart <record_id>`
