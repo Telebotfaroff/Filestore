@@ -18,7 +18,7 @@ async function showForceSubStatus(ctx, telegram, pool, userId) {
     await ctx.reply('Subscription check passed. All required channels are joined.');
     return result;
   }
-  const labels = result.missing.map((channel) => `• ${channel.title ?? channel.telegram_chat_id}${channel.checkStatus === 'check_failed' ? ' (verification temporarily unavailable)' : ''}`).join('\n");
+  const labels = result.missing.map((channel) => `• ${channel.title ?? channel.telegram_chat_id}${channel.checkStatus === 'check_failed' ? ' (verification temporarily unavailable)' : ''}`).join('\n');
   await ctx.reply('Join the required channels first:\n\n' + labels + '\n\nThen tap Verify.', getMissingSubscriptionMarkup(result.missing));
   return result;
 }
