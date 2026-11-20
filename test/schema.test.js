@@ -87,7 +87,7 @@ test('paid batch links support ordered items and unique user purchases', () => {
 
 test('payment verification schema stores idempotent provider events and checkout metadata', () => {
   assert.match(migration13, /payment_provider_events/);
-  assert.match(migration13, /UNIQUE\\(method, provider_event_id\\)/);
+  assert.match(migration13, /UNIQUE \(method, provider_event_id\)/);
   assert.match(migration13, /provider_checkout_url/);
   assert.match(migration13, /metadata JSONB/);
   assert.match(migration14, /paid_batch/);
