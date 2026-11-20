@@ -100,7 +100,7 @@ export async function handleStarsSuccessfulPayment(pool, ctx, token, logger) {
   try {
     const sessionResult = await pool.query('SELECT id,user_telegram_id,method,purpose,plan_id,file_id,batch_link_id,paid_link_id,expected_amount_minor,currency,status,expires_at FROM payment_sessions WHERE id=$1', [sessionId]);
     const session = sessionResult.rows[0];
-    if (!session || String(session.user_telegram_id) !== String(ctx.from.id) || session.method !== METHOD || !['pending','verified','applied'].includes(session.status)) throw new Error('Payment session is invalid.');
+    if (!session || String(session.user_telegram_id) !== String(ctx.from.id) || session.method !== METHOD || !['pending','expired','verified','applied'].includes(session.status)) throw new Error('Payment session is invalid.');
     if (Number(session.expected_amount_minor) !== Number(payment.total_amount) || session.currency !== CURRENCY) throw new Error('Stars charge amount does not match the checkout.');
     const receipt = await recordProviderEvent(pool, { method: METHOD, eventId: payment.telegram_payment_charge_id, eventType: 'successful_payment', payload: { userId: ctx.from.id, amount: payment.total_amount, currency: payment.currency, payload: payment.invoice_payload, providerChargeId: payment.provider_payment_charge_id } });
     event = receipt.event;
