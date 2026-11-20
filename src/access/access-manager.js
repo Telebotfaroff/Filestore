@@ -21,7 +21,7 @@ export async function evaluateAccess(pool, request, forceSubResult, now = new Da
   if (!forceSubResult?.passed) {
     return { allowed: false, reason: 'force_subscription_required', missingChannels: forceSubResult?.missing ?? [] };
   }
-  if (!request?.userId || !Number.isSafeInteger(Number(request.userId))) {
+  if (!request?.userId || !Number.isSafeInteger(Number(request.userId)) || Number(request.userId) <= 0) {
     return { allowed: false, reason: 'invalid_user' };
   }
 
