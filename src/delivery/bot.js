@@ -21,14 +21,14 @@ async function logForceSubEvent(pool, logger, eventType, userId, result) {
 }
 
 
-async function showForceSubStatus(ctx, telegram, pool, userId) {
+async function showForceSubStatus(ctx, telegram, pool, userId, logger) {
   const result = await checkForceSubscription(telegram, pool, userId);
   await logForceSubEvent(pool, logger, result.passed ? 'force_sub_verified' : 'force_sub_blocked', userId, result);
   if (result.passed) {
     await ctx.reply('Subscription check passed. All required channels are joined.');
     return result;
   }
-  const labels = result.missing.map((channel) => `• ${channel.title ?? channel.telegram_chat_id}${channel.checkStatus === 'check_failed' ? ' (verification temporarily unavailable)' : ''}`).join('\n');
+  const labels = result.missing.slice(0, 20).map((channel) => `• ${channel.title ?? channel.telegram_chat_id}${channel.checkStatus === 'check_failed' ? ' (verification temporarily unavailable)' : ''}`).join('\n');
   await ctx.reply('Join the required channels first:\n\n' + labels + '\n\nThen tap Verify.', getMissingSubscriptionMarkup(result.missing));
   return result;
 }
@@ -59,7 +59,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
   bot.command('verify', async (ctx) => {
     try {
       await upsertTelegramUser(pool, ctx.from);
-      await showForceSubStatus(ctx, ctx.telegram, pool, ctx.from.id);
+      await showForceSubStatus(ctx, ctx.telegram, pool, ctx.from.id, logger);
     } catch (error) {
       logger.warn({ userId: ctx.from.id, error: error.message }, 'Force-sub verification command failed');
       await ctx.reply('Subscription verification is temporarily unavailable. Please try again later.');
@@ -93,7 +93,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
         const forceSub = await checkForceSubscription(ctx.telegram, pool, ctx.from.id);
         await logForceSubEvent(pool, forceSub.passed ? 'force_sub_verified' : 'force_sub_blocked', ctx.from.id, forceSub);
         if (!forceSub.passed) {
-          const labels = forceSub.missing.map((channel) => `• ${channel.title ?? channel.telegram_chat_id}${channel.checkStatus === 'check_failed' ? ' (verification unavailable)' : ''}`).join("\n");
+          const labels = forceSub.missing.slice(0, 20).map((channel) => `• ${channel.title ?? channel.telegram_chat_id}${channel.checkStatus === 'check_failed' ? ' (verification unavailable)' : ''}`).join("\n");
           return ctx.reply('Subscribe to the required channels before requesting files:\n\n' + labels + '\n\nThen tap Verify.', getMissingSubscriptionMarkup(forceSub.missing));
         }
         const file = await getIndexedFile(pool, code);
