@@ -10,18 +10,16 @@ const envSchema = z.object({
   ADMIN_IDS: z.string().trim().optional().default(''),
 });
 
-
 function parseAdminIds(value) {
   if (!value) return [];
   const parsed = value.split(',').map((item) => item.trim()).filter(Boolean).map((id) => {
-    if (!/^\\d+$/.test(id)) throw new Error('ADMIN_IDS must be comma-separated numeric Telegram user IDs');
+    if (!/^\d+$/.test(id)) throw new Error('ADMIN_IDS must be comma-separated numeric Telegram user IDs');
     const n = Number(id);
     if (!Number.isSafeInteger(n)) throw new Error('ADMIN_IDS contains an invalid Telegram user ID');
     return n;
   });
   return [...new Set(parsed)];
 }
-
 
 export function loadConfig(source = process.env) {
   const result = envSchema.safeParse(source);
