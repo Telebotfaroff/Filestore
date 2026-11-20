@@ -28,12 +28,27 @@ export function loadConfig(source = process.env) {
     throw new Error(`Invalid FileStore configuration:\n${details}`);
   }
   const value = result.data;
+  const adminIds = parseAdminIds(value.ADMIN_IDS);
+  if (adminIds.length === 0) throw new Error('ADMIN_IDS must contain at least one Telegram administrator ID');
   return Object.freeze({
     nodeEnv: value.NODE_ENV,
     logLevel: value.LOG_LEVEL,
     mainBotToken: value.MAIN_BOT_TOKEN,
     databaseUrl: value.DATABASE_URL,
     tokenEncryptionKey: value.TOKEN_ENCRYPTION_KEY,
-    adminIds: Object.freeze(parseAdminIds(value.ADMIN_IDS)),
+    adminIds: Object.freeze(adminIds),
   });
+}
+
+const databaseOnlySchema = z.object({
+  DATABASE_URL: z.string().trim().min(1, 'DATABASE_URL is required'),
+});
+
+export function loadDatabaseConfig(source = process.env) {
+  const result = databaseOnlySchema.safeParse(source);
+  if (!result.success) {
+    const details = result.error.issues.map((issue) => `- ${issue.path.join('.') || 'config'}: ${issue.message}`).join('\n');
+    throw new Error(`Invalid FileStore database configuration:\n${details}`);
+  }
+  return Object.freeze({ databaseUrl: result.data.DATABASE_URL });
 }
