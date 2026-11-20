@@ -44,7 +44,15 @@ Only the primary Delivery Bot claims queue jobs; backups stay available for fail
 - `/delivery_status` — Queue status.
 - `/delivery_test` — Storage and force-sub permissions.
 
-Public delivery is still locked.
+## User access status
+
+- `/checkpoint_status` — Shows whether a checkpoint is active, required, or unavailable.
+- `/access_status` — Shows force-sub, Premium, and checkpoint state.
+- `/get <file_code>` — Public delivery now passes through the Access Manager. Free delivery is allowed when checkpoints are off or access is otherwise granted; paid files still require entitlement. Force-sub is checked first.
+
+Provider verification is intentionally fail-closed: checkpoint-enabled users cannot bypass verification when no trusted provider adapter is connected.
+
+Public file delivery is now governed by the Access Manager; admins retain test-mode access.
 
 ## Force-subscription
 
@@ -150,3 +158,9 @@ Batch codes use random 80-bit codes and hashed lookups. Purchase records are uni
 - `/auto_delete_off` — Disable auto-delete for future deliveries.
 
 The timer starts after a delivery succeeds. Existing scheduled deletions remain scheduled when auto-delete is disabled. Delivery Bots delete only their own sent messages. Deletion jobs are persisted and retried; after five failed attempts they are marked failed.
+
+
+## Main Bot Dashboard (M18)
+
+- `/dashboard` — Summary of user activity, indexed files, storage channels, enabled Delivery Bots, delivery queue states, Premium memberships, paid links, pending purchase requests, applied payment totals, and 24-hour activity.
+- `/stats` — Alias for the dashboard.
