@@ -193,6 +193,55 @@ export async function getDeliveryStats(pool) {
   return result.rows[0];
 }
 
+export async function retryFailedDeliveryJob(pool, jobId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const jobResult = await client.query(
+      "SELECT id, status FROM delivery_jobs WHERE id = $1 FOR UPDATE",
+      [jobId],
+    );
+    if (!jobResult.rowCount || jobResult.rows[0].status !== 'failed') {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'not_retryable' };
+    }
+    const countsResult = await client.query(
+      `SELECT
+        COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
+        COUNT(*) FILTER (WHERE status = 'uncertain')::int AS uncertain,
+        COUNT(*) FILTER (WHERE status = 'processing')::int AS processing
+       FROM delivery_items WHERE job_id = $1`,
+      [jobId],
+    );
+    const counts = countsResult.rows[0];
+    if (counts.uncertain > 0 || counts.processing > 0) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'unsafe_state' };
+    }
+    if (counts.failed < 1) {
+      await client.query('ROLLBACK');
+      return { ok: false, reason: 'no_failed_items' };
+    }
+    await client.query(
+      `UPDATE delivery_items SET status = 'pending', last_error = NULL, updated_at = NOW()
+       WHERE job_id = $1 AND status = 'failed'`,
+      [jobId],
+    );
+    await client.query(
+      `UPDATE delivery_jobs SET status = 'pending', last_error = NULL, locked_by = NULL,
+       locked_until = NULL, completed_at = NULL, updated_at = NOW() WHERE id = $1 AND status = 'failed'`,
+      [jobId],
+    );
+    await client.query('COMMIT');
+    return { ok: true, retriedItems: counts.failed };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function createBatchDeliveryJob(pool, requesterTelegramId, fileIds, requestedBy = requesterTelegramId) {
   if (!Array.isArray(fileIds) || !fileIds.length || fileIds.length > 100) throw new Error('Batch delivery requires 1–100 files.');
   const client = await pool.connect();
