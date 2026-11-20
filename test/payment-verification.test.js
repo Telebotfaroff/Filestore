@@ -42,3 +42,24 @@ test('verified payment requires transaction ID and session ID', async () => {
   await assert.rejects(recordVerifiedPayment(pool, { method: 'stripe', sessionId: 1, userId: 123, purpose: 'premium', planId: 1, amountMinor: 1, currency: 'INR' }), /transaction ID is required/);
   await assert.rejects(recordVerifiedPayment(pool, { method: 'stripe', externalTransactionId: 'abc', userId: 123, purpose: 'premium', planId: 1, amountMinor: 1, currency: 'INR' }), /session ID is required/);
 });
+
+
+test('expired session accepts only an authoritative Telegram Stars payment recovery flag', async () => {
+  const expiredSession = { id: 11, user_telegram_id: '12345', method: 'telegram_stars', purpose: 'premium', plan_id: 2, file_id: null, batch_link_id: null, paid_link_id: null, expected_amount_minor: 50, currency: 'XTR', status: 'pending', expires_at: new Date(Date.now() - 5000) };
+  let inserted = false;
+  const client = { query: async (sql) => {
+    if (['BEGIN','COMMIT','ROLLBACK'].includes(sql)) return { rows: [] };
+    if (sql.includes('FROM payment_sessions')) return { rows: [expiredSession], rowCount: 1 };
+    if (sql.includes('FROM payment_transactions')) return { rows: [], rowCount: 0 };
+    if (sql.includes('INSERT INTO payment_transactions')) { inserted = true; return { rows: [{ id: 88, status: 'verified' }], rowCount: 1 }; }
+    if (sql.includes('UPDATE payment_sessions')) return { rows: [], rowCount: 1 };
+    throw new Error('Unexpected query ' + sql);
+  }, release() {} };
+  const pool = { connect: async () => client };
+  const payment = { method: 'telegram_stars', externalTransactionId: 'charge_1', sessionId: 11, userId: 12345, purpose: 'premium', planId: 2, amountMinor: 50, currency: 'XTR' };
+  await assert.rejects(recordVerifiedPayment(pool, payment), /Payment session expired/);
+  assert.equal(inserted, false);
+  const recovered = await recordVerifiedPayment(pool, { ...payment, allowExpiredSession: true });
+  assert.equal(recovered.transaction.id, 88);
+  assert.equal(inserted, true);
+});
