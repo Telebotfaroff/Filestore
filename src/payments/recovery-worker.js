@@ -1,6 +1,6 @@
 import { applyVerifiedPayment } from './fulfillment-repository.js';
 
-export function startPaymentRecoveryWorker(pool, logger, intervalMs = 30_000) {
+export function startPaymentRecoveryWorker(pool, logger, telegram = null, intervalMs = 30_000) {
   let stopped = false;
   let running = false;
   async function tick() {
@@ -14,7 +14,13 @@ export function startPaymentRecoveryWorker(pool, logger, intervalMs = 30_000) {
         if (stopped) break;
         try {
           const result = await applyVerifiedPayment(pool, tx.id);
-          if (result.applied) logger.info({ transactionId: tx.id, userId: tx.user_telegram_id, purpose: tx.purpose, method: tx.method }, 'Recovered verified payment fulfillment');
+          if (result.applied) {
+            logger.info({ transactionId: tx.id, userId: tx.user_telegram_id, purpose: tx.purpose, method: tx.method }, 'Recovered verified payment fulfillment');
+            if (telegram && tx.user_telegram_id) {
+              const message = result.type === 'premium' ? 'Your Premium payment has now been activated.' : 'Your payment has now been processed. Your purchased files are unlocked. Use /get or /batch_get to request delivery.';
+              await telegram.sendMessage(tx.user_telegram_id, message).catch(error => logger.warn({ transactionId: tx.id, error: error.message }, 'Recovered-payment notification failed'));
+            }
+          }
         } catch (error) {
           logger.warn({ transactionId: tx.id, error: error.message }, 'Verified payment recovery attempt failed');
         }
