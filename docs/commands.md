@@ -72,6 +72,20 @@ Delivery Bots check membership before continuing a user `/get` request; verifica
 Delivery Bots verify each user's membership before the user `/get` flow continues. Membership API errors fail closed. The current user file-delivery flow remains locked until checkpoint and Access Manager milestones are completed.
 
 
+## URL shortener manager
+
+- `/shorteners` — list configured providers and checkpoint durations.
+- `/shortener_add name|base_url|api_endpoint|api_key|checkpoint_minutes|priority|api_key_param|target_url_param|response_url_path|json_or_text|verification_mode` — add/update provider config; API keys are encrypted.
+- `/shortener_test <provider_id>` — validate HTTPS URLs and response configuration only; does not call provider API.
+- `/shortener_duration <provider_id> <minutes>` — set 1–10080 minute checkpoint duration.
+- `/shortener_priority <provider_id> <priority>` — set ordering.
+- `/shortener_enable <provider_id>` — currently blocked until a trusted provider verification adapter is implemented.
+- `/shortener_disable <provider_id>` — disable provider.
+- `/shortener_remove <provider_id>` — remove provider when no pending sessions exist.
+
+The checkpoint engine stores session hashes, expires pending sessions, and rotates through providers by priority after each verified checkpoint expires. No provider API or completion verifier is connected yet; providers cannot be enabled and the engine does not award checkpoint credit from user-supplied return links.
+
+
 ## Security
 
 Managed bot tokens are encrypted using AES-256-GCM. Set `TOKEN_ENCRYPTION_KEY` to a base64-encoded 32-byte key. Generate locally:
