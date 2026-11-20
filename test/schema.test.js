@@ -161,7 +161,7 @@ test('payment recovery migration adds retry state and filtered index', () => {
 
 const migration20 = await readFile(new URL('../src/database/migrations/020_payment_recovery_notifications.sql', import.meta.url), 'utf8');
 test('payment recovery notification migration adds retry and lease fields', () => {
-  assert.match(migration20, /recovery_notification_sent_at TIMESTAMPTZ/);
+  assert.match(migration20, /recovery_notification_required BOOLEAN NOT NULL DEFAULT FALSE/);\n  assert.match(migration20, /recovery_notification_sent_at TIMESTAMPTZ/);
   assert.match(migration20, /recovery_notification_claimed_at TIMESTAMPTZ/);
   assert.match(migration20, /recovery_notification_attempts INTEGER NOT NULL DEFAULT 0/);
   assert.match(migration20, /recovery_notification_last_error TEXT/);
