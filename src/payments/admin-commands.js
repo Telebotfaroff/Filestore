@@ -1,4 +1,5 @@
 import { configurePaymentMethod, disablePaymentMethod, listPaymentMethods, markPaymentMethodTest } from './repository.js';
+import { applyVerifiedPayment } from './fulfillment-repository.js';
 
 const METHODS = ['fampay', 'telegram_stars', 'stripe', 'crypto'];
 function parseMethod(value) { if (!METHODS.includes(value)) throw new Error('Method must be fampay, telegram_stars, stripe, or crypto.'); return value; }
@@ -59,6 +60,19 @@ export function registerPaymentAdminCommands(bot, pool, config, logger) {
     try { parseMethod(args(ctx)[0]); await ctx.reply('Activation blocked: gateway checkout and server-side payment verification are not implemented yet.'); }
     catch { await ctx.reply('Usage: /payment_enable <fampay|telegram_stars|stripe|crypto>'); }
   });
+
+  bot.command('payment_apply', async (ctx) => {
+    const transactionId = Number(args(ctx)[0]);
+    if (!Number.isSafeInteger(transactionId) || transactionId <= 0) return ctx.reply('Usage: /payment_apply <verified_transaction_id>');
+    try {
+      const result = await applyVerifiedPayment(pool, transactionId);
+      await ctx.reply(result.alreadyApplied ? 'Payment was already fulfilled. No duplicate grant created.' : 'Payment fulfilled successfully: ' + result.type + ' · user ' + result.userId + (result.fileCount ? ' · ' + result.fileCount + ' files' : ''));
+    } catch (error) {
+      logger.error({ transactionId, error: error.message }, 'Payment fulfillment failed');
+      await ctx.reply('Fulfillment failed safely: ' + error.message);
+    }
+  });
+
 
   bot.command('payment_disable', async (ctx) => {
     try {
