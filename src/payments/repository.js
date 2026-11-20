@@ -48,3 +48,14 @@ export async function markPaymentMethodTest(pool, method, status, error = null) 
     [status, error?.slice(0, 500) ?? null, method],
   );
 }
+
+export async function listExpiredPaymentSessions(pool, limit = 20) {
+  const safeLimit = Math.max(1, Math.min(50, Number(limit) || 20));
+  const { rows } = await pool.query(
+    `SELECT id,user_telegram_id,method,purpose,expected_amount_minor,currency,expires_at,updated_at
+     FROM payment_sessions WHERE status='expired'
+     ORDER BY expires_at DESC,id DESC LIMIT $1`,
+    [safeLimit],
+  );
+  return rows;
+}
