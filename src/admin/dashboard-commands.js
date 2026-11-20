@@ -1,4 +1,4 @@
-import { getAdminDashboardStats, formatAdminDashboard, getPaymentReconciliationStats, listRecentPayments } from './dashboard-repository.js';
+import { getAdminDashboardStats, formatAdminDashboard, getPaymentReconciliationStats, listRecentPayments, getPaymentTransactionDetail } from './dashboard-repository.js';
 import { applyVerifiedPayment } from '../payments/fulfillment-repository.js';
 
 export function formatPaymentReconciliation(stats) {
@@ -67,3 +67,64 @@ export function registerDashboardCommands(bot, pool, logger) {
     }
   });
 }
+
+function formatPaymentDetail(detail) {
+  const tx = detail.transaction;
+  const metadata = tx.session_metadata && typeof tx.session_metadata === 'object' ? tx.session_metadata : {};
+  const amount = (Number(tx.amount_minor) / 100).toFixed(2) + ' ' + tx.currency;
+  const external = tx.external_transaction_id ? String(tx.external_transaction_id) : '—';
+  const sessionId = tx.session_id ?? '—';
+  const lines = [
+    'Payment Transaction #' + tx.id,
+    '',
+    'Transaction',
+    'Status: ' + String(tx.status).toUpperCase(),
+    'User: ' + (tx.user_telegram_id ?? 'unknown'),
+    'Method: ' + tx.method,
+    'Purpose: ' + tx.purpose,
+    'Amount: ' + amount,
+    'External ID: ' + external,
+    'UTR: ' + (tx.utr ?? '—'),
+    'Session ID: ' + sessionId,
+    'Verified: ' + (tx.verified_at ? new Date(tx.verified_at).toISOString() : '—'),
+    'Applied: ' + (tx.applied_at ? new Date(tx.applied_at).toISOString() : '—'),
+    'Created: ' + new Date(tx.created_at).toISOString(),
+    '',
+    'Checkout session',
+    'Status: ' + (tx.session_status ?? 'missing'),
+    'Expected: ' + (tx.session_amount_minor != null ? (Number(tx.session_amount_minor) / 100).toFixed(2) + ' ' + (tx.session_currency ?? tx.currency) : '—'),
+    'Expires: ' + (tx.session_expires_at ? new Date(tx.session_expires_at).toISOString() : '—'),
+    'Provider session: ' + (tx.provider_session_id ?? '—'),
+    'Checkout URL: ' + (tx.provider_checkout_url ?? '—'),
+    'Label: ' + (metadata.label ? String(metadata.label).slice(0, 120) : '—'),
+    'Stars price: ' + (metadata.starsPrice ?? '—'),
+    '',
+    'Provider event history (' + detail.events.length + ')',
+  ];
+  for (const event of detail.events) {
+    lines.push(
+      '',
+      'Event #' + event.id + ' · ' + event.event_type,
+      'Status: ' + event.processing_status,
+      'Provider ID: ' + String(event.provider_event_id).slice(0, 100),
+      'Received: ' + new Date(event.received_at).toISOString(),
+      'Processed: ' + (event.processed_at ? new Date(event.processed_at).toISOString() : '—'),
+      'Error: ' + (event.last_error ? String(event.last_error).replace(/[\\r\\n]+/g, ' ').slice(0, 300) : '—'),
+    );
+  }
+  if (!detail.events.length) lines.push('No provider events linked.');
+  return lines.join('\\n');
+}
+
+  bot.command('payment_detail', async (ctx) => {
+    const id = Number(ctx.message?.text?.trim().split(/\\s+/)[1]);
+    if (!Number.isSafeInteger(id) || id <= 0) return ctx.reply('Usage: /payment_detail <transaction_id>');
+    try {
+      const detail = await getPaymentTransactionDetail(pool, id);
+      if (!detail) return ctx.reply('Payment transaction #' + id + ' not found.');
+      await ctx.reply(formatPaymentDetail(detail), { disable_web_page_preview: true });
+    } catch (error) {
+      logger.error({ transactionId: id, error: error.message }, 'Payment detail query failed');
+      await ctx.reply('Could not load transaction detail #' + id + '.');
+    }
+  });
