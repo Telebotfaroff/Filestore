@@ -1,60 +1,51 @@
 # FileStore Main Bot Commands
 
-These commands are restricted to Telegram user IDs configured in `ADMIN_IDS`.
+Commands are restricted to administrator Telegram IDs configured in `ADMIN_IDS`.
 
-## Core
+## Main Bot
 
-- `/start` — admin welcome.
-- `/help` — available commands.
-- `/status` — Main Bot username, database connection status, indexed users/files counters.
+- `/start` — control center.
+- `/help` — command list.
+- `/status` — database connection and indexed file counts.
 
-## File indexing and search
+## File ingest and index
 
-- Send supported media to the Main Bot in a private chat to copy it to the tested primary storage channel and index metadata.
-- `/files` — show the latest indexed files.
-- `/find <filename or file code>` — search indexed files.
-- `/fileinfo <file_code>` — show metadata and stored Telegram message reference.
+Send supported media (video, document, photo, audio, voice, video note, or animation) to the Main Bot in private. It copies the message into the enabled, tested primary storage channel and indexes metadata.
 
-
-## Dynamic Delivery Bot manager (Main Bot)
-
-- `/delivery_bots` — list bots with runtime status, role, and priority.
-- `/delivery_bot_add <token>` — validate a BotFather token, encrypt it, and start its runtime. The command message is deleted when possible.
-- `/delivery_bot_pause <record_id>` — stop that bot's job worker while keeping its admin command runtime.
-- `/delivery_bot_resume <record_id>` — resume the runtime and worker if primary.
-- `/delivery_bot_restart <record_id>` — restart one bot.
-- `/delivery_bot_remove <record_id>` — stop and remove the bot/token; delivery history is preserved.
-- `/delivery_bot_primary <record_id>` — select primary worker bot.
-- `/delivery_bot_priority <record_id> <1-100000>` — set backup selection priority (lower is preferred).
-- `/delivery_bot_test <record_id>` — test bot token and storage-channel membership.
-
-Tokens are encrypted using AES-256-GCM before database storage. Set a base64-encoded 32-byte `TOKEN_ENCRYPTION_KEY` in the environment. Only the primary Delivery Bot runs the queue worker; backup runtimes remain available for admin commands and are promoted on health failure.
-
-
-## Delivery Bot (administrator-only test mode)
-
-- Set `DELIVERY_BOT_TOKEN` to enable the optional Delivery Bot runtime.
-- `/get <file_code>` — queue a test delivery to the administrator.
-- `/delivery_status` — view pending, processing, completed, failed, and uncertain jobs.
-- `/delivery_test` — test the Delivery Bot's membership/access to enabled storage channels.
-
-User-facing delivery is intentionally locked to configured administrators until the Access Manager and force-subscription milestones are implemented.
-
+- `/files` — list latest indexed files.
+- `/find <filename or file code>` — search.
+- `/fileinfo <file_code>` — show metadata and storage message reference.
 
 ## Storage channels
 
-- `/storage` — list configured storage channels.
-- `/storage_add <channel_id or @username>` — verify that the Main Bot is an administrator with posting permission, then register the channel.
-- `/storage_test <channel_id>` — recheck bot membership and channel posting permission; save the test status.
-- `/storage_enable <channel_id>` — enable a registered storage channel.
-- `/storage_disable <channel_id>` — disable a channel without removing existing indexed messages.
-- `/storage_primary <channel_id>` — select the primary channel; the other channels become backups.
-- `/storage_remove <channel_id>` — remove a channel only if it has no indexed storage-message references; otherwise disable it safely.
+- `/storage` — list registered channels.
+- `/storage_add <channel_id or @username>` — validate Main Bot posting permissions and register.
+- `/storage_test <channel_id>` — recheck membership and posting rights.
+- `/storage_enable <channel_id>` — enable channel; it can become primary if no enabled, tested primary exists.
+- `/storage_disable <channel_id>` — disable while preserving indexed references.
+- `/storage_primary <channel_id>` — promote channel; other roles become backup.
+- `/storage_remove <channel_id>` — delete if no indexed message references; otherwise disable safely.
 
-## Notes
+## Dynamic Delivery Bot manager
 
-- Storage destination support currently accepts Telegram channels, including private channels by numeric ID.
-- The bot must be a channel administrator with posting permission.
-- The first enabled channel is promoted to primary automatically.
-- Selecting or re-enabling a channel may promote it if no enabled primary exists.
-- Storage channel registration, diagnostics, media ingestion, and basic indexing are implemented. File delivery and editing/deletion workflows are upcoming.
+- `/delivery_bots` — list registered runtimes.
+- `/delivery_bot_add <token>` — validate token, encrypt it, launch bot runtime; token message is deleted when possible.
+- `/delivery_bot_pause <record_id>` — pause worker; runtime remains available for admin commands.
+- `/delivery_bot_resume <record_id>` — resume.
+- `/delivery_bot_restart <record_id>` — restart one runtime.
+- `/delivery_bot_remove <record_id>` — stop runtime and delete its stored encrypted token; history is retained.
+- `/delivery_bot_primary <record_id>` — select the job-processing bot.
+- `/delivery_bot_priority <record_id> <1-100000>` — set backup selection priority (lower number preferred).
+- `/delivery_bot_test <record_id>` — validate bot and storage channel membership.
+
+Delivery Bot user access is intentionally limited to configured administrators while Access Manager and force-subscription enforcement are unfinished. Each Delivery Bot has admin-only `/get <file_code>`, `/delivery_status`, and `/delivery_test`. Only the primary bot runs the queue worker; backup runtimes are promoted after health failures.
+
+## Security
+
+Managed tokens are encrypted using AES-256-GCM. Configure `TOKEN_ENCRYPTION_KEY` as a base64-encoded 32-byte key. Generate one locally with:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+Do not commit the generated key or bot tokens.
