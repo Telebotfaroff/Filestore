@@ -46,7 +46,7 @@ export function registerPaidBatchAdminCommands(bot, pool, logger) {
     try {
       const rows = await listPendingBatchPurchases(pool);
       if (!rows.length) return ctx.reply('No pending batch purchase requests.');
-      const lines = rows.map((p) => `#${p.purchase_id} · ${p.title}\nCode: ${p.public_code}\nUser: ${p.user_telegram_id}\nAmount: ${(Number(p.paid_amount_minor) / 100).toFixed(2)} ${p.currency}\nConfirm: /batch_confirm ${p.public_code} ${p.user_telegram_id`);
+      const lines = rows.map((p) => `#${p.purchase_id} · ${p.title}\nCode: ${p.public_code}\nUser: ${p.user_telegram_id}\nAmount: ${(Number(p.paid_amount_minor) / 100).toFixed(2)} ${p.currency}\nConfirm: /batch_confirm ${p.public_code} ${p.user_telegram_id}`);
       await ctx.reply('Pending batch purchases\n\n' + lines.join('\n\n'));
     } catch (e) { logger.error({ error: e.message }, 'Batch requests list failed'); await ctx.reply('Failed to list batch requests.'); }
   });
