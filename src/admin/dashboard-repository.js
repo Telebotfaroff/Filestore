@@ -17,7 +17,7 @@ export async function getAdminDashboardStats(pool) {
     (SELECT COUNT(*)::int FROM paid_file_purchases WHERE status = 'pending') AS paid_file_requests_pending,
     (SELECT COUNT(*)::int FROM paid_batch_purchases WHERE status = 'pending') AS paid_batch_requests_pending,
     (SELECT COUNT(*)::int FROM payment_transactions WHERE status = 'applied') AS payments_applied,
-    (SELECT COALESCE(SUM(amount_minor), 0)::bigint FROM payment_transactions WHERE status = 'applied') AS revenue_minor,
+    (SELECT COALESCE(jsonb_object_agg(currency, total_minor), '{}'::jsonb) FROM (SELECT currency, SUM(amount_minor)::bigint AS total_minor FROM payment_transactions WHERE status = 'applied' GROUP BY currency) revenue) AS revenue_by_currency,
     (SELECT COUNT(*)::int FROM activity_logs WHERE created_at >= NOW() - INTERVAL '24 hours') AS events_24h`);
   return result.rows[0];
 }
@@ -39,7 +39,7 @@ export function formatAdminDashboard(stats) {
     'Active paid links: single ' + stats.paid_file_links_active + ' · batch ' + stats.paid_batch_links_active,
     'Pending purchases: single ' + stats.paid_file_requests_pending + ' · batch ' + stats.paid_batch_requests_pending,
     'Payments applied: ' + stats.payments_applied,
-    'Recorded revenue: ' + (Number(stats.revenue_minor) / 100).toFixed(2),
+    'Recorded revenue: ' + (Object.entries(stats.revenue_by_currency ?? {}).map(([currency, minor]) => currency + ' ' + (Number(minor) / 100).toFixed(2)).join(' · ') || 'none'),
     'Activity events (24h): ' + stats.events_24h,
   ].join('\n');
 }
