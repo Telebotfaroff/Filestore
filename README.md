@@ -40,9 +40,10 @@ Live Telegram and PostgreSQL integration testing is pending configured credentia
 7. Apply migrations: `npm run migrate`.
 8. Start FileStore: `npm start`.
 
-## Commands
+## Documentation
 
-See [docs/commands.md](docs/commands.md).
+- [Complete technical guide](FILESTORE_GUIDE.md)
+- [Main Bot command reference](docs/commands.md)
 
 ## AI coding rules
 
