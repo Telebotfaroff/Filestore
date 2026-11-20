@@ -13,6 +13,7 @@ A modular Telegram file indexing and delivery platform built with Node.js, Teleg
 - **Milestone 11:** centralized Access Manager, premium-membership schema, paid-file entitlements, force-subscription-first decisions, premium bypass for free checkpoints, and tests. Access decisions are not yet wired into public delivery.
 - **Milestone 12:** Premium plan CRUD, manual grant/extend/revoke/status controls, payment method configuration, encrypted payment secrets, and transaction/session foundations for FamPay, Telegram Stars, Stripe, and Crypto. All gateway activations are blocked until their actual checkout and verification adapters are implemented.
 - **Milestone 13:** paid single-file link creation, random public codes with hashed lookup, optional expiry, purchase-request records, manual admin verification, entitlement grants, force-sub-first user requests, and paid-only delivery gating. Automatic payment is pending gateway integrations.
+- **Milestone 14:** paid multi-file batch links (2–100 unique files), ordered batch item lists, single purchase per user, admin manual confirmation, file-level entitlement grants, one batch queue job, and sequential multi-file delivery.
 
 Live Telegram and PostgreSQL integration testing is pending configured credentials. Force-subscription is implemented; public file delivery remains closed until the Access Manager and checkpoint milestones are complete.
 
