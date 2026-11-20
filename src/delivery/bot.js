@@ -141,7 +141,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
       if (!batch || !batch.is_active) return ctx.reply('Batch link invalid, expired, or disabled.');
       const result = await requestPaidBatchPurchase(pool, code, ctx.from);
       if (result.alreadyPaid) return ctx.reply('You have already unlocked this batch. Use /batch_get ' + code + ' to deliver all files.');
-      return ctx.reply('Batch purchase request recorded.\\n\\n' + result.title + '\\nFiles: ' + batch.item_count + '\\nPrice: ' + (Number(result.priceMinor) / 100).toFixed(2) + ' ' + result.currency + '\\n\\nPayment is not automatic yet. Contact admin with your Telegram ID: ' + ctx.from.id + '.');
+      return sendStarsInvoice(bot, pool, ctx, 'paid_batch', { batchLinkId: batch.id }, 'Unlock batch', 'Unlock ' + String(batch.title).slice(0, 100) + ' (' + batch.item_count + ' files)', token);
     } catch (error) {
       logger.error({ userId: ctx.from.id, error: error.message }, 'Batch purchase request failed');
       return ctx.reply('Could not create batch purchase request.');
