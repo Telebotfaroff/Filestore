@@ -112,20 +112,22 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
     const code = ctx.message?.text?.trim().split(/\s+/).slice(1)[0] ?? '';
     if (!code) return ctx.reply('Usage: /get <file_code>');
     try {
+      const file = await getIndexedFile(pool, code);
+      if (!file) return ctx.reply('File code not found.');
       if (!isAdmin(ctx.from.id, config.adminIds)) {
         await upsertTelegramUser(pool, ctx.from);
         const forceSub = await checkForceSubscription(ctx.telegram, pool, ctx.from.id);
         await logForceSubEvent(pool, logger, forceSub.passed ? 'force_sub_verified' : 'force_sub_blocked', ctx.from.id, forceSub);
         if (!forceSub.passed) {
-          const labels = forceSub.missing.slice(0, 20).map((channel) => `• ${channel.title ?? channel.telegram_chat_id}${channel.checkStatus === 'check_failed' ? ' (verification unavailable)' : ''}`).join("\n");
+          const labels = forceSub.missing.slice(0, 20).map((channel) => `• ${channel.title ?? channel.telegram_chat_id}`).join('\n');
           return ctx.reply('Subscribe to the required channels before requesting files:\n\n' + labels + '\n\nThen tap Verify.', getMissingSubscriptionMarkup(forceSub.missing));
         }
-        const file = await getIndexedFile(pool, code);
-        if (!file) return ctx.reply('File code not found.');
-        return ctx.reply('Subscription verified. User file delivery will be enabled after the URL checkpoint and Access Manager are completed.');
+        const entitled = await hasPaidFileEntitlement(pool, ctx.from.id, file.id);
+        if (!entitled) return ctx.reply('This file is not unlocked for your account. Use /paid <link_code> to request purchase, or wait for free delivery to be enabled.');
+        if (!file.telegram_message_id || !file.storage_chat_id || !file.storage_channel_enabled) return ctx.reply('This file currently has no usable storage message.');
+        const jobId = await createSingleDeliveryJob(pool, ctx.from.id, file.id, ctx.from.id);
+        return ctx.reply('Paid access verified. Delivery queued.\nJob ID: ' + jobId + '\nFile: ' + file.file_name);
       }
-      const file = await getIndexedFile(pool, code);
-      if (!file) return ctx.reply('File code not found.');
       if (!file.telegram_message_id || !file.storage_chat_id || !file.storage_channel_enabled) return ctx.reply('This file has no usable message in an enabled storage channel.');
       const jobId = await createSingleDeliveryJob(pool, ctx.from.id, file.id, ctx.from.id);
       await ctx.reply(`Delivery queued.\nJob ID: ${jobId}\nFile: ${file.file_name}`);
