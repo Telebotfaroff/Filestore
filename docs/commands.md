@@ -174,3 +174,12 @@ The timer starts after a delivery succeeds. Existing scheduled deletions remain 
 - **Recent payments** — Return to the transaction list; **Refresh** reloads it.
 - `/payment_detail <transaction_id>` — Open transaction details directly.
 - `/payment_reconcile <transaction_id>` — Retry fulfillment for a verified payment. Fulfillment is idempotent.
+
+
+### Paginated payment browser
+
+- `/payment_recent` opens the transaction browser, initially showing the latest five transactions.
+- Inline filters: **All**, **Verified**, **Applied**, **Rejected**, **Expired**.
+- **Previous / Next** buttons page through the selected filter; **Refresh** reloads the current page.
+- Each row has a **Details** button. The detail screen's back button returns to the same filter and page.
+- Filtered listing and count queries use parameterized SQL; page size is bounded to 10.
