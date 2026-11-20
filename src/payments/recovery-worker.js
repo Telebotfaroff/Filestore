@@ -30,7 +30,7 @@ async function notifyRecoveredPayments(pool, logger, telegram) {
     try {
       await telegram.sendMessage(tx.user_telegram_id, message);
       await pool.query(
-        `UPDATE payment_transactions SET recovery_notification_sent_at=NOW(),recovery_notification_claimed_at=NULL,recovery_notification_last_error=NULL
+        `UPDATE payment_transactions SET recovery_notification_required=FALSE,recovery_notification_sent_at=NOW(),recovery_notification_claimed_at=NULL,recovery_notification_last_error=NULL
          WHERE id=$1 AND recovery_notification_claimed_at IS NOT NULL`,
         [tx.id],
       );
