@@ -110,7 +110,7 @@ export async function confirmPaidBatchPurchase(pool, code, userId, adminId) {
 
 export async function getBatchItems(pool, code) {
   const { rows } = await pool.query(
-    `SELECT f.id, f.file_code, f.file_name, f.file_size, f.telegram_message_id, f.storage_chat_id, sc.is_enabled AS storage_channel_enabled
+    `SELECT f.id, f.file_code, f.file_name, f.file_size, sm.telegram_message_id, sc.telegram_chat_id AS storage_chat_id, sc.is_enabled AS storage_channel_enabled
      FROM paid_batch_links b JOIN paid_batch_items i ON i.batch_link_id = b.id JOIN files f ON f.id = i.file_id
      LEFT JOIN storage_messages sm ON sm.file_id = f.id AND sm.is_primary = TRUE
      LEFT JOIN storage_channels sc ON sc.id = sm.storage_channel_id
