@@ -86,10 +86,10 @@ test('paid batch links support ordered items and unique user purchases', () => {
 });
 
 test('payment verification schema stores idempotent provider events and checkout metadata', () => {
-  assert.match(migration13, /UNIQUE\\(method, provider_event_id\\)/);
-  assert.match(migration13, /UNIQUE\\(method, provider_event_id\\)/);
-  assert.match(migration13, /UNIQUE\\(method, provider_event_id\\)/);
-  assert.match(migration13, /UNIQUE\\(method, provider_event_id\\)/);
+  assert.match(migration13, /UNIQUE\(method, provider_event_id\)/);
+  assert.match(migration13, /UNIQUE\(method, provider_event_id\)/);
+  assert.match(migration13, /UNIQUE\(method, provider_event_id\)/);
+  assert.match(migration13, /UNIQUE\(method, provider_event_id\)/);
   assert.match(migration14, /paid_batch/);
   assert.match(migration15, /paid_link_id/);
 });
@@ -117,7 +117,7 @@ const dashboardCommands = await readFile(new URL('../src/admin/dashboard-command
 
 test('public get handler is wired to centralized access manager and checkpoint messaging', () => {
   assert.match(deliveryBotSource, /evaluateAccess/);
-  assert.match(deliveryBotSource, /type: \\(paidEntitled \\|\\| paidLocked\\) \\? 'paid_file' : 'free_file'/);
+  assert.match(deliveryBotSource, /type: \(paidEntitled \|\| paidLocked\) \? 'paid_file' : 'free_file'/);
   assert.match(deliveryBotSource, /checkpoint_required/);
   assert.match(accessManagerSource, /checkpoint_enabled/);
   assert.match(accessManagerSource, /premium/);
