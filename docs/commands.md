@@ -8,6 +8,14 @@ These commands are restricted to Telegram user IDs configured in `ADMIN_IDS`.
 - `/help` — available commands.
 - `/status` — Main Bot username, database connection status, indexed users/files counters.
 
+## File indexing and search
+
+- Send supported media to the Main Bot in a private chat to copy it to the tested primary storage channel and index metadata.
+- `/files` — show the latest indexed files.
+- `/find <filename or file code>` — search indexed files.
+- `/fileinfo <file_code>` — show metadata and stored Telegram message reference.
+
+
 ## Storage channels
 
 - `/storage` — list configured storage channels.
