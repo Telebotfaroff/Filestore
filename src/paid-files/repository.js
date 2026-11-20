@@ -153,3 +153,17 @@ export async function hasPaidFileEntitlement(pool, userId, fileId) {
   );
   return result.rowCount > 0;
 }
+
+export async function listPendingPaidFilePurchases(pool, limit = 40) {
+  const { rows } = await pool.query(
+    `SELECT p.id AS purchase_id, p.user_telegram_id, p.status, p.created_at, p.paid_amount_minor, p.currency,
+       l.public_code, f.file_code, f.file_name
+     FROM paid_file_purchases p
+     JOIN paid_file_links l ON l.id = p.paid_link_id
+     JOIN files f ON f.id = l.file_id
+     WHERE p.status = 'pending'
+     ORDER BY p.created_at ASC LIMIT $1`,
+    [Math.min(Math.max(Number(limit) || 40, 1), 100)],
+  );
+  return rows;
+}
