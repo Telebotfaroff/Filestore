@@ -32,8 +32,8 @@ async function main() {
 
   deliveryManager = createDeliveryBotManager(config, logger, pool);
   checkpointCleanupWorker = startCheckpointSessionCleanup(pool, logger);
-  paymentRecoveryWorker = startPaymentRecoveryWorker(pool, logger);
   mainBot = createMainBot({ ...config, deliveryManager }, logger, pool);
+  paymentRecoveryWorker = startPaymentRecoveryWorker(pool, logger, mainBot.telegram);
   registerShutdown();
 
   await mainBot.launch({ handleSignals: false });
