@@ -1,7 +1,7 @@
 import { listRecentFiles, searchIndexedFiles, getIndexedFile, formatFileSize } from './file-query.js';
 
 function formatRows(rows) {
-  return rows.map((file, index) => `${index + 1}. ${file.file_name}\nCode: ${file.file_code} · ${file.file_type} · ${formatFileSize(file.file_size)}`).join('\n\n');
+  return rows.map((file, index) => `${index + 1}. ${file.file_name.slice(0, 160)}\nCode: ${file.file_code} · ${file.file_type} · ${formatFileSize(file.file_size)}`).join('\n\n');
 }
 
 export function registerFileCommands(bot, pool, logger) {
