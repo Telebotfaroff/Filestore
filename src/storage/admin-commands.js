@@ -24,7 +24,7 @@ async function validateStorageChannel(ctx, channelInput) {
   const botInfo = await ctx.telegram.getMe();
   const member = await ctx.telegram.getChatMember(chat.id, botInfo.id);
   if (member.status !== 'administrator') throw new Error('The Main Bot must be an administrator in this channel.');
-  if (member.can_post_messages === false) throw new Error('The Main Bot lacks permission to post in this channel.');
+  if (member.can_post_messages !== true) throw new Error('The Main Bot must have explicit permission to post in this channel.');
   return chat;
 }
 
