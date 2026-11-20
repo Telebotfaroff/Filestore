@@ -1,4 +1,4 @@
-import { configurePaymentMethod, disablePaymentMethod, listPaymentMethods, markPaymentMethodTest, listPaymentTransactions } from './repository.js';
+import { configurePaymentMethod, disablePaymentMethod, listPaymentMethods, markPaymentMethodTest, listPaymentTransactions, listExpiredPaymentSessions } from './repository.js';
 import { applyVerifiedPayment } from './fulfillment-repository.js';
 
 const METHODS = ['fampay', 'telegram_stars', 'stripe', 'crypto'];
@@ -27,6 +27,19 @@ Created: ${new Date(row.created_at).toISOString()}`;
       await ctx.reply('Could not list payment transactions. Valid filters: pending, verified, applied, rejected, expired.');
     }
   });
+
+  bot.command('payment_sessions_expired', async (ctx) => {
+    try {
+      const rows = await listExpiredPaymentSessions(pool, 20);
+      if (!rows.length) return ctx.reply('No expired checkout sessions found.');
+      const lines = rows.map((s) => `#${s.id} · ${s.method} · ${s.purpose}\\nUser: ${s.user_telegram_id}\\nAmount: ${(Number(s.expected_amount_minor) / 100).toFixed(2)} ${s.currency}\\nExpired: ${new Date(s.expires_at).toISOString()}`);
+      await ctx.reply('Expired checkout sessions (latest 20)\\n\\n' + lines.join('\\n\\n'));
+    } catch (error) {
+      logger.error({ error: error.message }, 'Expired payment session listing failed');
+      await ctx.reply('Could not list expired checkout sessions.');
+    }
+  });
+
 
   bot.command('payment_methods', async (ctx) => {
     try {
