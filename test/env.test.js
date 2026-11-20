@@ -16,3 +16,7 @@ test('rejects missing required values', () => {
 test('rejects malformed admin IDs', () => {
   assert.throws(() => loadConfig({ ...valid, ADMIN_IDS: '123,abc' }), /numeric Telegram user IDs/);
 });
+
+test('requires at least one administrator', () => {
+  assert.throws(() => loadConfig({ ...valid, ADMIN_IDS: '' }), /at least one Telegram administrator ID/);
+});
