@@ -21,7 +21,7 @@ export async function listRecentFiles(pool, limit = 8) {
 
 export async function getIndexedFile(pool, code) {
   const result = await pool.query(
-    `SELECT f.*, sm.telegram_message_id, sc.telegram_chat_id AS storage_chat_id, sc.title AS storage_title
+    `SELECT f.*, sm.telegram_message_id, sc.telegram_chat_id AS storage_chat_id, sc.title AS storage_title, sc.is_enabled AS storage_channel_enabled
      FROM files f LEFT JOIN storage_messages sm ON sm.file_id = f.id AND sm.is_primary = TRUE
      LEFT JOIN storage_channels sc ON sc.id = sm.storage_channel_id
      WHERE f.file_code = $1 AND f.status = 'active' LIMIT 1`,
