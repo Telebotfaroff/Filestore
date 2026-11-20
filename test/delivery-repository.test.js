@@ -35,3 +35,23 @@ test('claims pending job, item, and attempt in one transaction', async () => {
   assert.ok(statements.includes('COMMIT'));
   assert.ok(statements.some((q) => q.includes('SKIP LOCKED')));
 });
+
+
+test('renews a processing lease only for the current worker', async () => {
+  const calls = [];
+  const pool = { query: async (sql, args) => {
+    calls.push({ sql: String(sql), args });
+    return { rowCount: 1, rows: [{ id: 8 }] };
+  } };
+  const { renewDeliveryLease } = await import('../src/delivery/repository.js');
+  assert.equal(await renewDeliveryLease(pool, 42, 'bot-A'), true);
+  assert.match(calls[0].sql, /locked_until = NOW\(\) \+ INTERVAL '90 seconds'/);
+  assert.match(calls[0].sql, /status = 'processing' AND locked_by = \$2 AND locked_until > NOW\(\)/);
+  assert.deepEqual(calls[0].args, [42, 'bot-A']);
+});
+
+test('lease renewal reports false when lease ownership is lost', async () => {
+  const pool = { query: async () => ({ rowCount: 0, rows: [] }) };
+  const { renewDeliveryLease } = await import('../src/delivery/repository.js');
+  assert.equal(await renewDeliveryLease(pool, 42, 'bot-A'), false);
+});
