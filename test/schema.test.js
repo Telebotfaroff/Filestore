@@ -149,3 +149,12 @@ test('payment session expiry migration marks abandoned pending sessions and adds
   assert.match(migration18, /expires_at <= NOW\(\)/);
   assert.match(migration18, /payment_sessions_pending_expiry_idx/);
 });
+
+
+const migration19 = await readFile(new URL('../src/database/migrations/019_payment_recovery_backoff.sql', import.meta.url), 'utf8');
+test('payment recovery migration adds retry state and filtered index', () => {
+  assert.match(migration19, /recovery_attempts INTEGER NOT NULL DEFAULT 0/);
+  assert.match(migration19, /recovery_next_at TIMESTAMPTZ NOT NULL DEFAULT NOW\(\)/);
+  assert.match(migration19, /recovery_last_error TEXT/);
+  assert.match(migration19, /WHERE status='verified'/);
+});
