@@ -1,4 +1,4 @@
-import { getAutoDeleteMinutes, setAutoDeleteMinutes } from './auto-delete-repository.js';
+import { getAutoDeleteMinutes, setAutoDeleteMinutes, listFailedScheduledDeletions } from './auto-delete-repository.js';
 
 export function registerAutoDeleteCommands(bot, pool, logger) {
   bot.command('auto_delete', async (ctx) => {
@@ -17,6 +17,17 @@ export function registerAutoDeleteCommands(bot, pool, logger) {
     } catch (error) {
       logger.error({ error: error.message }, 'Auto-delete setting update failed');
       await ctx.reply('Could not update auto-delete setting.');
+    }
+  });
+  bot.command('auto_delete_failed', async (ctx) => {
+    try {
+      const rows = await listFailedScheduledDeletions(pool, 15);
+      if (!rows.length) return ctx.reply('No terminal auto-delete failures.');
+      const lines = rows.map((row) => `#${row.id} · ${row.delivery_bot_identity} · chat ${row.chat_id} · message ${row.message_id}\nAttempts: ${row.attempt_count} · ${new Date(row.delete_at).toISOString()}\n${String(row.last_error ?? 'unknown error').slice(0, 180)}`);
+      return ctx.reply('Failed auto-delete jobs (latest 15)\n\n' + lines.join('\n\n'));
+    } catch (error) {
+      logger.error({ error: error.message }, 'Failed auto-delete listing failed');
+      return ctx.reply('Could not list failed auto-delete jobs.');
     }
   });
   bot.command('auto_delete_off', async (ctx) => {
