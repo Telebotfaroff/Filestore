@@ -20,6 +20,10 @@ export async function saveStorageChannel(pool, chat, creatorId) {
        RETURNING id, telegram_chat_id, title, username, role, priority, is_enabled`,
       [chat.id, chat.title ?? null, chat.username ?? null, isFirst ? 'primary' : 'backup', isFirst ? 0 : 100, creatorId],
     );
+    if (isFirst) {
+      await client.query("UPDATE storage_channels SET role = 'backup' WHERE role = 'primary'");
+      await client.query("UPDATE storage_channels SET role = 'primary', priority = 0 WHERE telegram_chat_id = $1", [chat.id]);
+    }
     await client.query('COMMIT');
     return result.rows[0];
   } catch (error) {
