@@ -2,13 +2,13 @@ import { getAutoDeleteMinutes, setAutoDeleteMinutes } from './auto-delete-reposi
 
 export function registerAutoDeleteCommands(bot, pool, logger) {
   bot.command('auto_delete', async (ctx) => {
-    const raw = ctx.message?.text?.trim().split(/\\s+/).slice(1)[0];
+    const raw = ctx.message?.text?.trim().split(/\s+/).slice(1)[0];
     if (raw === undefined || raw === '') {
       const current = await getAutoDeleteMinutes(pool);
       return ctx.reply(current ? `Auto-delete is ON. Delivered messages are deleted after ${current} minute(s).\nUse /auto_delete <minutes> to change it or /auto_delete_off to disable.` : 'Auto-delete is OFF.\nUse /auto_delete <minutes> to enable it (1–10080).');
     }
     const minutes = Number(raw);
-    if (!/^\\d+$/.test(raw) || !Number.isSafeInteger(minutes) || minutes < 1 || minutes > 10080) {
+    if (!/^\d+$/.test(raw) || !Number.isSafeInteger(minutes) || minutes < 1 || minutes > 10080) {
       return ctx.reply('Usage: /auto_delete <minutes> (1–10080)');
     }
     try {
