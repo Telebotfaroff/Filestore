@@ -1,5 +1,6 @@
 import { getAdminDashboardStats, formatAdminDashboard, getPaymentReconciliationStats, listRecentPayments, listPaymentTransactions, getPaymentTransactionDetail, searchPaymentTransactions, getPaymentAnalytics, formatPaymentAnalytics } from './dashboard-repository.js';
 import { applyVerifiedPayment } from '../payments/fulfillment-repository.js';
+import { getOperationalHealth, formatOperationalHealth } from './operational-health.js';
 
 export function formatPaymentReconciliation(stats) {
   return [
@@ -126,6 +127,10 @@ export function registerDashboardCommands(bot, pool, logger) {
     return ctx.reply(message);
   }
 
+  bot.command('health', async (ctx) => {
+    try { await ctx.reply(formatOperationalHealth(await getOperationalHealth(pool))); }
+    catch (error) { logger.error({ error: error.message }, 'Operational health query failed'); await ctx.reply('Health report unavailable. Check database connection and migrations.'); }
+  });
   bot.command('dashboard', show);
   bot.command('stats', show);
   bot.command('payments', async (ctx) => {
