@@ -44,5 +44,5 @@ export function formatOperationalHealth(health) {
     'Expired pending sessions: ' + s.checkpoint_expired_pending,
   ];
   if (health.warnings.length) lines.push('', 'Attention: ' + health.warnings.map(key => key.replaceAll('_',' ')).join(' · '));
-  return lines.join('\\n');
+  return lines.join('\n');
 }
