@@ -55,7 +55,7 @@ test('recovery notifications retry after Telegram failure and record bounded dia
   const pool = { query: async (sql, params) => {
     if (sql.includes("WHERE status='verified'")) return { rows: [] };
     if (sql.includes('WITH claimed')) return { rows: [tx] };
-    if (sql.includes('recovery_notification_attempts=recovery_notification_attempts+1')) { claimed.push({ sql, params }); return { rows: [] };
+    if (sql.includes('recovery_notification_attempts=recovery_notification_attempts+1')) { claimed.push({ sql, params }); return { rows: [] }; }
     throw new Error('Unexpected SQL: '+sql);
   } };
   let resolveWarning;
