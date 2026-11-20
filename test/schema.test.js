@@ -13,6 +13,7 @@ const migration8 = await readFile(new URL('../src/database/migrations/008_access
 const migration9 = await readFile(new URL('../src/database/migrations/009_payment_foundation.sql', import.meta.url), 'utf8');
 const migration10 = await readFile(new URL('../src/database/migrations/010_paid_file_links.sql', import.meta.url), 'utf8');
 const migration11 = await readFile(new URL('../src/database/migrations/011_paid_batch_links.sql', import.meta.url), 'utf8');
+const migration12 = await readFile(new URL('../src/database/migrations/012_auto_delete.sql', import.meta.url), 'utf8');
 
 test('initial schema defines core tables and constraints', () => {
   for (const table of ['users', 'app_settings', 'storage_channels', 'files', 'storage_messages', 'tags', 'file_tags', 'activity_logs']) {
@@ -84,4 +85,14 @@ test('paid batch links support ordered items and unique user purchases', () => {
 test('active media identifiers are unique and schema contains no duplicate primary declaration', () => {
   assert.match(migration3, /CREATE UNIQUE INDEX/);
   assert.doesNotMatch(migration1 + migration2, /PRIMARY PRIMARY/);
+});
+
+
+test('auto-delete schema stores global setting and persisted deletion queue', () => {
+  assert.match(migration12, /delivery_settings/);
+  assert.match(migration12, /auto_delete_minutes/);
+  assert.match(migration12, /scheduled_message_deletions/);
+  for (const status of ['pending', 'processing', 'deleted', 'failed']) assert.match(migration12, new RegExp(status));
+  assert.match(migration12, /delivery_bot_identity/);
+  assert.match(migration12, /delete_at/);
 });
