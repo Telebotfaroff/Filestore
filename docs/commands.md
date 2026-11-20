@@ -108,6 +108,7 @@ Four methods are reserved and seeded as disabled:
 3. `stripe`
 4. `crypto`
 
+- `/payment_transactions [status]` — Inspect up to 15 recent transactions; optional status filter (pending, verified, applied, rejected, expired).
 - `/payment_methods` — List setup status.
 - `/payment_set method|secret|public_config_json` — Save configuration; secret is encrypted and the command message is deleted when possible. Example: `/payment_set stripe|sk_test_...|{"publishable_key":"pk_test_..."}`.
 - `/payment_test <method>` — Validate stored config only, not a live payment.
