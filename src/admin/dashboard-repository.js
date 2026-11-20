@@ -117,3 +117,28 @@ export async function listPaymentTransactions(pool, { limit = 5, offset = 0, sta
   );
   return { rows, total: Number(countResult.rows[0]?.total ?? 0), limit: safeLimit, offset: safeOffset, status: safeStatus };
 }
+
+export async function searchPaymentTransactions(pool, searchTerm, limit = 10) {
+  const term = String(searchTerm ?? '').trim().slice(0, 128);
+  if (!term) return { rows: [], total: 0, term: '' };
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 10, 10));
+  const pattern = '%' + term + '%';
+  const params = [term, pattern];
+  const countResult = await pool.query(
+    `SELECT COUNT(*)::int AS total FROM payment_transactions
+     WHERE id::text = $1 OR user_telegram_id::text = $1
+        OR external_transaction_id ILIKE $2
+        OR utr ILIKE $2`,
+    params,
+  );
+  const { rows } = await pool.query(
+    `SELECT id, user_telegram_id, method, purpose, amount_minor, currency, status, external_transaction_id, created_at
+     FROM payment_transactions
+     WHERE id::text = $1 OR user_telegram_id::text = $1
+        OR external_transaction_id ILIKE $2
+        OR utr ILIKE $2
+     ORDER BY created_at DESC LIMIT $3`,
+    [...params, safeLimit],
+  );
+  return { rows, total: Number(countResult.rows[0]?.total ?? 0), term, limit: safeLimit };
+}
