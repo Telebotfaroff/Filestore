@@ -1,5 +1,4 @@
 import { createPaidBatch, listPaidBatchLinks, disablePaidBatchLink, confirmPaidBatchPurchase, listPendingBatchPurchases, getPaidBatch } from './batch-repository.js';
-import { getPaidBatch } from './batch-repository.js';
 
 function args(ctx) { return ctx.message?.text?.trim().split(/\s+/).slice(1) ?? []; }
 function amount(value) {
