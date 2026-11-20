@@ -9,6 +9,12 @@ import {
   persistIndexedFile,
 } from './ingest-repository.js';
 
+async function replySafely(ctx, text, logger, details = {}) {
+  try { await ctx.reply(text); } catch (error) {
+    logger.warn({ ...details, error: error.message }, 'File ingest status message could not be sent');
+  }
+}
+
 export function registerFileIngestHandler(bot, pool, logger) {
   bot.on(['video', 'document', 'photo', 'audio', 'voice', 'video_note', 'animation'], async (ctx) => {
     const message = ctx.message;
@@ -20,12 +26,12 @@ export function registerFileIngestHandler(bot, pool, logger) {
 
     let storageChannel;
     let copiedMessageId;
+    let indexedFile;
     try {
       const duplicate = await findDuplicateByUniqueId(pool, metadata.telegramFileUniqueId);
       if (duplicate) {
         await markIngestDuplicate(pool, requestId, duplicate.id);
-        await ctx.reply(`Already indexed: ${duplicate.file_name}\nFile code: ${duplicate.file_code}`);
-        return;
+        return replySafely(ctx, `Already indexed: ${duplicate.file_name}\nFile code: ${duplicate.file_code}`, logger, { ingestId: requestId });
       }
 
       storageChannel = await getPrimaryStorageChannel(pool);
@@ -36,9 +42,23 @@ export function registerFileIngestHandler(bot, pool, logger) {
 
       const fileCode = createFileCode();
       const finalMetadata = extractMediaMetadata(message, fileCode);
-      const file = await persistIndexedFile(pool, requestId, storageChannel, copiedMessageId, finalMetadata, fileCode, ctx.from.id);
-      await ctx.reply(`File indexed successfully.\n\nFile code: ${file.file_code}\nName: ${file.file_name}\nStorage: ${storageChannel.title ?? storageChannel.telegram_chat_id}`);
+      indexedFile = await persistIndexedFile(pool, requestId, storageChannel, copiedMessageId, finalMetadata, fileCode, ctx.from.id);
     } catch (error) {
+      if (error.code === '23505' && metadata.telegramFileUniqueId) {
+        try {
+          const duplicate = await findDuplicateByUniqueId(pool, metadata.telegramFileUniqueId);
+          if (duplicate) {
+            if (copiedMessageId !== undefined && storageChannel) {
+              try { await ctx.telegram.deleteMessage(storageChannel.telegram_chat_id, copiedMessageId); } catch {}
+            }
+            await markIngestDuplicate(pool, requestId, duplicate.id);
+            return replySafely(ctx, `Already indexed: ${duplicate.file_name}\nFile code: ${duplicate.file_code}`, logger, { ingestId: requestId });
+          }
+        } catch (lookupError) {
+          logger.error({ ingestId: requestId, error: lookupError.message }, 'Duplicate reconciliation failed');
+        }
+      }
+
       if (copiedMessageId !== undefined && storageChannel) {
         try {
           await ctx.telegram.deleteMessage(storageChannel.telegram_chat_id, copiedMessageId);
@@ -50,7 +70,9 @@ export function registerFileIngestHandler(bot, pool, logger) {
         logger.error({ ingestId: requestId, error: dbError.message }, 'Failed to mark ingest request as failed');
       }
       logger.error({ ingestId: requestId, error: error.message }, 'File indexing failed');
-      await ctx.reply('File indexing failed: ' + error.message);
+      return replySafely(ctx, 'File indexing failed: ' + error.message, logger, { ingestId: requestId });
     }
+
+    return replySafely(ctx, `File indexed successfully.\n\nFile code: ${indexedFile.file_code}\nName: ${indexedFile.file_name}\nStorage: ${storageChannel.title ?? storageChannel.telegram_chat_id}`, logger, { fileCode: indexedFile.file_code });
   });
 }
