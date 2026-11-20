@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS delivery_bots (
-  id BIGSERIAL PRIMARY PRIMARY KEY,
+  id BIGSERIAL PRIMARY KEY,
   telegram_bot_id BIGINT NOT NULL UNIQUE,
   username TEXT NOT NULL,
   token_ciphertext TEXT NOT NULL,
