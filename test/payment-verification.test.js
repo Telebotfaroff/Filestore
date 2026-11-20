@@ -63,3 +63,25 @@ test('expired session accepts only an authoritative Telegram Stars payment recov
   assert.equal(recovered.transaction.id, 88);
   assert.equal(inserted, true);
 });
+
+
+test('expired checkout sessions accept late authoritative Stars receipts but not other methods', async () => {
+  const expiredSession = { id: 12, user_telegram_id: '12345', method: 'telegram_stars', purpose: 'premium', plan_id: 2, file_id: null, batch_link_id: null, paid_link_id: null, expected_amount_minor: 80, currency: 'XTR', status: 'expired', expires_at: new Date(Date.now() - 30000) };
+  let inserted = false;
+  const client = { query: async (sql) => {
+    if ( ['BEGIN','COMMIT','ROLLBACK'].includes(sql) ) return { rows: [] };
+    if (sql.includes('FROM payment_sessions')) return { rows: [expiredSession], rowCount: 1 };
+    if (sql.includes('FROM payment_transactions')) return { rows: [], rowCount: 0 };
+    if (sql.includes('INSERT INTO payment_transactions')) { inserted = true; return { rows: [{ id: 89, status: 'verified' }], rowCount: 1 };
+    if (sql.includes('UPDATE payment_sessions')) return { rows: [], rowCount: 1 };
+    throw new Error('Unexpected query ' + sql);
+  }, release() {} };
+  const pool = { connect: async () => client };
+  const payment = { method: 'telegram_stars', externalTransactionId: 'charge_late', sessionId: 12, userId: 12345, purpose: 'premium', planId: 2, amountMinor: 80, currency: 'XTR', allowExpiredSession: true };
+  const result = await recordVerifiedPayment(pool, payment);
+  assert.equal(result.transaction.id, 89);
+  assert.equal(inserted, true);
+  inserted = false;
+  await assert.rejects(recordVerifiedPayment(pool, { ...payment, method: 'stripe' }), /does not match the checkout session/);
+  assert.equal(inserted, false);
+});
