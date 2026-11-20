@@ -1,4 +1,4 @@
-import { getAdminDashboardStats, formatAdminDashboard, getPaymentReconciliationStats, listRecentPayments, getPaymentTransactionDetail } from './dashboard-repository.js';
+import { getAdminDashboardStats, formatAdminDashboard, getPaymentReconciliationStats, listRecentPayments, listPaymentTransactions, getPaymentTransactionDetail } from './dashboard-repository.js';
 import { applyVerifiedPayment } from '../payments/fulfillment-repository.js';
 
 export function formatPaymentReconciliation(stats) {
@@ -66,10 +66,10 @@ function formatPaymentDetail(detail) {
   return lines.join('\n');
 }
 
-function detailKeyboard(tx) {
+function detailKeyboard(tx, status = 'all', page = 0) {
   const rows = [];
   if (tx.status === 'verified') rows.push([{ text: '↻ Retry safe fulfillment', callback_data: 'payreconcile:' + tx.id }]);
-  rows.push([{ text: '← Recent payments', callback_data: 'paymentrecent' }]);
+  rows.push([{ text: '← Payments list', callback_data: 'paybrowse:' + status + ':' + page }]);
   return { inline_keyboard: rows };
 }
 
@@ -82,22 +82,33 @@ export function registerDashboardCommands(bot, pool, logger) {
     }
   }
 
-  async function sendPaymentDetail(ctx, id, edit = false) {
+  async function sendPaymentDetail(ctx, id, edit = false, status = 'all', page = 0) {
     const detail = await getPaymentTransactionDetail(pool, id);
     if (!detail) {
       const message = 'Payment transaction #' + id + ' not found.';
       return edit ? ctx.editMessageText(message) : ctx.reply(message);
     }
     const text = formatPaymentDetail(detail);
-    const options = { reply_markup: detailKeyboard(detail.transaction), disable_web_page_preview: true };
+    const options = { reply_markup: detailKeyboard(detail.transaction, status, page), disable_web_page_preview: true };
     return edit ? ctx.editMessageText(text, options) : ctx.reply(text, options);
   }
 
-  async function showRecent(ctx, edit = false) {
-    const rows = await listRecentPayments(pool, 10);
-    const text = 'Recent payment transactions\n\n' + (rows.length ? rows.map(formatRecentPayment).join('\n\n') : 'No payment transactions yet.');
-    const keyboard = rows.map((row) => [{ text: 'Details #' + row.id + ' · ' + String(row.status).toUpperCase(), callback_data: 'paydetail:' + row.id }]);
-    keyboard.push([{ text: '↻ Refresh', callback_data: 'paymentrecent' }]);
+  async function showRecent(ctx, edit = false, status = 'all', page = 0) {
+    const pageSize = 5;
+    const data = await listPaymentTransactions(pool, { limit: pageSize, offset: page * pageSize, status });
+    const pages = Math.max(1, Math.ceil(data.total / pageSize));
+    const activePage = Math.min(Math.max(page, 0), pages - 1);
+    const rows = data.rows;
+    const filterNames = { all: 'All', verified: 'Verified', applied: 'Applied', rejected: 'Rejected', expired: 'Expired' };
+    const text = 'Payment Transactions · ' + filterNames[status] + '\nPage ' + (activePage + 1) + ' / ' + pages + ' · ' + data.total + ' total\n\n' + (rows.length ? rows.map(formatRecentPayment).join('\n\n') : 'No transactions in this filter.');
+    const keyboard = rows.map((row) => [{ text: 'Details #' + row.id + ' · ' + String(row.status).toUpperCase(), callback_data: 'paydetail:' + row.id + ':' + status + ':' + activePage }]);
+    keyboard.push([{ text: (status === 'all' ? '• ' : '') + 'All', callback_data: 'paybrowse:all:0' }, { text: (status === 'verified' ? '• ' : '') + 'Verified', callback_data: 'paybrowse:verified:0' }, { text: (status === 'applied' ? '• ' : '') + 'Applied', callback_data: 'paybrowse:applied:0' }]);
+    keyboard.push([{ text: (status === 'rejected' ? '• ' : '') + 'Rejected', callback_data: 'paybrowse:rejected:0' }, { text: (status === 'expired' ? '• ' : '') + 'Expired', callback_data: 'paybrowse:expired:0' }]);
+    const nav = [];
+    if (activePage > 0) nav.push({ text: '← Previous', callback_data: 'paybrowse:' + status + ':' + (activePage - 1) });
+    nav.push({ text: '↻ Refresh', callback_data: 'paybrowse:' + status + ':' + activePage });
+    if (activePage < pages - 1) nav.push({ text: 'Next →', callback_data: 'paybrowse:' + status + ':' + (activePage + 1) });
+    if (nav.length) keyboard.push(nav);
     const options = { reply_markup: { inline_keyboard: keyboard }, disable_web_page_preview: true };
     return edit ? ctx.editMessageText(text, options) : ctx.reply(text, options);
   }
@@ -127,7 +138,7 @@ export function registerDashboardCommands(bot, pool, logger) {
     }
   });
   bot.command('payment_recent', async (ctx) => {
-    try { await showRecent(ctx); }
+    try { await showRecent(ctx, false, 'all', 0); }
     catch (error) {
       logger.error({ error: error.message }, 'Recent payment list failed');
       await ctx.reply('Could not load recent payment transactions.');
@@ -153,19 +164,26 @@ export function registerDashboardCommands(bot, pool, logger) {
   });
 
   bot.action('paymentrecent', async (ctx) => {
-    try { await ctx.answerCbQuery(); await showRecent(ctx, true); }
+    try { await ctx.answerCbQuery(); await showRecent(ctx, true, 'all', 0); }
     catch (error) {
       logger.error({ error: error.message }, 'Recent payments callback failed');
       await ctx.answerCbQuery('Could not load recent transactions.', { show_alert: true });
     }
   });
+  bot.action(/^paybrowse:(all|verified|applied|rejected|expired):(\d+)$/, async (ctx) => {
+    const status = ctx.match[1]; const page = Math.max(0, Number(ctx.match[2]) || 0);
+    try { await ctx.answerCbQuery(); await showRecent(ctx, true, status, page); }
+    catch (error) { logger.error({ status, page, error: error.message }, 'Payment browse callback failed'); await ctx.answerCbQuery('Could not load transactions.', { show_alert: true }); }
+  });
+  bot.action(/^paydetail:(\d+):(all|verified|applied|rejected|expired):(\d+)$/, async (ctx) => {
+    const id = Number(ctx.match[1]); const status = ctx.match[2]; const page = Number(ctx.match[3]) || 0;
+    try { await ctx.answerCbQuery(); await sendPaymentDetail(ctx, id, true, status, page); }
+    catch (error) { logger.error({ transactionId: id, error: error.message }, 'Payment detail callback failed'); await ctx.answerCbQuery('Could not load transaction details.', { show_alert: true }); }
+  });
   bot.action(/^paydetail:(\d+)$/, async (ctx) => {
     const id = Number(ctx.match[1]);
     try { await ctx.answerCbQuery(); await sendPaymentDetail(ctx, id, true); }
-    catch (error) {
-      logger.error({ transactionId: id, error: error.message }, 'Payment detail callback failed');
-      await ctx.answerCbQuery('Could not load transaction details.', { show_alert: true });
-    }
+    catch (error) { logger.error({ transactionId: id, error: error.message }, 'Payment detail callback failed'); await ctx.answerCbQuery('Could not load transaction details.', { show_alert: true }); }
   });
   bot.action(/^payreconcile:(\d+)$/, async (ctx) => {
     const id = Number(ctx.match[1]);
