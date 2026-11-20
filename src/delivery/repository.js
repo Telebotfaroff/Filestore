@@ -27,7 +27,7 @@ export async function claimNextDeliveryJob(pool, workerIdentity) {
     const jobResult = await client.query(
       `SELECT id, requester_telegram_id FROM delivery_jobs
        WHERE status = 'pending' ORDER BY created_at ASC
-       FOR UPDATE SKIP LOCKED LIMIT 1`,
+       LIMIT 1 FOR UPDATE SKIP LOCKED`,
     );
     if (!jobResult.rowCount) {
       await client.query('COMMIT');
