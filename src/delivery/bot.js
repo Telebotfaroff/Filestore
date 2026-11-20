@@ -7,6 +7,8 @@ import { createDeliveryWorker } from './worker.js';
 import { createAutoDeleteWorker } from './auto-delete-worker.js';
 import { checkForceSubscription } from '../access/force-subscription.js';
 import { upsertTelegramUser } from '../access/user-repository.js';
+import { evaluateAccess } from '../access/access-manager.js';
+import { getCheckpointRequirement } from '../access/checkpoint-engine.js';
 import { getPaidFileLink, requestPaidFilePurchase, hasPaidFileEntitlement } from '../paid-files/repository.js';
 
 function getMissingSubscriptionMarkup(missing) {
@@ -46,7 +48,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
   bot.use(async (ctx, next) => {
     if (isAdmin(ctx.from?.id, config.adminIds)) return next();
     const command = ctx.message?.text?.trim().split(/\s+/)[0]?.split('@')[0] ?? '';
-    const allowed = ['/start', '/verify', '/get', '/paid', '/batch', '/batch_get'].includes(command) || ctx.callbackQuery?.data === 'fs_verify';
+    const allowed = ['/start', '/verify', '/get', '/paid', '/batch', '/batch_get', '/checkpoint_status', '/access_status'].includes(command) || ctx.callbackQuery?.data === 'fs_verify';
     if (allowed) return next();
     if (ctx.chat?.type === 'private') await ctx.reply('This bot is currently preparing its file access system.');
   });
@@ -56,7 +58,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
     if (isAdmin(ctx.from.id, config.adminIds)) {
       await ctx.reply('FileStore Delivery Bot (admin test mode)\n\n/get <file_code> — queue a delivery\n/delivery_status — queue status\n/delivery_test — test storage access\n/verify — check subscriptions');
     } else {
-      await ctx.reply('Welcome to FileStore. Use /verify to check required channel subscriptions. File access is not yet enabled.');
+      await ctx.reply('Welcome to FileStore. Use /verify to check required channel subscriptions. Free delivery is available when access checks pass. Use /get <file_code> to request a file.');
     }
   });
 
@@ -175,11 +177,17 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
           const labels = forceSub.missing.slice(0, 20).map((channel) => `• ${channel.title ?? channel.telegram_chat_id}`).join('\n');
           return ctx.reply('Subscribe to the required channels before requesting files:\n\n' + labels + '\n\nThen tap Verify.', getMissingSubscriptionMarkup(forceSub.missing));
         }
-        const entitled = await hasPaidFileEntitlement(pool, ctx.from.id, file.id);
-        if (!entitled) return ctx.reply('This file is not unlocked for your account. Use /paid <link_code> to request purchase, or wait for free delivery to be enabled.');
+        const paidEntitled = await hasPaidFileEntitlement(pool, ctx.from.id, file.id);
+        const access = await evaluateAccess(pool, { userId: ctx.from.id, type: paidEntitled ? 'paid_file' : 'free_file', resourceId: file.id }, forceSub);
+        if (!access.allowed) {
+          if (access.reason === 'purchase_required') return ctx.reply('This file is locked. Use /paid <link_code> to request purchase.');
+          if (access.reason === 'checkpoint_required') return ctx.reply('Checkpoint required before free delivery. Provider: ' + (access.provider?.name ?? 'unknown') + '. Verification link integration is not yet available, so access remains locked.');
+          if (access.reason === 'checkpoint_provider_unavailable' || access.reason === 'checkpoint_verification_unavailable') return ctx.reply('Checkpoint verification is unavailable right now. Access remains locked; please try later.');
+          return ctx.reply('Access check failed (' + access.reason + '). Please try again later.');
+        }
         if (!file.telegram_message_id || !file.storage_chat_id || !file.storage_channel_enabled) return ctx.reply('This file currently has no usable storage message.');
         const jobId = await createSingleDeliveryJob(pool, ctx.from.id, file.id, ctx.from.id);
-        return ctx.reply('Paid access verified. Delivery queued.\nJob ID: ' + jobId + '\nFile: ' + file.file_name);
+        return ctx.reply((paidEntitled ? 'Paid access verified.' : 'Access verified.') + ' Delivery queued.\nJob ID: ' + jobId + '\nFile: ' + file.file_name);
       }
       if (!file.telegram_message_id || !file.storage_chat_id || !file.storage_channel_enabled) return ctx.reply('This file has no usable message in an enabled storage channel.');
       const jobId = await createSingleDeliveryJob(pool, ctx.from.id, file.id, ctx.from.id);
