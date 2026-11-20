@@ -167,3 +167,21 @@ export async function getDeliveryStats(pool) {
   );
   return result.rows[0];
 }
+
+export async function createBatchDeliveryJob(pool, requesterTelegramId, fileIds, requestedBy = requesterTelegramId) {
+  if (!Array.isArray(fileIds) || !fileIds.length || fileIds.length > 100) throw new Error('Batch delivery requires 1–100 files.');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const job = await client.query(
+      'INSERT INTO delivery_jobs (job_type, requester_telegram_id, requested_by) VALUES ($1, $2, $3) RETURNING id',
+      ['batch', requesterTelegramId, requestedBy],
+    );
+    for (let i = 0; i < fileIds.length; i++) {
+      await client.query('INSERT INTO delivery_items (job_id, file_id, position) VALUES ($1, $2, $3)', [job.rows[0].id, fileIds[i], i + 1]);
+    }
+    await client.query('COMMIT');
+    return job.rows[0].id;
+  } catch (error) { try { await client.query('ROLLBACK'); } catch {} throw error; }
+  finally { client.release(); }
+}
