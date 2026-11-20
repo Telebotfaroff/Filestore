@@ -1,3 +1,5 @@
+import { retryFailedDeliveryJob } from './repository.js';
+
 function getRecordId(ctx) {
   const value = ctx.message?.text?.trim().split(/\s+/).slice(1)[0] ?? '';
   if (!/^\d+$/.test(value)) throw new Error('Usage: command <database_bot_record_id>');
@@ -7,6 +9,28 @@ function getRecordId(ctx) {
 }
 
 export function registerDeliveryBotManagerCommands(bot, manager, logger) {
+  bot.command('delivery_retry', async (ctx) => {
+    const raw = ctx.message?.text?.trim().split(/\\s+/).slice(1)[0] ?? '';
+    if (!/^\\d+$/.test(raw)) return ctx.reply('Usage: /delivery_retry <failed_job_id>');
+    const jobId = Number(raw);
+    if (!Number.isSafeInteger(jobId) || jobId <= 0) return ctx.reply('Invalid delivery job ID.');
+    try {
+      const result = await retryFailedDeliveryJob(pool, jobId);
+      if (!result.ok) {
+        const messages = {
+          not_retryable: 'Job not found or not in failed state. Only failed jobs can be retried.',
+          unsafe_state: 'Retry blocked: this job has an uncertain or processing item. Review it manually to avoid duplicate delivery.',
+          no_failed_items: 'No failed items are available to retry.',
+        };
+        return ctx.reply(messages[result.reason] ?? 'Retry could not be applied.');
+      }
+      return ctx.reply('Delivery job requeued. Failed items: ' + result.retriedItems + '. Previously delivered batch items remain delivered.');
+    } catch (error) {
+      logger.error({ jobId, error: error.message }, 'Delivery job retry failed');
+      return ctx.reply('Retry failed due to a database error.');
+    }
+  });
+
   bot.command('delivery_bots', async (ctx) => {
     try {
       const rows = await manager.list();
