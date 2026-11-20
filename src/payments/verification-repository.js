@@ -108,7 +108,7 @@ export async function recordVerifiedPayment(pool, payment) {
       (session.batch_link_id == null ? payment.batchLinkId == null : String(session.batch_link_id) === String(payment.batchLinkId)) &&
       (session.paid_link_id == null ? payment.paidLinkId == null : String(session.paid_link_id) === String(payment.paidLinkId));
     if (!sessionMatches) throw new Error('Verified payment does not match the checkout session.');
-    if (new Date(session.expires_at) <= new Date() && session.status === 'pending') throw new Error('Payment session expired.');
+    if (new Date(session.expires_at) <= new Date() && session.status === 'pending' && !(payment.method === 'telegram_stars' && payment.allowExpiredSession === true)) throw new Error('Payment session expired.');
     const prior = await client.query(
       'SELECT id, user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, batch_link_id, paid_link_id, amount_minor, currency, status, session_id, verified_at FROM payment_transactions WHERE method = $1 AND external_transaction_id = $2 LIMIT 1 FOR UPDATE',
       [method, transactionId],
