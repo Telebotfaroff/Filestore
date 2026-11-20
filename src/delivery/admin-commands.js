@@ -78,6 +78,23 @@ export function registerDeliveryBotManagerCommands(bot, manager, logger) {
     }
   });
 
+  bot.command('delivery_bot_priority', async (ctx) => {
+    const parts = ctx.message?.text?.trim().split(/\\s+/) ?? [];
+    const id = Number(parts[1]);
+    const priority = Number(parts[2]);
+    if (!Number.isSafeInteger(id) || id <= 0 || !Number.isInteger(priority) || priority < 1 || priority > 100000) {
+      return ctx.reply('Usage: /delivery_bot_priority <record_id> <1-100000>');
+    }
+    try {
+      if (!await manager.setPriority(id, priority)) return ctx.reply('Bot record not found.');
+      await ctx.reply('Delivery Bot priority updated. Lower numbers are preferred for backup selection.');
+    } catch (error) {
+      logger.error({ error: error.message }, 'Delivery Bot priority update failed');
+      await ctx.reply('Priority update failed.');
+    }
+  });
+
+
   bot.command('delivery_bot_test', async (ctx) => {
     try {
       const id = getRecordId(ctx);
