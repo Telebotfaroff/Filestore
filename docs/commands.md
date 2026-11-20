@@ -172,6 +172,7 @@ The timer starts after a delivery succeeds. Existing scheduled deletions remain 
 - `/payment_recent` — Latest 10 payment transactions with inline **Details** buttons.
 - Transaction detail view — Shows payment/session/event history. Verified transactions expose a **Retry safe fulfillment** button.
 - **Recent payments** — Return to the transaction list; **Refresh** reloads it.
+- `/payment_search <query>` — Search by transaction ID, Telegram user ID, UTR, or external transaction reference (up to 10 results).
 - `/payment_detail <transaction_id>` — Open transaction details directly.
 - `/payment_reconcile <transaction_id>` — Retry fulfillment for a verified payment. Fulfillment is idempotent.
 
@@ -180,6 +181,7 @@ The timer starts after a delivery succeeds. Existing scheduled deletions remain 
 
 - `/payment_recent` opens the transaction browser, initially showing the latest five transactions.
 - Inline filters: **All**, **Verified**, **Applied**, **Rejected**, **Expired**.
+- **Search payments** button provides the command hint; use `/payment_search <query>` to search by ID, user, UTR, or external reference
 - **Previous / Next** buttons page through the selected filter; **Refresh** reloads the current page.
 - Each row has a **Details** button. The detail screen's back button returns to the same filter and page.
 - Filtered listing and count queries use parameterized SQL; page size is bounded to 10.
