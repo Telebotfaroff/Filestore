@@ -7,6 +7,7 @@ import { registerDeliveryBotManagerCommands } from '../delivery/admin-commands.j
 import { registerForceSubAdminCommands } from '../access/force-sub-admin-commands.js';
 import { registerShortenerAdminCommands } from '../access/shortener-admin-commands.js';
 import { registerCheckpointPolicyCommands } from '../access/checkpoint-admin-commands.js';
+import { registerPremiumAdminCommands } from '../premium/admin-commands.js';
 
 export function createMainBot(config, logger, pool) {
   const bot = new Telegraf(config.mainBotToken);
@@ -28,7 +29,7 @@ export function createMainBot(config, logger, pool) {
 
   bot.command('help', async (ctx) => {
     await ctx.reply(
-      '/start — Admin welcome\n/status — Database status\n/storage — Storage channels\n/storage_add — Add channel\n/storage_test — Test channel permissions\n/storage_enable — Enable channel\n/storage_disable — Disable channel\n/storage_primary — Set primary storage\n/storage_remove — Remove/disable channel\n/files — List indexed files\n/find — Search files\n/fileinfo — File metadata\n/delivery_bots — List managed bots\n/delivery_bot_add — Add token\n/delivery_bot_pause — Pause worker\n/delivery_bot_resume — Resume bot\n/delivery_bot_restart — Restart runtime\n/delivery_bot_remove — Remove bot\n/delivery_bot_primary — Set primary\n/delivery_bot_priority — Set priority\n/delivery_bot_test — Test bot access\n/force_sub — List force-sub channels\n/force_sub_add — Add channel + join URL\n/force_sub_test — Test Main Bot permissions\n/force_sub_enable — Enable channel\n/force_sub_disable — Disable channel\n/force_sub_remove — Remove channel\n/force_sub_global_on — Enable force-sub globally\n/force_sub_global_off — Disable force-sub globally\n/shorteners — List providers\n/shortener_add — Add provider config\n/shortener_test — Test config\n/shortener_duration — Set checkpoint minutes\n/shortener_priority — Set provider priority\n/shortener_enable — Activation (currently blocked until verification adapters exist)\n/shortener_disable — Disable provider\n/shortener_remove — Remove provider\n/checkpoint_global_on — Enable checkpoints\n/checkpoint_global_off — Disable checkpoints\n/help — Command list'
+      '/start — Admin welcome\n/status — Database status\n/storage — Storage channels\n/storage_add — Add channel\n/storage_test — Test channel permissions\n/storage_enable — Enable channel\n/storage_disable — Disable channel\n/storage_primary — Set primary storage\n/storage_remove — Remove/disable channel\n/files — List indexed files\n/find — Search files\n/fileinfo — File metadata\n/delivery_bots — List managed bots\n/delivery_bot_add — Add token\n/delivery_bot_pause — Pause worker\n/delivery_bot_resume — Resume bot\n/delivery_bot_restart — Restart runtime\n/delivery_bot_remove — Remove bot\n/delivery_bot_primary — Set primary\n/delivery_bot_priority — Set priority\n/delivery_bot_test — Test bot access\n/force_sub — List force-sub channels\n/force_sub_add — Add channel + join URL\n/force_sub_test — Test Main Bot permissions\n/force_sub_enable — Enable channel\n/force_sub_disable — Disable channel\n/force_sub_remove — Remove channel\n/force_sub_global_on — Enable force-sub globally\n/force_sub_global_off — Disable force-sub globally\n/shorteners — List providers\n/shortener_add — Add provider config\n/shortener_test — Test config\n/shortener_duration — Set checkpoint minutes\n/shortener_priority — Set provider priority\n/shortener_enable — Activation (currently blocked until verification adapters exist)\n/shortener_disable — Disable provider\n/shortener_remove — Remove provider\n/checkpoint_global_on — Enable checkpoints\n/checkpoint_global_off — Disable checkpoints\n/plans — List Premium plans\n/plan_add — Add/upsert plan\n/plan_edit — Edit plan\n/plan_remove — Delete plan\n/premium_grant — Grant Premium manually\n/premium_revoke — Revoke Premium\n/premium_status — Inspect user Premium\n/help — Command list'
     );
   });
 
@@ -55,6 +56,7 @@ export function createMainBot(config, logger, pool) {
   registerForceSubAdminCommands(bot, pool, logger);
   registerShortenerAdminCommands(bot, pool, config, logger);
   registerCheckpointPolicyCommands(bot, pool, logger);
+  registerPremiumAdminCommands(bot, pool, logger);
 
   bot.catch((error, ctx) => {
     logger.error({ updateId: ctx.update?.update_id, error: error.message }, 'Telegram handler error');
