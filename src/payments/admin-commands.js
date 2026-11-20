@@ -66,7 +66,7 @@ export function registerPaymentAdminCommands(bot, pool, config, logger) {
       if (!prices || typeof prices !== 'object' || Array.isArray(prices) || !Object.values(prices).some(v => v && typeof v === 'object' && Object.values(v).some(n => Number.isSafeInteger(Number(n)) && Number(n) > 0))) throw new Error('Set at least one Stars price map before activation.');
       await pool.query("UPDATE payment_methods SET is_enabled=TRUE, setup_status='configured', last_test_status='unknown', last_test_error=NULL, updated_by=$2, updated_at=NOW() WHERE method=$1", [method, ctx.from.id]);
       await ctx.reply('Telegram Stars checkout enabled. Prices are read from the configured stars_prices maps.');
-    } catch (error) { await ctx.reply('Payment activation failed: ' + error.message + '\\nUsage: /payment_enable telegram_stars'); }
+    } catch (error) { await ctx.reply('Payment activation failed: ' + error.message + '\nUsage: /payment_enable telegram_stars'); }
   });
 
   bot.command('payment_apply', async (ctx) => {
