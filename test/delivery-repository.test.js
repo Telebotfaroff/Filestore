@@ -109,3 +109,24 @@ test('blocks failed-job retry when an item has uncertain delivery outcome', asyn
   assert.equal(statements.some(s => s.query.startsWith('UPDATE delivery_items')), false);
   assert.equal(statements.at(-1).query, 'ROLLBACK');
 });
+
+import { getRecentDeliveryJobs } from '../src/delivery/repository.js';
+
+test('lists recent delivery jobs with a bounded limit and item outcome counts', async () => {
+  const calls = [];
+  const pool = { query: async (sql, args) => {
+    calls.push({ sql: String(sql), args });
+    return { rows: [{ id: 99, status: 'failed', item_count: 3, delivered_count: 1, failed_count: 1, uncertain_count: 1 }] };
+  } };
+  const jobs = await getRecentDeliveryJobs(pool, 10);
+  assert.equal(jobs[0].id, 99);
+  assert.match(calls[0].sql, /COUNT\\(di.id\\) FILTER \\(WHERE di.status = 'uncertain'\\)/);
+  assert.deepEqual(calls[0].args, [10]);
+});
+
+test('recent delivery jobs listing clamps its limit', async () => {
+  let args;
+  const pool = { query: async (_sql, queryArgs) => { args = queryArgs; return { rows: [] }; } };
+  await getRecentDeliveryJobs(pool, 500);
+  assert.deepEqual(args, [25]);
+});
