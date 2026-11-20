@@ -175,7 +175,7 @@ Stars setup (example price map; IDs are database plan/link/batch IDs and amounts
 /payment_enable telegram_stars
 ```
 
-- `/payment_transactions [status]` — list recent transaction records (status filter optional)
+- `/payment_sessions_expired` — inspect recent expired checkout sessions\n- `/payment_transactions [status]` — list recent transaction records (status filter optional)
 - `/payment_methods` — list methods
 - `/payment_set METHOD|SECRET|PUBLIC_CONFIG_JSON` — store method config; secrets are encrypted and command is deleted where possible
 - `/payment_test METHOD` — config validation only, not a live transaction test
@@ -183,7 +183,7 @@ Stars setup (example price map; IDs are database plan/link/batch IDs and amounts
 - `/payments`, `/payment_recent`, `/payment_search QUERY`, `/payment_detail ID`, `/payment_analytics`
 - `/payment_apply` and `/payment_reconcile ID` — retry/recover verified transaction fulfillment
 
-Telegram Stars can be enabled with valid price maps. FamPay/UPI, Stripe, and crypto adapters are not connected; do not enable them or treat their configuration tests as live payment verification.
+Pending checkout sessions are automatically marked expired after their expiry time; the worker processes bounded batches and leaves verified/applied sessions untouched. `/payment_sessions_expired` lists the latest 20 expired sessions.\n\nTelegram Stars can be enabled with valid price maps. FamPay/UPI, Stripe, and crypto adapters are not connected; do not enable them or treat their configuration tests as live payment verification.
 
 ## 13. Paid file links
 
