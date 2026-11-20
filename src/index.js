@@ -2,9 +2,11 @@ import { loadConfig } from './config/env.js';
 import { createLogger } from './logger.js';
 import { createDatabasePool, closeDatabasePool } from './database/pool.js';
 import { createMainBot } from './bot/main.js';
+import { createDeliveryBot } from './delivery/bot.js';
 
 let shutdownStarted = false;
-let bot;
+let mainBot;
+let deliveryRuntime;
 
 async function main() {
   const config = loadConfig();
@@ -16,40 +18,47 @@ async function main() {
   const migrations = await pool.query('SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1').catch((error) => {
     throw new Error('Database migrations are not applied. Run npm run migrate first. ' + error.message);
   });
-  if (migrations.rowCount === 0) {
-    throw new Error('No database migrations found. Run npm run migrate first.');
-  }
+  if (migrations.rowCount === 0) throw new Error('No database migrations found. Run npm run migrate first.');
 
-  bot = createMainBot(config, logger, pool);
-  registerShutdown(logger, bot);
+  mainBot = createMainBot(config, logger, pool);
+  deliveryRuntime = createDeliveryBot(config, logger, pool);
+  registerShutdown(logger);
 
-  await bot.launch();
+  await mainBot.launch();
   logger.info({ nodeEnv: config.nodeEnv, adminCount: config.adminIds.length }, 'FileStore Main Bot started');
+
+  if (deliveryRuntime) {
+    await deliveryRuntime.bot.launch();
+    await deliveryRuntime.startWorker();
+    logger.info('Delivery Bot started in administrator-only test mode');
+  } else {
+    logger.info('Delivery Bot is not configured; set DELIVERY_BOT_TOKEN to enable it');
+  }
 }
 
-function registerShutdown(logger, currentBot) {
-  const shutdown = async (signal) => {
-    if (shutdownStarted) return;
-    shutdownStarted = true;
-    logger.info({ signal }, 'Shutdown requested');
-    try {
-      currentBot.stop(signal);
-    } catch (error) {
-      logger.warn({ error: error.message }, 'Telegram bot shutdown warning');
-    }
-    try {
-      await closeDatabasePool();
-      logger.info('Database pool closed');
-    } catch (error) {
-      logger.error({ error: error.message }, 'Database shutdown failed');
-      process.exitCode = 1;
-    }
-  };
+async function shutdown(signal) {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  console.info('[FileStore] Shutdown requested:', signal);
+  deliveryRuntime?.stopWorker();
+  try { mainBot?.stop(signal); } catch {}
+  try { deliveryRuntime?.bot.stop(signal); } catch {}
+  try {
+    await closeDatabasePool();
+    console.info('[FileStore] Database pool closed');
+  } catch (error) {
+    console.error('[FileStore] Database shutdown failed:', error.message);
+    process.exitCode = 1;
+  }
+}
+
+function registerShutdown(logger) {
   process.once('SIGINT', () => void shutdown('SIGINT'));
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
   console.error('[FileStore] Startup failed:', error.message);
+  await shutdown('startup-failure');
   process.exitCode = 1;
 });
