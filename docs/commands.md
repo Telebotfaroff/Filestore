@@ -86,6 +86,14 @@ Delivery Bots verify each user's membership before the user `/get` flow continue
 The checkpoint engine stores session hashes, expires pending sessions, and rotates through providers by priority after each verified checkpoint expires. No provider API or completion verifier is connected yet; providers cannot be enabled and the engine does not award checkpoint credit from user-supplied return links.
 
 
+## Checkpoint enforcement
+
+- `/checkpoint_global_on` — enable checkpoint enforcement if at least one provider is enabled.
+- `/checkpoint_global_off` — disable checkpoint enforcement. Force-subscription remains active.
+
+These commands are guarded by provider availability. Provider completion adapters are not connected, so activation is currently blocked in practice.
+
+
 ## Security
 
 Managed bot tokens are encrypted using AES-256-GCM. Set `TOKEN_ENCRYPTION_KEY` to a base64-encoded 32-byte key. Generate locally:
