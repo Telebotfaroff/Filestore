@@ -1,5 +1,21 @@
 import { encryptBotToken } from '../security/token-encryption.js';
 
+export async function listPaymentTransactions(pool, status = null, limit = 15) {
+  const allowed = new Set(['pending', 'verified', 'applied', 'rejected', 'expired']);
+  if (status && !allowed.has(status)) throw new Error('Invalid payment transaction status.');
+  const safeLimit = Math.max(1, Math.min(50, Number.isInteger(limit) ? limit : 15));
+  const { rows } = await pool.query(
+    `SELECT id, user_telegram_id, method, external_transaction_id, purpose,
+       plan_id, file_id, batch_link_id, paid_link_id, amount_minor, currency, status,
+       session_id, verified_at, applied_at, created_at
+     FROM payment_transactions
+     WHERE ($1::text IS NULL OR status = $1)
+     ORDER BY created_at DESC, id DESC LIMIT $2`,
+    [status, safeLimit],
+  );
+  return rows;
+}
+
 export async function listPaymentMethods(pool) {
   const { rows } = await pool.query(
     'SELECT method, is_enabled, public_config, setup_status, last_test_status, last_test_error, updated_at FROM payment_methods ORDER BY method',
