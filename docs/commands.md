@@ -106,6 +106,20 @@ Four methods are reserved and seeded as disabled:
 
 All payment methods remain disabled. Payment sessions and transaction tables are prepared; live payment checkout, signatures/webhooks, UTR verification, and automatic premium activation are not implemented yet.
 
+## Paid file links
+
+- `/paid_link_create FILE_CODE|PRICE|CURRENCY|expiry_days(optional)` — create a paid link, e.g. `/paid_link_create ABC123|149|INR|7`.
+- `/paid_links` — list paid links and purchase request counts.
+- `/paid_link_disable <link_code>` — disable link.
+- `/paid_confirm <link_code> <user_id>` — manually confirm payment after independently checking it; this grants access and sends the user a notification.
+
+Users on Delivery Bots:
+- `/paid <link_code>` — request a purchase. Force-sub is checked first. Payment gateways are not connected yet, so users are directed to the admin for manual verification.
+- `/get <file_code>` — paid file delivery only works after entitlement is granted and force-sub passes. Free public delivery is still pending.
+
+Paid links have random codes, hashed lookup values, optional expiry, purchase request tracking, and per-user uniqueness. Payment must not be marked verified automatically until a gateway verifier is integrated.
+
+
 ## Security
 
 - Never commit Telegram tokens, API secrets, encryption keys, or database credentials.
