@@ -43,3 +43,29 @@ export function formatAdminDashboard(stats) {
     'Activity events (24h): ' + stats.events_24h,
   ].join('\n');
 }
+
+
+export async function getPaymentReconciliationStats(pool) {
+  const { rows } = await pool.query(`SELECT
+    (SELECT COUNT(*)::int FROM payment_transactions WHERE status='verified') AS verified_pending,
+    (SELECT COUNT(*)::int FROM payment_transactions WHERE status='applied') AS applied,
+    (SELECT COUNT(*)::int FROM payment_transactions WHERE status IN ('rejected','expired')) AS rejected_or_expired,
+    (SELECT COUNT(*)::int FROM payment_sessions WHERE status='pending' AND expires_at > NOW()) AS checkout_pending,
+    (SELECT COUNT(*)::int FROM payment_sessions WHERE status='failed') AS checkout_failed,
+    (SELECT COUNT(*)::int FROM payment_sessions WHERE status='expired' OR (status='pending' AND expires_at <= NOW())) AS checkout_expired,
+    (SELECT COUNT(*)::int FROM payment_provider_events WHERE processing_status='received') AS events_received,
+    (SELECT COUNT(*)::int FROM payment_provider_events WHERE processing_status='failed') AS events_failed,
+    (SELECT COUNT(*)::int FROM payment_provider_events WHERE processing_status='processed') AS events_processed,
+    (SELECT COUNT(*)::int FROM payment_provider_events WHERE processing_status='ignored') AS events_ignored`);
+  return rows[0];
+}
+
+export async function listRecentPayments(pool, limit = 10) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 10, 20));
+  const { rows } = await pool.query(
+    `SELECT id, user_telegram_id, method, purpose, amount_minor, currency, status, external_transaction_id, created_at
+     FROM payment_transactions ORDER BY created_at DESC LIMIT $1`,
+    [safeLimit],
+);
+  return rows;
+}
