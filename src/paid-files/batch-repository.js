@@ -123,7 +123,7 @@ export async function getBatchItems(pool, code) {
 export async function listPaidBatchLinks(pool, limit = 30) {
   const { rows } = await pool.query(
     `SELECT b.id,b.public_code,b.title,b.price_minor,b.currency,b.is_enabled,b.expires_at,b.created_at,
-       COUNT(i.file_id)::int AS item_count, COUNT(p.id)::int AS purchase_count
+       COUNT(DISTINCT i.file_id)::int AS item_count, COUNT(DISTINCT p.id)::int AS purchase_count
      FROM paid_batch_links b LEFT JOIN paid_batch_items i ON i.batch_link_id=b.id
      LEFT JOIN paid_batch_purchases p ON p.batch_link_id=b.id
      GROUP BY b.id ORDER BY b.created_at DESC LIMIT $1`,
