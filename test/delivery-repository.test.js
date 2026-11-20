@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSingleDeliveryJob, claimNextDeliveryJob, retryFailedDeliveryJob } from '../src/delivery/repository.js';
+import { createSingleDeliveryJob, claimNextDeliveryJob, retryFailedDeliveryJob, failDelivery } from '../src/delivery/repository.js';
 
 test('creates a job and item inside a transaction', async () => {
   const statements = [];
@@ -30,7 +30,7 @@ test('claims pending job, item, and attempt in one transaction', async () => {
   }, release: () => {} };
   const pool = { connect: async () => client };
   const claim = await claimNextDeliveryJob(pool, '@delivery');
-  assert.deepEqual(claim, { jobId: 41, requesterTelegramId: 123, itemId: 51, fileId: 99, attemptId: 61 });
+  assert.deepEqual(claim, { jobId: 41, requesterTelegramId: 123, itemId: 51, fileId: 99, attemptId: 61, workerIdentity: '@delivery' });
   assert.ok(statements.includes('BEGIN'));
   assert.ok(statements.includes('COMMIT'));
   assert.ok(statements.some((q) => q.includes('SKIP LOCKED')));
@@ -129,4 +129,23 @@ test('recent delivery jobs listing clamps its limit', async () => {
   const pool = { query: async (_sql, queryArgs) => { args = queryArgs; return { rows: [] }; } };
   await getRecentDeliveryJobs(pool, 500);
   assert.deepEqual(args, [25]);
+});
+
+
+test('failDelivery refuses to mutate job when worker lease is lost', async () => {
+  const statements = [];
+  const client = { query: async (sql, args) => {
+    const query = String(sql).trim();
+    statements.push({ query, args });
+    if (query.startsWith('SELECT id FROM delivery_jobs')) return { rowCount: 0, rows: [] };
+    return { rows: [] };
+  }, release: () => {} };
+  const pool = { connect: async () => client };
+  await assert.rejects(
+    failDelivery(pool, { jobId: 12, attemptId: 13, itemId: 14, workerIdentity: 'bot-A' }, 'failed', 'API_ERROR', 'test'),
+    /Delivery lease lost/,
+  );
+  assert.deepEqual(statements[1].args, [12, 'bot-A']);
+  assert.equal(statements.some(s => s.query.startsWith('UPDATE delivery_items')), false);
+  assert.equal(statements.at(-1).query, 'ROLLBACK');
 });
