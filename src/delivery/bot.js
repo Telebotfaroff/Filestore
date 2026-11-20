@@ -4,6 +4,7 @@ import { getIndexedFile } from '../storage/file-query.js';
 import { createSingleDeliveryJob, createBatchDeliveryJob, getDeliveryStats } from './repository.js';
 import { getPaidBatch, requestPaidBatchPurchase, getBatchItems } from '../paid-files/batch-repository.js';
 import { createDeliveryWorker } from './worker.js';
+import { createAutoDeleteWorker } from './auto-delete-worker.js';
 import { checkForceSubscription } from '../access/force-subscription.js';
 import { upsertTelegramUser } from '../access/user-repository.js';
 import { getPaidFileLink, requestPaidFilePurchase, hasPaidFileEntitlement } from '../paid-files/repository.js';
@@ -39,6 +40,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
   if (!token) return null;
   const bot = new Telegraf(token);
   let worker;
+  let autoDeleteWorker;
   let identity = 'delivery-bot';
 
   bot.use(async (ctx, next) => {
@@ -243,10 +245,14 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
       if (worker) return;
       worker = createDeliveryWorker(bot, pool, logger, identity);
       worker.start();
+      autoDeleteWorker = createAutoDeleteWorker(bot, pool, logger, identity);
+      autoDeleteWorker.start();
     },
     stopWorker() {
       worker?.stop();
+      autoDeleteWorker?.stop();
       worker = undefined;
+      autoDeleteWorker = undefined;
     },
   };
 }
