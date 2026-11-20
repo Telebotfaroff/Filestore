@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS file_ingest_requests (
-  id BIGSERIAL PRIMARY PRIMARY KEY,
+  id BIGSERIAL PRIMARY KEY,
   source_chat_id BIGINT NOT NULL,
   source_message_id BIGINT NOT NULL,
   status TEXT NOT NULL DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'duplicate', 'failed')),
