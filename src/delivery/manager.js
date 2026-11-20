@@ -24,7 +24,7 @@ export function createDeliveryBotManager(config, logger, pool) {
       if (runtime) stopRuntime(id);
       await pool.query(
         'UPDATE delivery_bots SET username = $2, token_ciphertext = $3, is_enabled = TRUE, runtime_status = $4, last_error = NULL, updated_at = NOW() WHERE id = $1',
-        [info.username, ciphertext, 'offline', id],
+        [id, info.username, ciphertext, 'offline'],
       );
       return getBotRecord(id);
     }
@@ -111,7 +111,10 @@ export function createDeliveryBotManager(config, logger, pool) {
 
   async function ensurePrimary() {
     const current = await pool.query("SELECT id FROM delivery_bots WHERE role = 'primary' AND is_enabled = TRUE AND runtime_status = 'running' LIMIT 1");
-    if (current.rowCount && runtimes.has(String(current.rows[0].id))) return current.rows[0].id;
+    if (current.rowCount && runtimes.has(String(current.rows[0].id))) {
+      runtimes.get(String(current.rows[0].id)).runtime.startWorker();
+      return current.rows[0].id;
+    }
     const candidate = await pool.query("SELECT id FROM delivery_bots WHERE is_enabled = TRUE AND runtime_status = 'running' AND role = 'backup' ORDER BY priority ASC, id ASC LIMIT 1");
     if (!candidate.rowCount) return null;
     await promotePrimary(candidate.rows[0].id);
@@ -144,6 +147,8 @@ export function createDeliveryBotManager(config, logger, pool) {
     const refreshed = await getBotRecord(id);
     const runtime = await startRuntime(refreshed);
     if (!runtime) return false;
+    await pool.query("UPDATE delivery_bots SET runtime_status = 'running', last_health_at = NOW(), updated_at = NOW() WHERE id = $1", [id]);
+    if (record.role === 'primary') runtime.runtime.startWorker();
     await ensurePrimary();
     return true;
   }
@@ -216,6 +221,7 @@ export function createDeliveryBotManager(config, logger, pool) {
     if (healthTimer) clearInterval(healthTimer);
     healthTimer = undefined;
     for (const id of [...runtimes.keys()]) stopRuntime(id);
+    await pool.query("UPDATE delivery_bots SET runtime_status = 'offline', updated_at = NOW() WHERE runtime_status <> 'paused'").catch(() => {});
   }
 
   async function list() {
