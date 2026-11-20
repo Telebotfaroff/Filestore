@@ -43,6 +43,7 @@ async function readMethodConfig(pool) {
   return result.rows[0].public_config ?? {};
 }
 export async function sendStarsInvoice(bot, pool, ctx, purpose, target, label, description, token) {
+  if (ctx.chat?.type !== 'private') throw new Error('Stars checkout is only available in private chats.');
   const publicConfig = await readMethodConfig(pool);
   const stars = getTelegramStarsPrice(publicConfig, purpose, target);
   if (!stars) throw new Error('No Telegram Stars price is configured for this purchase.');
@@ -54,7 +55,12 @@ export async function sendStarsInvoice(bot, pool, ctx, purpose, target, label, d
     metadata: { starsPrice: stars, label: String(label).slice(0, 120) },
   });
   const payload = createStarsPayload(token, session.id);
-  await bot.telegram.sendInvoice(ctx.chat.id, String(label).slice(0, 32), String(description).slice(0, 255), payload, '', CURRENCY, [{ label: String(label).slice(0, 32), amount: stars }]);
+  try {
+    await bot.telegram.sendInvoice(ctx.chat.id, String(label).slice(0, 32), String(description).slice(0, 255), payload, '', CURRENCY, [{ label: String(label).slice(0, 32), amount: stars }]);
+  } catch (error) {
+    await pool.query("UPDATE payment_sessions SET status='failed',updated_at=NOW() WHERE id=$1 AND status='pending'", [session.id]).catch(() => {});
+    throw error;
+  }
   return { sessionId: session.id, stars };
 }
 async function loadPendingSession(pool, sessionId, userId) {
@@ -103,7 +109,7 @@ export async function handleStarsSuccessfulPayment(pool, ctx, token, logger) {
       userId: ctx.from.id, purpose: session?.purpose ?? (await pool.query('SELECT purpose FROM payment_sessions WHERE id=$1',[sessionId])).rows[0].purpose,
       planId: session?.plan_id ?? null, fileId: session?.file_id ?? null,
       paidLinkId: session?.paid_link_id ?? null, batchLinkId: session?.batch_link_id ?? null,
-      amountMinor: payment.total_amount, currency: CURRENCY,
+      amountMinor: payment.total_amount, currency: CURRENCY, allowExpiredSession: true,
     });
     const fulfilled = await applyVerifiedPayment(pool, result.transaction.id);
     await markProviderEvent(pool, event.id, 'processed', result.transaction.id);
