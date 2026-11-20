@@ -19,14 +19,14 @@ CREATE INDEX IF NOT EXISTS users_created_at_idx ON users (created_at DESC);
 CREATE INDEX IF NOT EXISTS users_username_idx ON users (username);
 
 CREATE TABLE IF NOT EXISTS app_settings (
-  key TEXT PRIMARY PRIMARY KEY,
+  key TEXT PRIMARY KEY,
   value JSONB NOT NULL,
   updated_by BIGINT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS storage_channels (
-  id BIGSERIAL PRIMARY PRIMARY KEY,
+  id BIGSERIAL PRIMARY KEY,
   telegram_chat_id BIGINT NOT NULL UNIQUE,
   title TEXT,
   username TEXT,
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS storage_channels (
 CREATE INDEX IF NOT EXISTS storage_channels_enabled_priority_idx ON storage_channels (is_enabled, priority);
 
 CREATE TABLE IF NOT EXISTS files (
-  id BIGSERIAL PRIMARY PRIMARY KEY,
+  id BIGSERIAL PRIMARY KEY,
   file_code TEXT NOT NULL UNIQUE,
   file_name TEXT NOT NULL,
   file_type TEXT NOT NULL CHECK (file_type IN ('video', 'document', 'photo', 'audio', 'voice', 'video_note', 'animation', 'archive', 'other')),
@@ -67,7 +67,7 @@ CREATE INDEX IF NOT EXISTS files_type_idx ON files (file_type);
 CREATE INDEX IF NOT EXISTS files_unique_id_idx ON files (telegram_file_unique_id);
 
 CREATE TABLE IF NOT EXISTS storage_messages (
-  id BIGSERIAL PRIMARY PRIMARY KEY,
+  id BIGSERIAL PRIMARY KEY,
   file_id BIGINT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
   storage_channel_id BIGINT NOT NULL REFERENCES storage_channels(id) ON DELETE RESTRICT,
   telegram_message_id BIGINT NOT NULL,
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS storage_messages (
 CREATE INDEX IF NOT EXISTS storage_messages_file_idx ON storage_messages (file_id);
 
 CREATE TABLE IF NOT EXISTS tags (
-  id BIGSERIAL PRIMARY PRIMARY KEY,
+  id BIGSERIAL PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS file_tags (
 );
 
 CREATE TABLE IF NOT EXISTS activity_logs (
-  id BIGSERIAL PRIMARY PRIMARY KEY,
+  id BIGSERIAL PRIMARY KEY,
   event_type TEXT NOT NULL,
   actor_telegram_id BIGINT,
   target_telegram_id BIGINT,
