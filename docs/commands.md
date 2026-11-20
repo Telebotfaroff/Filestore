@@ -32,4 +32,4 @@ These commands are restricted to Telegram user IDs configured in `ADMIN_IDS`.
 - The bot must be a channel administrator with posting permission.
 - The first enabled channel is promoted to primary automatically.
 - Selecting or re-enabling a channel may promote it if no enabled primary exists.
-- Storage channel registration and diagnostics are implemented; file upload/indexing is a later milestone.
+- Storage channel registration, diagnostics, media ingestion, and basic indexing are implemented. File delivery and editing/deletion workflows are upcoming.
