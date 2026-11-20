@@ -4,102 +4,110 @@ All Main Bot commands are restricted to administrator Telegram IDs configured in
 
 ## Main Bot
 
-- `/start` — control center.
-- `/help` — command list.
-- `/status` — database connection and file count.
+- `/start` — Control Center.
+- `/help` — Command list.
+- `/status` — DB connection, tracked users, indexed files.
 
 ## File ingestion and search
 
-Send supported media (video, document, photo, audio, voice, video note, or animation) in private chat with the Main Bot. It copies the message to the tested primary storage channel and indexes metadata.
+Send supported media (video, document, photo, audio, voice, video note, or animation) in private chat with the Main Bot.
 
-- `/files` — latest indexed files.
-- `/find <filename or file code>` — search.
-- `/fileinfo <file_code>` — metadata and storage message reference.
+- `/files` — Latest indexed files.
+- `/find <filename or file code>` — Search.
+- `/fileinfo <file_code>` — Metadata and storage references.
 
 ## Storage channels
 
-- `/storage` — list channels.
-- `/storage_add <channel_id or @username>` — verify Main Bot posting permission and add channel.
-- `/storage_test <channel_id>` — recheck membership and posting rights.
-- `/storage_enable <channel_id>` — enable; promote if no tested active primary.
-- `/storage_disable <channel_id>` — disable without removing file references.
-- `/storage_primary <channel_id>` — set primary; other channels become backup.
-- `/storage_remove <channel_id>` — delete if no file-message references; otherwise disable safely.
+- `/storage` — List channels.
+- `/storage_add <channel_id or @username>` — Add and validate channel permissions.
+- `/storage_test <channel_id>` — Retest permissions.
+- `/storage_enable <channel_id>` / `/storage_disable <channel_id>` — Toggle.
+- `/storage_primary <channel_id>` — Set primary.
+- `/storage_remove <channel_id>` — Remove or safely disable.
 
-## Dynamic Delivery Bot manager
+## Dynamic Delivery Bots
 
-- `/delivery_bots` — list bot records.
-- `/delivery_bot_add <token>` — validate token, encrypt, start runtime; delete token message when possible.
-- `/delivery_bot_pause <record_id>` — pause that bot's job worker.
-- `/delivery_bot_resume <record_id>` — resume.
-- `/delivery_bot_restart <record_id>` — restart one runtime.
-- `/delivery_bot_remove <record_id>` — stop and delete token record; historical attempts remain.
-- `/delivery_bot_primary <record_id>` — select queue worker bot.
-- `/delivery_bot_priority <record_id> <1-100000>` — set backup preference (lower is preferred).
-- `/delivery_bot_test <record_id>` — check bot identity and membership in enabled storage channels.
+- `/delivery_bots` — List bot runtimes.
+- `/delivery_bot_add <token>` — Add a bot; token is encrypted.
+- `/delivery_bot_pause <record_id>`, `/delivery_bot_resume <record_id>`
+- `/delivery_bot_restart <record_id>`
+- `/delivery_bot_remove <record_id>`
+- `/delivery_bot_primary <record_id>`
+- `/delivery_bot_priority <record_id> <1-100000>`
+- `/delivery_bot_test <record_id>` — Bot/channel permissions.
 
-Only the primary Delivery Bot runs the persistent queue worker. Backups stay online for admin commands and can be promoted by health-based failover.
+Only the primary Delivery Bot claims queue jobs; backups stay available for failover.
 
-## Delivery Bot (admin-only test mode)
+## Delivery Bot (admin test mode)
 
-- `/get <file_code>` — queue a test delivery to the administrator.
-- `/delivery_status` — counts by job status.
-- `/delivery_test` — test storage-channel access for that bot.
+- `/get <file_code>` — Admin test delivery.
+- `/delivery_status` — Queue status.
+- `/delivery_test` — Storage and force-sub permissions.
 
-Public file access remains locked until Access Manager and force-subscription enforcement are implemented.
+Public delivery is still locked.
 
-## Force-subscription manager
+## Force-subscription
 
-- `/force_sub` — list channels and global status.
-- `/force_sub_add <channel_id or @username> <https_join_link>` — add and verify Main Bot admin permissions.
-- `/force_sub_test <channel_id>` — test Main Bot admin membership.
-- `/force_sub_enable <channel_id>` / `/force_sub_disable <channel_id>` — toggle a channel.
-- `/force_sub_remove <channel_id>` — remove a channel.
-- `/force_sub_global_on` / `/force_sub_global_off` — toggle the entire requirement.
+- `/force_sub` — List channels and global state.
+- `/force_sub_add <channel_id or @username> <https_join_link>` — Add channel.
+- `/force_sub_test <channel_id>` — Test Main Bot admin permissions.
+- `/force_sub_enable <channel_id>`, `/force_sub_disable <channel_id>`
+- `/force_sub_remove <channel_id>`
+- `/force_sub_global_on`, `/force_sub_global_off`
 
-Delivery Bots check membership before continuing a user `/get` request; verification failures block access. The current public file-delivery flow remains closed pending the URL checkpoint and full Access Manager.
-
-
-## Force-subscription controls
-
-- `/force_sub` — show channels and global setting.
-- `/force_sub_add <channel_id or @username> <https_join_link>` — add a channel; Main Bot admin permission is checked.
-- `/force_sub_test <channel_id>` — retest Main Bot channel administrator status.
-- `/force_sub_enable <channel_id>` / `/force_sub_disable <channel_id>` — toggle a channel.
-- `/force_sub_remove <channel_id>` — remove a configured channel.
-- `/force_sub_global_on` / `/force_sub_global_off` — toggle global enforcement.
-
-Delivery Bots verify each user's membership before the user `/get` flow continues. Membership API errors fail closed. The current user file-delivery flow remains locked until checkpoint and Access Manager milestones are completed.
-
+Delivery Bots check membership before user requests. Verification errors fail closed.
 
 ## URL shortener manager
 
-- `/shorteners` — list configured providers and checkpoint durations.
-- `/shortener_add name|base_url|api_endpoint|api_key|checkpoint_minutes|priority|api_key_param|target_url_param|response_url_path|json_or_text|verification_mode` — add/update provider config; API keys are encrypted.
-- `/shortener_test <provider_id>` — validate HTTPS URLs and response configuration only; does not call provider API.
-- `/shortener_duration <provider_id> <minutes>` — set 1–10080 minute checkpoint duration.
-- `/shortener_priority <provider_id> <priority>` — set ordering.
-- `/shortener_enable <provider_id>` — currently blocked until a trusted provider verification adapter is implemented.
-- `/shortener_disable <provider_id>` — disable provider.
-- `/shortener_remove <provider_id>` — remove provider when no pending sessions exist.
+- `/shorteners` — List providers.
+- `/shortener_add name|base_url|api_endpoint|api_key|checkpoint_minutes|priority|api_key_param|target_url_param|response_url_path|json_or_text|verification_mode` — Add or update provider configuration. API keys are encrypted.
+- `/shortener_test <provider_id>` — Validate config only (does not call provider).
+- `/shortener_duration <provider_id> <minutes>` — 1–10080 minutes.
+- `/shortener_priority <provider_id> <priority>`
+- `/shortener_enable <provider_id>` — Currently blocked until a trusted provider verifier is integrated.
+- `/shortener_disable <provider_id>`
+- `/shortener_remove <provider_id>` — Cannot remove with pending sessions.
 
-The checkpoint engine stores session hashes, expires pending sessions, and rotates through providers by priority after each verified checkpoint expires. No provider API or completion verifier is connected yet; providers cannot be enabled and the engine does not award checkpoint credit from user-supplied return links.
+Sequential checkpoint state is implemented, including expiry and provider rotation. Actual provider API calls and server-side completion verification are not yet connected.
 
+## Checkpoint policy
 
-## Checkpoint enforcement
+- `/checkpoint_global_on` — Enable checkpoint enforcement (requires enabled provider).
+- `/checkpoint_global_off` — Disable checkpoint enforcement; force-sub still applies.
 
-- `/checkpoint_global_on` — enable checkpoint enforcement if at least one provider is enabled.
-- `/checkpoint_global_off` — disable checkpoint enforcement. Force-subscription remains active.
+## Premium plan manager
 
-These commands are guarded by provider availability. Provider completion adapters are not connected, so activation is currently blocked in practice.
+Plan prices are entered in major currency units (example INR ₹99.00), stored as minor units.
 
+- `/plans` — List plans.
+- `/plan_add name|price|currency|duration_days` — Add or update a plan by name. Example: `/plan_add Monthly|99|INR|30`.
+- `/plan_edit id|name|price|currency|duration_days|enabled` — Edit a plan.
+- `/plan_remove <plan_id>` — Delete a plan; historical memberships retain their record but lose the plan reference.
+- `/premium_grant <user_id> <plan_id> [days_override]` — Manually grant/extend membership.
+- `/premium_revoke <user_id>` — Revoke current active membership.
+- `/premium_status <user_id>` — Inspect membership history.
+
+Concurrent grants to the same user are serialized in the database. Renewal extends an active membership rather than starting a second overlapping entitlement. Permanent Premium is not shortened or overwritten.
+
+## Payment method setup
+
+Four methods are reserved and seeded as disabled:
+
+1. `fampay` — UPI payment flow
+2. `telegram_stars` — Telegram Stars
+3. `stripe`
+4. `crypto`
+
+- `/payment_methods` — List setup status.
+- `/payment_set method|secret|public_config_json` — Save configuration; secret is encrypted and the command message is deleted when possible. Example: `/payment_set stripe|sk_test_...|{"publishable_key":"pk_test_..."}`.
+- `/payment_test <method>` — Validate stored config only, not a live payment.
+- `/payment_enable <method>` — Activation is blocked until checkout and server-side verification are implemented.
+- `/payment_disable <method>`
+
+All payment methods remain disabled. Payment sessions and transaction tables are prepared; live payment checkout, signatures/webhooks, UTR verification, and automatic premium activation are not implemented yet.
 
 ## Security
 
-Managed bot tokens are encrypted using AES-256-GCM. Set `TOKEN_ENCRYPTION_KEY` to a base64-encoded 32-byte key. Generate locally:
-
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-```
-
-Never commit tokens, encryption keys, database credentials, or payment secrets.
+- Never commit Telegram tokens, API secrets, encryption keys, or database credentials.
+- Managed Telegram tokens and payment secrets use AES-256-GCM encryption.
+- `TOKEN_ENCRYPTION_KEY` is a base64-encoded 32-byte key.
