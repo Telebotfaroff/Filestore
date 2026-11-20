@@ -7,7 +7,6 @@ async function isPremiumActive(pool, userId, now = new Date()) {
        AND starts_at <= $2 AND (expires_at IS NULL OR expires_at > $2)
      ORDER BY expires_at DESC NULLS FIRST LIMIT 1`,
     [userId, now],
-],
   );
   return result.rowCount > 0;
 }
