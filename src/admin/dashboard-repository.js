@@ -69,3 +69,33 @@ export async function listRecentPayments(pool, limit = 10) {
 );
   return rows;
 }
+
+export async function getPaymentTransactionDetail(pool, transactionId) {
+  const id = Number(transactionId);
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Invalid payment transaction ID.');
+  const txResult = await pool.query(
+    `SELECT t.id, t.user_telegram_id, t.method, t.external_transaction_id, t.utr, t.purpose,
+            t.plan_id, t.file_id, t.batch_link_id, t.paid_link_id, t.amount_minor, t.currency,
+            t.status, t.session_id, t.verified_at, t.applied_at, t.created_at, t.updated_at,
+            s.status AS session_status, s.expected_amount_minor AS session_amount_minor,
+            s.currency AS session_currency, s.expires_at AS session_expires_at,
+            s.provider_session_id, s.provider_checkout_url, s.metadata AS session_metadata,
+            s.created_at AS session_created_at, s.updated_at AS session_updated_at
+     FROM payment_transactions t
+     LEFT JOIN payment_sessions s ON s.id = t.session_id
+     WHERE t.id = $1 LIMIT 1`,
+    [id],
+  );
+  const transaction = txResult.rows[0];
+  if (!transaction) return null;
+  const eventResult = await pool.query(
+    `SELECT id, method, provider_event_id, event_type, processing_status,
+            payment_transaction_id, received_at, processed_at, last_error
+     FROM payment_provider_events
+     WHERE payment_transaction_id = $1
+        OR (method = $2 AND provider_event_id = $3)
+     ORDER BY received_at ASC LIMIT 25`,
+    [id, transaction.method, transaction.external_transaction_id],
+  );
+  return { transaction, events: eventResult.rows };
+}
