@@ -1,35 +1,38 @@
 # FileStore
 
-A modular Telegram file indexing and delivery platform. FileStore is being developed in small, verified milestones.
+A modular Telegram file indexing and delivery platform built with Node.js, Telegraf, and PostgreSQL.
 
-## Current status
+## Progress
 
-**Milestones 1–5 — Foundation, bootstrap, database base, Main Bot runtime, and storage-channel manager:** completed in repository. **Milestone 6 — File ingest/indexing:** underway. Live integration testing pending
+- **Milestones 1–5:** foundation, configuration, database schema/migrations, Main Bot runtime, storage-channel management.
+- **Milestone 6:** media ingestion, metadata indexing, file-code generation, duplicate detection, and basic search (implemented in the repository; runtime integration testing is pending).
 
-The repository includes project setup, validated configuration, structured logging, PostgreSQL pooling, checksum-protected migrations, the core schema, an administrator-restricted Main Bot, and channel management commands. Live database and Telegram API integration tests have not yet been run.
+The code has been committed in sequential pieces. PostgreSQL and Telegram integration have not yet been tested against live credentials.
 
-## Planned architecture
+## Stack
 
-- **Node.js 22+ / ES Modules**
-- **Telegraf** for Telegram Bot API interactions
-- **PostgreSQL (Neon)** for persistent state, configuration, jobs, memberships and delivery history
-- **Pino** for structured logging
-- **Zod** for configuration validation
+- Node.js 22+ / ES Modules
+- Telegraf (Telegram Bot API)
+- PostgreSQL (Neon compatible)
+- pg, Zod, dotenv, Pino
 
 ## Local setup
 
 1. Install Node.js 22 or newer.
 2. Clone the repository.
-3. Copy `.env.example` to `.env` and fill in credentials.
-4. Install dependencies: `npm install`.
-5. Run: `npm start`.
+3. Copy `.env.example` to `.env` and configure `MAIN_BOT_TOKEN`, `DATABASE_URL`, and at least one `ADMIN_IDS` value.
+4. Run `npm install`.
+5. Apply migrations: `npm run migrate`.
+6. Start: `npm start`.
 
-6. Apply schema changes with `npm run migrate` before launching.\n7. Start FileStore with `npm start`.\n\nThe Main Bot requires an applied migration and valid administrator IDs in `ADMIN_IDS`.
+## Admin commands
 
-## Development approach
+See [docs/commands.md](docs/commands.md).
 
-See [AGENTS.md](./AGENTS.md). Work proceeds milestone-by-milestone under the user's full roadmap authorization. Do not collapse all milestones into one implementation.
+## Development rules
+
+See [AGENTS.md](AGENTS.md). Milestones are developed sequentially; the user's full roadmap authorization is active. No milestone is collapsed into a giant code dump.
 
 ## Security
 
-Never commit bot tokens, database credentials, encryption keys, payment credentials, or other secrets. Use local environment variables and the deployment provider's secret settings.
+Never commit Telegram bot tokens, database credentials, encryption keys, payment credentials, or other secrets. Configure secrets through local environment variables or the hosting provider's environment settings.
