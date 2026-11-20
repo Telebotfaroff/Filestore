@@ -87,7 +87,7 @@ export async function finishDelivery(pool, claim, deliveredMessageId) {
     await client.query('BEGIN');
     await client.query("UPDATE delivery_attempts SET status = 'delivered', telegram_message_id = $2, finished_at = NOW() WHERE id = $1", [claim.attemptId, deliveredMessageId]);
     await client.query("UPDATE delivery_items SET status = 'delivered', delivered_to = $2, telegram_message_id = $3, delivered_at = NOW(), updated_at = NOW() WHERE id = $1", [claim.itemId, claim.requesterTelegramId, deliveredMessageId]);
-    await client.query("UPDATE delivery_jobs SET status = 'completed', locked_by = NULL, locked_until = NULL, completed_at = NOW(), updated_at = NOW() WHERE id = $1", [claim.jobId]);
+    await client.query("UPDATE delivery_jobs SET status = CASE WHEN EXISTS (SELECT 1 FROM delivery_items WHERE job_id = $1 AND status = 'pending') THEN 'pending' ELSE 'completed' END, locked_by = NULL, locked_until = NULL, completed_at = CASE WHEN EXISTS (SELECT 1 FROM delivery_items WHERE job_id = $1 AND status = 'pending') THEN NULL ELSE NOW() END, updated_at = NOW() WHERE id = $1", [claim.jobId]);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
