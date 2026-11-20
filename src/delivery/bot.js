@@ -91,7 +91,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
       if (!isAdmin(ctx.from.id, config.adminIds)) {
         await upsertTelegramUser(pool, ctx.from);
         const forceSub = await checkForceSubscription(ctx.telegram, pool, ctx.from.id);
-        await logForceSubEvent(pool, forceSub.passed ? 'force_sub_verified' : 'force_sub_blocked', ctx.from.id, forceSub);
+        await logForceSubEvent(pool, logger, forceSub.passed ? 'force_sub_verified' : 'force_sub_blocked', ctx.from.id, forceSub);
         if (!forceSub.passed) {
           const labels = forceSub.missing.slice(0, 20).map((channel) => `• ${channel.title ?? channel.telegram_chat_id}${channel.checkStatus === 'check_failed' ? ' (verification unavailable)' : ''}`).join("\n");
           return ctx.reply('Subscribe to the required channels before requesting files:\n\n' + labels + '\n\nThen tap Verify.', getMissingSubscriptionMarkup(forceSub.missing));
