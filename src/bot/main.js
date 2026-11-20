@@ -4,6 +4,7 @@ import { registerStorageAdminCommands } from '../storage/admin-commands.js';
 import { registerFileIngestHandler } from '../storage/ingest-handler.js';
 import { registerFileCommands } from '../storage/file-commands.js';
 import { registerDeliveryBotManagerCommands } from '../delivery/admin-commands.js';
+import { registerForceSubAdminCommands } from '../access/force-sub-admin-commands.js';
 
 export function createMainBot(config, logger, pool) {
   const bot = new Telegraf(config.mainBotToken);
@@ -49,6 +50,7 @@ export function createMainBot(config, logger, pool) {
   registerFileCommands(bot, pool, logger);
   registerFileIngestHandler(bot, pool, logger);
   registerDeliveryBotManagerCommands(bot, config.deliveryManager, logger);
+  registerForceSubAdminCommands(bot, pool, logger);
   bot.catch((error, ctx) => {
     logger.error({ updateId: ctx.update?.update_id, error: error.message }, 'Telegram handler error');
   });
