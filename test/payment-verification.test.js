@@ -10,7 +10,7 @@ test('payment session inputs require proper method, purpose, positive amount, cu
   assert.throws(() => validatePaymentSessionInput({ method: 'stripe', purpose: 'premium', amountMinor: 100, currency: 'IN', expiresAt: future, planId: 1 }));
   assert.throws(() => validatePaymentSessionInput({ method: 'stripe', purpose: 'premium', amountMinor: 100, currency: 'INR', expiresAt: future }));
   assert.throws(() => validatePaymentSessionInput({ method: 'stripe', purpose: 'premium', amountMinor: 100, currency: 'INR', expiresAt: new Date(Date.now() - 1000), planId: 1 }));
-  assert.equal(validatePaymentSessionInput({ method: 'stripe', purpose: 'premium', amountMinor: 100, currency: 'inr', expiresAt: future, planId: 2 }).currency, 'INR');
+  assert.equal(validatePaymentSessionInput({ method: 'stripe', purpose: 'premium', amountMinor: 100, currency: 'inr', expiresAt: future, userId: 12345, planId: 2 }).currency, 'INR');
 });
 
 test('provider events are idempotent and payload mismatch on reused event ID fails', async () => {
