@@ -224,10 +224,15 @@ export function createDeliveryBotManager(config, logger, pool) {
     await pool.query("UPDATE delivery_bots SET runtime_status = 'offline', updated_at = NOW() WHERE runtime_status <> 'paused'").catch(() => {});
   }
 
+  async function setPriority(id, priority) {
+    const result = await pool.query('UPDATE delivery_bots SET priority = $2, updated_at = NOW() WHERE id = $1 RETURNING id', [id, priority]);
+    return result.rowCount > 0;
+  }
+
   async function list() {
     const result = await pool.query('SELECT id, telegram_bot_id, username, role, priority, is_enabled, runtime_status, last_health_at, last_error FROM delivery_bots ORDER BY priority ASC, id ASC');
     return result.rows;
   }
 
-  return { startAll, stopAll, addToken, pause, resume, restart, remove, promotePrimary, test, list };
+  return { startAll, stopAll, addToken, pause, resume, restart, remove, promotePrimary, setPriority, test, list };
 }
