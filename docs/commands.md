@@ -48,6 +48,18 @@ Only the primary Delivery Bot runs the persistent queue worker. Backups stay onl
 
 Public file access remains locked until Access Manager and force-subscription enforcement are implemented.
 
+## Force-subscription manager
+
+- `/force_sub` — list channels and global status.
+- `/force_sub_add <channel_id or @username> <https_join_link>` — add and verify Main Bot admin permissions.
+- `/force_sub_test <channel_id>` — test Main Bot admin membership.
+- `/force_sub_enable <channel_id>` / `/force_sub_disable <channel_id>` — toggle a channel.
+- `/force_sub_remove <channel_id>` — remove a channel.
+- `/force_sub_global_on` / `/force_sub_global_off` — toggle the entire requirement.
+
+Delivery Bots check membership before continuing a user `/get` request; verification failures block access. The current public file-delivery flow remains closed pending the URL checkpoint and full Access Manager.
+
+
 ## Security
 
 Managed bot tokens are encrypted using AES-256-GCM. Set `TOKEN_ENCRYPTION_KEY` to a base64-encoded 32-byte key. Generate locally:
