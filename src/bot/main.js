@@ -10,9 +10,7 @@ export function createMainBot(config, logger, pool) {
   bot.use(async (ctx, next) => {
     const userId = ctx.from?.id;
     if (!isAdmin(userId, config.adminIds)) {
-      if (ctx.chat?.type === 'private') {
-        await ctx.reply('This bot is restricted to administrators.');
-      }
+      if (ctx.chat?.type === 'private') await ctx.reply('This bot is restricted to administrators.');
       return;
     }
     return next();
@@ -21,13 +19,13 @@ export function createMainBot(config, logger, pool) {
   bot.command('start', async (ctx) => {
     await ctx.reply(
       'FileStore Control Center\n\n' +
-      'The admin bot is online. Use /status to check the current foundation services.\n\n' +
-      'Storage channels: /storage\nAdd channel: /storage_add <channel_id or @username>\nFiles: /files · Search: /find <query>\nFile details: /fileinfo <code>'
+      'Send supported media here to store and index it.\n\n' +
+      'Storage channels: /storage\nAdd channel: /storage_add <channel_id or @username>\nFiles: /files · Search: /find <query>\nFile details: /fileinfo <code>\nUse /help for the full command list.'
     );
   });
 
   bot.command('help', async (ctx) => {
-    await ctx.reply('/start — Admin welcome\n/status — Database status\n/storage — Storage channels\n/storage_add — Add storage channel\n/storage_test — Test channel permissions\n/files — List recent files\n/find — Search files\n/fileinfo — File metadata\n/help — Command list');
+    await ctx.reply('/start — Admin welcome\n/status — Database status\n/storage — Storage channels\n/storage_add — Add storage channel\n/storage_test — Test channel permissions\n/storage_enable — Enable channel\n/storage_disable — Disable channel\n/storage_primary — Set primary channel\n/storage_remove — Remove or disable channel\n/files — List recent files\n/find — Search files\n/fileinfo — File metadata\n/help — Command list');
   });
 
   bot.command('status', async (ctx) => {
