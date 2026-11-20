@@ -1,4 +1,4 @@
-import { createPaidFileLink, disablePaidFileLink, listPaidFileLinks, confirmPaidFilePurchase, getPaidFileLink } from './repository.js';
+import { createPaidFileLink, disablePaidFileLink, listPaidFileLinks, confirmPaidFilePurchase, getPaidFileLink, listPendingPaidFilePurchases } from './repository.js';
 
 function commandArgs(ctx) { return ctx.message?.text?.trim().split(/\s+/).slice(1) ?? []; }
 function parseAmount(value) {
@@ -37,6 +37,15 @@ export function registerPaidFileAdminCommands(bot, pool, logger) {
       const lines = rows.map((row) => `#${row.id} · ${row.is_enabled ? 'ON' : 'OFF'} · ${row.public_code}\n${row.file_name} (${row.file_code})\nPrice: ${(Number(row.price_minor) / 100).toFixed(2)} ${row.currency} · Requests: ${row.purchase_count}\nExpires: ${row.expires_at ? new Date(row.expires_at).toISOString() : 'Never'}`);
       await ctx.reply('Paid file links\n\n' + lines.join('\n\n'));
     } catch (error) { logger.error({ error: error.message }, 'Paid links list failed'); await ctx.reply('Could not list paid links.'); }
+  });
+
+  bot.command('paid_requests', async (ctx) => {
+    try {
+      const rows = await listPendingPaidFilePurchases(pool);
+      if (!rows.length) return ctx.reply('No pending paid file requests.');
+      const lines = rows.map((r) => `Purchase #${r.purchase_id} · ${r.public_code}\nUser ID: ${r.user_telegram_id}\nFile: ${r.file_name} (${r.file_code})\nAmount: ${(Number(r.paid_amount_minor) / 100).toFixed(2)} ${r.currency}\nRequested: ${new Date(r.created_at).toISOString()}\nConfirm: /paid_confirm ${r.public_code} ${r.user_telegram_id}`);
+      await ctx.reply('Pending paid file requests\\n\\n' + lines.join('\\n\\n'));
+    } catch (error) { logger.error({ error: error.message }, 'Paid requests listing failed'); await ctx.reply('Could not list pending requests.'); }
   });
 
   bot.command('paid_link_disable', async (ctx) => {
