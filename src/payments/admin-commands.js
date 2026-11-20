@@ -46,7 +46,7 @@ export function registerPaymentAdminCommands(bot, pool, config, logger) {
       const setup = result.rows[0];
       if (setup.setup_status !== 'configured') throw new Error('Method has not been configured.');
       if (!setup.public_config || typeof setup.public_config !== 'object' || Array.isArray(setup.public_config)) throw new Error('Public config must be a JSON object.');
-      await markPaymentMethodTest(pool, method, 'ok');
+      await markPaymentMethodTest(pool, method, 'unknown');
       await ctx.reply('Configuration check passed only. This is not a live payment, webhook, signature, or automatic verification test.');
     } catch (error) {
       const methodRaw = args(ctx)[0];
