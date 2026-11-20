@@ -17,6 +17,8 @@ const migration12 = await readFile(new URL('../src/database/migrations/012_auto_
 const migration13 = await readFile(new URL('../src/database/migrations/013_payment_verification.sql', import.meta.url), 'utf8');
 const migration14 = await readFile(new URL('../src/database/migrations/014_paid_batch_payment_sessions.sql', import.meta.url), 'utf8');
 const migration15 = await readFile(new URL('../src/database/migrations/015_exact_paid_link_sessions.sql', import.meta.url), 'utf8');
+const migration16 = await readFile(new URL('../src/database/migrations/016_auto_delete_worker_leases.sql', import.meta.url), 'utf8');
+const migration17 = await readFile(new URL('../src/database/migrations/017_auto_delete_retry_backoff.sql', import.meta.url), 'utf8');
 
 test('initial schema defines core tables and constraints', () => {
   for (const table of ['users', 'app_settings', 'storage_channels', 'files', 'storage_messages', 'tags', 'file_tags', 'activity_logs']) {
@@ -107,6 +109,11 @@ test('auto-delete schema stores global setting and persisted deletion queue', ()
   for (const status of ['pending', 'processing', 'deleted', 'failed']) assert.match(migration12, new RegExp(status));
   assert.match(migration12, /delivery_bot_identity/);
   assert.match(migration12, /delete_at/);
+});
+
+test('auto-delete worker lease and retry migrations add owner fencing and backoff', () => {
+  assert.match(migration16, /locked_by/);
+  assert.match(migration17, /retry_after/);
 });
 
 
