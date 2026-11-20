@@ -99,3 +99,21 @@ export async function getPaymentTransactionDetail(pool, transactionId) {
   );
   return { transaction, events: eventResult.rows };
 }
+
+const PAYMENT_LIST_STATUSES = new Set(['all', 'verified', 'applied', 'rejected', 'expired']);
+
+export async function listPaymentTransactions(pool, { limit = 5, offset = 0, status = 'all' } = {}) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 5, 10));
+  const safeOffset = Math.max(0, Number.isSafeInteger(Number(offset)) ? Number(offset) : 0);
+  const safeStatus = PAYMENT_LIST_STATUSES.has(status) ? status : 'all';
+  const where = safeStatus === 'all' ? '' : ' WHERE status = $1';
+  const countResult = await pool.query('SELECT COUNT(*)::int AS total FROM payment_transactions' + where, safeStatus === 'all' ? [] : [safeStatus]);
+  const queryParams = safeStatus === 'all' ? [safeLimit, safeOffset] : [safeStatus, safeLimit, safeOffset];
+  const limitIndex = safeStatus === 'all' ? '$1' : '$2';
+  const offsetIndex = safeStatus === 'all' ? '$2' : '$3';
+  const { rows } = await pool.query(
+    'SELECT id, user_telegram_id, method, purpose, amount_minor, currency, status, external_transaction_id, created_at FROM payment_transactions' + where + ' ORDER BY created_at DESC LIMIT ' + limitIndex + ' OFFSET ' + offsetIndex,
+    queryParams,
+  );
+  return { rows, total: Number(countResult.rows[0]?.total ?? 0), limit: safeLimit, offset: safeOffset, status: safeStatus };
+}
