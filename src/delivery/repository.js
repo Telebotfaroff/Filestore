@@ -180,6 +180,22 @@ export async function recoverExpiredDeliveryJobs(pool) {
   }
 }
 
+export async function getRecentDeliveryJobs(pool, limit = 10) {
+  const safeLimit = Math.max(1, Math.min(25, Number.isInteger(limit) ? limit : 10));
+  const result = await pool.query(
+    `SELECT dj.id, dj.job_type, dj.status, dj.requester_telegram_id, dj.attempt_count,
+       dj.last_error, dj.created_at,
+       COUNT(di.id)::int AS item_count,
+       COUNT(di.id) FILTER (WHERE di.status = 'delivered')::int AS delivered_count,
+       COUNT(di.id) FILTER (WHERE di.status = 'failed')::int AS failed_count,
+       COUNT(di.id) FILTER (WHERE di.status = 'uncertain')::int AS uncertain_count
+     FROM delivery_jobs dj LEFT JOIN delivery_items di ON di.job_id = dj.id
+     GROUP BY dj.id ORDER BY dj.created_at DESC LIMIT $1`,
+    [safeLimit],
+  );
+  return result.rows;
+}
+
 export async function getDeliveryStats(pool) {
   const result = await pool.query(
     `SELECT
