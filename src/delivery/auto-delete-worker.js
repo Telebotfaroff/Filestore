@@ -1,5 +1,10 @@
 import { claimDueDeletion, finishScheduledDeletion, failScheduledDeletion } from './auto-delete-repository.js';
 
+export function isTelegramDeletionAlreadyComplete(error) {
+  const description = String(error?.response?.description ?? error?.message ?? '');
+  return /message to delete not found|message not found/i.test(description);
+}
+
 export function createAutoDeleteWorker(bot, pool, logger, identity) {
   let timer;
   let busy = false;
@@ -17,7 +22,7 @@ export function createAutoDeleteWorker(bot, pool, logger, identity) {
         // Telegram returns "message to delete not found" when the user deleted it
         // manually or a previous attempt already succeeded; treat that as complete.
         const description = error.response?.description ?? error.message ?? '';
-        if (/message to delete not found||/i.test(description)) {
+        if (isTelegramDeletionAlreadyComplete(error)) {
           await finishScheduledDeletion(pool, claim.id);
         } else {
           await failScheduledDeletion(pool, claim.id, description);
