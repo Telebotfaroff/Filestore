@@ -146,12 +146,12 @@ export function registerDashboardCommands(bot, pool, logger) {
     }
   });
   bot.command('payment_search', async (ctx) => {
-    const term = ctx.message?.text?.trim().split(/\\s+/).slice(1).join(' ').trim();
+    const term = ctx.message?.text?.trim().split(/\s+/).slice(1).join(' ').trim();
     if (!term) return ctx.reply('Usage: /payment_search <transaction ID, Telegram user ID, UTR, or external reference>');
     try {
       const result = await searchPaymentTransactions(pool, term, 10);
-      const text = 'Payment Search · "' + result.term + '"\\n' + result.total + ' match(es) · showing ' + result.rows.length + '\\n\\n' +
-        (result.rows.length ? result.rows.map(formatRecentPayment).join('\\n\\n') : 'No matching transactions.');
+      const text = 'Payment Search · "' + result.term + '"\n' + result.total + ' match(es) · showing ' + result.rows.length + '\n\n' +
+        (result.rows.length ? result.rows.map(formatRecentPayment).join('\n\n') : 'No matching transactions.');
       const keyboard = result.rows.map((row) => [{ text: 'Details #' + row.id + ' · ' + String(row.status).toUpperCase(), callback_data: 'paydetail:' + row.id + ':all:0' }]);
       keyboard.push([{ text: '← Payment list', callback_data: 'paybrowse:all:0' }]);
       await ctx.reply(text, { reply_markup: { inline_keyboard: keyboard }, disable_web_page_preview: true });
