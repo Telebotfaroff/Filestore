@@ -12,6 +12,7 @@ const migration7 = await readFile(new URL('../src/database/migrations/007_shorte
 const migration8 = await readFile(new URL('../src/database/migrations/008_access_manager.sql', import.meta.url), 'utf8');
 const migration9 = await readFile(new URL('../src/database/migrations/009_payment_foundation.sql', import.meta.url), 'utf8');
 const migration10 = await readFile(new URL('../src/database/migrations/010_paid_file_links.sql', import.meta.url), 'utf8');
+const migration11 = await readFile(new URL('../src/database/migrations/011_paid_batch_links.sql', import.meta.url), 'utf8');
 
 test('initial schema defines core tables and constraints', () => {
   for (const table of ['users', 'app_settings', 'storage_channels', 'files', 'storage_messages', 'tags', 'file_tags', 'activity_logs']) {
@@ -71,6 +72,13 @@ test('paid file links and purchase rows have unique user-link records and lifecy
   assert.match(migration10, /paid_file_purchases/);
   assert.match(migration10, /UNIQUE \(paid_link_id, user_telegram_id\)/);
   for (const status of ['pending', 'paid', 'delivered', 'refunded', 'cancelled']) assert.match(migration10, new RegExp(status));
+});
+
+test('paid batch links support ordered items and unique user purchases', () => {
+  for (const table of ['paid_batch_links', 'paid_batch_items', 'paid_batch_purchases']) assert.match(migration11, new RegExp('CREATE TABLE IF NOT EXISTS ' + table));
+  assert.match(migration11, /UNIQUE \(batch_link_id, file_id\)/);
+  assert.match(migration11, /UNIQUE \(batch_link_id, user_telegram_id\)/);
+  assert.match(migration11, /position INTEGER NOT NULL/);
 });
 
 test('active media identifiers are unique and schema contains no duplicate primary declaration', () => {
