@@ -81,12 +81,20 @@ export async function getDeliverySource(pool, fileId) {
   return result.rows[0] ?? null;
 }
 
-export async function finishDelivery(pool, claim, deliveredMessageId) {
+export async function finishDelivery(pool, claim, deliveredMessageId, workerIdentity) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query("UPDATE delivery_attempts SET status = 'delivered', telegram_message_id = $2, finished_at = NOW() WHERE id = $1", [claim.attemptId, deliveredMessageId]);
     await client.query("UPDATE delivery_items SET status = 'delivered', delivered_to = $2, telegram_message_id = $3, delivered_at = NOW(), updated_at = NOW() WHERE id = $1", [claim.itemId, claim.requesterTelegramId, deliveredMessageId]);
+    const setting = await client.query("SELECT setting_value FROM delivery_settings WHERE setting_key = 'auto_delete_minutes'");
+    const autoDeleteMinutes = Number(setting.rows[0]?.setting_value ?? 0);
+    if (Number.isInteger(autoDeleteMinutes) && autoDeleteMinutes > 0 && autoDeleteMinutes <= 10080) {
+      await client.query(
+        "INSERT INTO scheduled_message_deletions (delivery_bot_identity, chat_id, message_id, delete_at) VALUES ($1, $2, $3, NOW() + ($4 * INTERVAL '1 minute')) ON CONFLICT (delivery_bot_identity, chat_id, message_id) DO NOTHING",
+        [workerIdentity, claim.requesterTelegramId, deliveredMessageId, autoDeleteMinutes],
+      );
+    }
     await client.query("UPDATE delivery_jobs SET status = CASE WHEN EXISTS (SELECT 1 FROM delivery_items WHERE job_id = $1 AND status = 'pending') THEN 'pending' ELSE 'completed' END, locked_by = NULL, locked_until = NULL, completed_at = CASE WHEN EXISTS (SELECT 1 FROM delivery_items WHERE job_id = $1 AND status = 'pending') THEN NULL ELSE NOW() END, updated_at = NOW() WHERE id = $1", [claim.jobId]);
     await client.query('COMMIT');
   } catch (error) {
