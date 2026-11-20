@@ -27,7 +27,7 @@ export function createMainBot(config, logger, pool) {
   });
 
   bot.command('help', async (ctx) => {
-    await ctx.reply('/start — Admin welcome\n/status — Database and foundation status\n/help — Command list');
+    await ctx.reply('/start — Admin welcome\n/status — Database status\n/storage — Storage channels\n/storage_add — Add storage channel\n/storage_test — Test channel permissions\n/files — List recent files\n/find — Search files\n/fileinfo — File metadata\n/help — Command list');
   });
 
   bot.command('status', async (ctx) => {
