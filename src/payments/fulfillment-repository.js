@@ -36,7 +36,7 @@ export async function applyVerifiedPayment(pool, transactionId) {
       const plan = await client.query('SELECT id,name,price_minor,currency,duration_days FROM premium_plans WHERE id=$1 AND is_enabled=TRUE FOR UPDATE', [tx.plan_id]);
       if (!plan.rowCount) throw new Error('Premium plan is unavailable.');
       const p = plan.rows[0];
-      if (Number(p.price_minor) !== Number(tx.amount_minor) || p.currency !== tx.currency || String(session.plan_id) !== String(tx.plan_id)) throw new Error('Paid amount does not match current Premium plan price.');
+      if ((tx.method !== 'telegram_stars' && (Number(p.price_minor) !== Number(tx.amount_minor) || p.currency !== tx.currency)) || String(session.plan_id) !== String(tx.plan_id)) throw new Error('Paid amount does not match current Premium plan price.');
       await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [userId]);
       const active = await client.query(
         `SELECT id, expires_at FROM premium_memberships WHERE user_telegram_id=$1 AND status='active'
@@ -70,7 +70,7 @@ export async function applyVerifiedPayment(pool, transactionId) {
       );
       if (!linkResult.rowCount) throw new Error('Paid file link is expired, disabled, or missing.');
       const link = linkResult.rows[0];
-      if (String(link.file_id) !== String(tx.file_id) || Number(link.price_minor) !== Number(tx.amount_minor) || link.currency !== tx.currency) throw new Error('Payment does not match paid-file link price or file.');
+      if (String(link.file_id) !== String(tx.file_id) || (tx.method !== 'telegram_stars' && (Number(link.price_minor) !== Number(tx.amount_minor) || link.currency !== tx.currency))) throw new Error('Payment does not match paid-file link price or file.');
       const purchase = await client.query(
         `INSERT INTO paid_file_purchases (paid_link_id,user_telegram_id,payment_transaction_id,status,paid_amount_minor,currency,payment_method,verified_at)
          VALUES ($1,$2,$3,'paid',$4,$5,$6,NOW())
@@ -92,7 +92,7 @@ export async function applyVerifiedPayment(pool, transactionId) {
       );
       if (!batchResult.rowCount) throw new Error('Paid batch is expired, disabled, or missing.');
       const batch = batchResult.rows[0];
-      if (Number(batch.price_minor) !== Number(tx.amount_minor) || batch.currency !== tx.currency || String(session.batch_link_id) !== String(batch.id)) throw new Error('Payment does not match paid-batch price.');
+      if ((tx.method !== 'telegram_stars' && (Number(batch.price_minor) !== Number(tx.amount_minor) || batch.currency !== tx.currency)) || String(session.batch_link_id) !== String(batch.id)) throw new Error('Payment does not match paid-batch price.');
       const purchase = await client.query(
         `INSERT INTO paid_batch_purchases (batch_link_id,user_telegram_id,status,paid_amount_minor,currency,payment_transaction_id,payment_method,verified_at)
          VALUES ($1,$2,'paid',$3,$4,$5,$6,NOW())
