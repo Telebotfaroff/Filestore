@@ -10,7 +10,7 @@ export async function saveStorageChannel(pool, chat, creatorId) {
   try {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock($1)', [74290137]);
-    const count = await client.query('SELECT COUNT(*)::int AS total FROM storage_channels');
+    const count = await client.query("SELECT COUNT(*)::int AS total FROM storage_channels WHERE role = 'primary' AND is_enabled = TRUE");
     const isFirst = count.rows[0].total === 0;
     const result = await client.query(
       `INSERT INTO storage_channels (telegram_chat_id, title, username, channel_type, role, priority, is_enabled, verified_at, last_test_status, created_by)
@@ -38,11 +38,34 @@ export async function updateStorageTest(pool, channelId, status, errorMessage = 
 }
 
 export async function setStorageEnabled(pool, channelId, enabled) {
-  const result = await pool.query(
-    'UPDATE storage_channels SET is_enabled = $2, updated_at = NOW() WHERE telegram_chat_id = $1 RETURNING telegram_chat_id',
-    [channelId, enabled],
-  );
-  return result.rowCount > 0;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1)', [74290137]);
+    const found = await client.query('SELECT role FROM storage_channels WHERE telegram_chat_id = $1 FOR UPDATE', [channelId]);
+    if (!found.rowCount) {
+      await client.query('ROLLBACK');
+      return false;
+    }
+    await client.query('UPDATE storage_channels SET is_enabled = $2, updated_at = NOW() WHERE telegram_chat_id = $1', [channelId, enabled]);
+    if (enabled) {
+      const primary = await client.query("SELECT 1 FROM storage_channels WHERE role = 'primary' AND is_enabled = TRUE LIMIT 1");
+      if (!primary.rowCount) {
+        await client.query("UPDATE storage_channels SET role = 'backup' WHERE role = 'primary'");
+        await client.query("UPDATE storage_channels SET role = 'primary', priority = 0, updated_at = NOW() WHERE telegram_chat_id = $1", [channelId]);
+      }
+    } else if (found.rows[0].role === 'primary') {
+      await client.query("UPDATE storage_channels SET role = 'backup' WHERE telegram_chat_id = $1", [channelId]);
+      await promoteNextPrimary(client);
+    }
+    await client.query('COMMIT');
+    return true;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function setPrimaryStorageChannel(pool, channelId) {
