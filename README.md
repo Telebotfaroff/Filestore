@@ -4,9 +4,9 @@ A modular Telegram file indexing and delivery platform. FileStore is being devel
 
 ## Current status
 
-**Milestones 1–2 — Foundation and bootstrap:** committed (not yet dependency-installed or runtime-tested)
+**Milestones 1–3 — Foundation, bootstrap, and database groundwork:** committed; syntax-checked where possible; database integration awaits credentials
 
-The repository now includes project configuration, development rules, validated environment parsing, structured logging, and a minimal startup entry point. Telegram workflows and database migrations remain upcoming milestones.
+The repository includes project setup, validated configuration, structured logging, a startup entry point, PostgreSQL pooling, a checksum-protected migration runner, and an initial schema. Live database migration has not yet been run.
 
 ## Planned architecture
 
