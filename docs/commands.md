@@ -158,9 +158,9 @@ Batch codes use random 80-bit codes and hashed lookups. Purchase records are uni
 
 - `/auto_delete` — Show current setting.
 - `/auto_delete <minutes>` — Enable auto-delete for newly delivered files (1–10080 minutes).
-- `/auto_delete_off` — Disable auto-delete for future deliveries.
+- `/auto_delete_failed` — Inspect the latest 15 terminal deletion failures (diagnostic only).\n- `/auto_delete_off` — Disable auto-delete for future deliveries.
 
-The timer starts after a delivery succeeds. Existing scheduled deletions remain scheduled when auto-delete is disabled. Delivery Bots delete only their own sent messages. Deletion jobs are persisted and retried; after five failed attempts they are marked failed.
+The timer starts after a delivery succeeds. Existing scheduled deletions remain scheduled when auto-delete is disabled. Delivery Bots delete only their own sent messages. Deletion jobs use owner-checked 60-second leases, exponentially delayed retries (30 seconds up to one hour), and stop after five attempts. `/auto_delete_failed` lists terminal failures for diagnosis.
 
 
 ## Main Bot Dashboard (M18)
