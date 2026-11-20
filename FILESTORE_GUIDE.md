@@ -233,7 +233,7 @@ Delete tasks are persisted. The countdown starts after successful delivery. Exis
 
 ## 16. Monitoring and payment operations
 
-- `/status` — basic bot/database/user/file/payment status
+- `/status` — basic bot/database/user/file/payment status\n- `/health` — database query latency plus delivery queue, auto-delete, payment recovery, and checkpoint cleanup diagnostics
 - `/dashboard` or `/stats` — overview of activity, files, channels, delivery bots, queue, Premium, paid links, pending purchase requests, payment totals, and recent activity
 - `/payments` — payment/session/provider event summary
 - `/payment_recent` — paginated transaction browser
