@@ -19,6 +19,7 @@ const migration14 = await readFile(new URL('../src/database/migrations/014_paid_
 const migration15 = await readFile(new URL('../src/database/migrations/015_exact_paid_link_sessions.sql', import.meta.url), 'utf8');
 const migration16 = await readFile(new URL('../src/database/migrations/016_auto_delete_worker_leases.sql', import.meta.url), 'utf8');
 const migration17 = await readFile(new URL('../src/database/migrations/017_auto_delete_retry_backoff.sql', import.meta.url), 'utf8');
+const migration18 = await readFile(new URL('../src/database/migrations/018_payment_session_expiry.sql', import.meta.url), 'utf8');
 
 test('initial schema defines core tables and constraints', () => {
   for (const table of ['users', 'app_settings', 'storage_channels', 'files', 'storage_messages', 'tags', 'file_tags', 'activity_logs']) {
@@ -140,4 +141,11 @@ test('admin dashboard includes operational counts and command aliases', () => {
   for (const key of ['users_total', 'files_active', 'jobs_pending', 'premium_active', 'paid_file_requests_pending', 'revenue_by_currency', 'events_24h']) assert.match(dashboardSource, new RegExp(key));
   assert.match(dashboardCommands, /bot\.command\('dashboard'/);
   assert.match(dashboardCommands, /bot\.command\('stats'/);
+});
+
+
+test('payment session expiry migration marks abandoned pending sessions and adds filtered index', () => {
+  assert.match(migration18, /status='pending'/);
+  assert.match(migration18, /expires_at <= NOW\(\)/);
+  assert.match(migration18, /payment_sessions_pending_expiry_idx/);
 });
