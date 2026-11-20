@@ -51,3 +51,17 @@ See [AGENTS.md](AGENTS.md). The complete roadmap is authorized and is being impl
 ## Secrets
 
 Never commit Telegram tokens, database URLs, encryption keys, or payment credentials. Use environment variables or host secret settings.
+
+### Telegram Stars checkout setup (active)
+
+1. In the Main Bot, configure Stars price maps using Telegram Stars amounts (not INR paise). The IDs are database IDs from `/plans`, `/paid_links`, and `/batch_links`:
+   ```
+   /payment_set telegram_stars||{"stars_prices":{"premium":{"1":120},"paid_file":{"2":25},"paid_batch":{"1":150}}}
+   ```
+2. Enable checkout:
+   ```
+   /payment_enable telegram_stars
+   ```
+3. Users can open `/premium`, pay a paid-file link with `/paid CODE`, or pay a batch link with `/batch CODE`. The invoice is issued in Telegram Stars (XTR).
+
+Checkout payloads are HMAC-signed with the issuing bot token; pre-checkout validates the Telegram user, session, amount, currency, and expiry. Telegram successful-payment updates are checked against the saved session, recorded idempotently, then fulfilled. The recovery worker retries verified payments if fulfillment temporarily fails. The other gateway names (FamPay, Stripe, Crypto) remain disabled until their provider adapters are implemented.
