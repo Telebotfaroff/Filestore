@@ -110,6 +110,7 @@ All payment methods remain disabled. Payment sessions and transaction tables are
 
 - `/paid_link_create FILE_CODE|PRICE|CURRENCY|expiry_days(optional)` — create a paid link, e.g. `/paid_link_create ABC123|149|INR|7`.
 - `/paid_links` — list paid links and purchase request counts.
+- `/paid_requests` — pending requests with user IDs and copy-ready confirmation commands.
 - `/paid_link_disable <link_code>` — disable link.
 - `/paid_confirm <link_code> <user_id>` — manually confirm payment after independently checking it; this grants access and sends the user a notification.
 
