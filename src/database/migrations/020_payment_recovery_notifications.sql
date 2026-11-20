@@ -1,5 +1,6 @@
 -- M23: persistent retry queue for customer notifications after payment recovery.
 ALTER TABLE payment_transactions
+  ADD COLUMN IF NOT EXISTS recovery_notification_required BOOLEAN NOT NULL DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS recovery_notification_sent_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS recovery_notification_claimed_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS recovery_notification_attempts INTEGER NOT NULL DEFAULT 0,
