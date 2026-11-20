@@ -72,12 +72,13 @@ export function createDeliveryBotManager(config, logger, pool) {
       const runtime = createDeliveryBot(config, logger, pool, token);
       if (!runtime) throw new Error('Delivery runtime could not be created');
       await runtime.bot.launch({ handleSignals: false });
-      runtimes.set(id, { runtime, botId: record.telegram_bot_id, username: record.username });
+      runtimes.set(id, { runtime, botId: record.telegram_bot_id, username: record.username, paused: false });
       if (record.role === 'primary') await runtime.startWorker();
       await pool.query("UPDATE delivery_bots SET runtime_status = 'running', last_health_at = NOW(), last_error = NULL, updated_at = NOW() WHERE id = $1", [record.id]);
       logger.info({ botId: record.telegram_bot_id, username: record.username }, 'Delivery Bot runtime started');
       return runtimes.get(id);
     } catch (error) {
+      stopRuntime(record.id);
       await pool.query("UPDATE delivery_bots SET runtime_status = 'error', last_error = $2, updated_at = NOW() WHERE id = $1", [error.message.slice(0, 500), record.id]);
       logger.error({ botId: record.telegram_bot_id, error: error.message }, 'Delivery Bot failed to start');
       return null;
@@ -91,6 +92,8 @@ export function createDeliveryBotManager(config, logger, pool) {
       const started = await startRuntime(record);
       if (!started) return false;
     }
+    const selectedRuntime = runtimes.get(String(id));
+    if (selectedRuntime?.paused) selectedRuntime.paused = false;
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -135,6 +138,7 @@ export function createDeliveryBotManager(config, logger, pool) {
     if (!record) return false;
     const runtime = runtimes.get(String(id));
     runtime?.runtime.stopWorker();
+    if (runtime) runtime.paused = true;
     await pool.query("UPDATE delivery_bots SET runtime_status = 'paused', updated_at = NOW() WHERE id = $1", [id]);
     if (record.role === 'primary') await ensurePrimary();
     return true;
@@ -148,6 +152,8 @@ export function createDeliveryBotManager(config, logger, pool) {
     const runtime = await startRuntime(refreshed);
     if (!runtime) return false;
     await pool.query("UPDATE delivery_bots SET runtime_status = 'running', last_health_at = NOW(), updated_at = NOW() WHERE id = $1", [id]);
+    const runtimeEntry = runtimes.get(String(id));
+    if (runtimeEntry) runtimeEntry.paused = false;
     if (record.role === 'primary') runtime.runtime.startWorker();
     await ensurePrimary();
     return true;
@@ -194,6 +200,7 @@ export function createDeliveryBotManager(config, logger, pool) {
 
   async function healthCheck() {
     for (const [id, entry] of runtimes) {
+      if (entry.paused) continue;
       try {
         await entry.runtime.bot.telegram.getMe();
         await pool.query("UPDATE delivery_bots SET runtime_status = 'running', last_health_at = NOW(), last_error = NULL WHERE id = $1", [id]);
