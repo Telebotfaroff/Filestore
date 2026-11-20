@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 const METHODS = new Set(['fampay', 'telegram_stars', 'stripe', 'crypto']);
-const PURPOSES = new Set(['premium', 'paid_file']);
+const PURPOSES = new Set(['premium', 'paid_file', 'paid_batch']);
 
 function safeHash(value) {
   return createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
@@ -17,16 +17,18 @@ export function validatePaymentSessionInput(input) {
   if (!Number.isSafeInteger(Number(input.userId)) || Number(input.userId) <= 0) throw new Error('Invalid Telegram user ID.');
   if (input.purpose === 'premium' && (!Number.isSafeInteger(Number(input.planId)) || Number(input.planId) <= 0)) throw new Error('Premium session requires planId.');
   if (input.purpose === 'paid_file' && (!Number.isSafeInteger(Number(input.fileId)) || Number(input.fileId) <= 0)) throw new Error('Paid-file session requires fileId.');
+  if (input.purpose === 'paid_file' && (!Number.isSafeInteger(Number(input.paidLinkId)) || Number(input.paidLinkId) <= 0)) throw new Error('Paid-file session requires paidLinkId.');
+  if (input.purpose === 'paid_batch' && (!Number.isSafeInteger(Number(input.batchLinkId)) || Number(input.batchLinkId) <= 0)) throw new Error('Paid-batch session requires batchLinkId.');
   return { ...input, amountMinor: Number(input.amountMinor), currency };
 }
 
 export async function createPaymentSession(pool, input) {
   const normalized = validatePaymentSessionInput(input);
   const { rows } = await pool.query(
-    `INSERT INTO payment_sessions (user_telegram_id, method, purpose, plan_id, file_id, expected_amount_minor, currency, expires_at, metadata)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+    `INSERT INTO payment_sessions (user_telegram_id, method, purpose, plan_id, file_id, batch_link_id, paid_link_id, expected_amount_minor, currency, expires_at, metadata)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
      RETURNING id, user_telegram_id, method, purpose, plan_id, file_id, expected_amount_minor, currency, status, expires_at, created_at`,
-    [normalized.userId, normalized.method, normalized.purpose, normalized.planId ?? null, normalized.fileId ?? null, normalized.amountMinor, normalized.currency, normalized.expiresAt, JSON.stringify(normalized.metadata ?? {})],
+    [normalized.userId, normalized.method, normalized.purpose, normalized.planId ?? null, normalized.fileId ?? null, normalized.batchLinkId ?? null, normalized.paidLinkId ?? null, normalized.amountMinor, normalized.currency, normalized.expiresAt, JSON.stringify(normalized.metadata ?? {})],
   );
   return rows[0];
 }
@@ -94,7 +96,7 @@ export async function recordVerifiedPayment(pool, payment) {
   try {
     await client.query('BEGIN');
     const sessionResult = await client.query(
-      'SELECT id, user_telegram_id, method, purpose, plan_id, file_id, expected_amount_minor, currency, status, expires_at FROM payment_sessions WHERE id = $1 FOR UPDATE',
+      'SELECT id, user_telegram_id, method, purpose, plan_id, file_id, batch_link_id, paid_link_id, expected_amount_minor, currency, status, expires_at FROM payment_sessions WHERE id = $1 FOR UPDATE',
       [sessionId],
     );
     if (!sessionResult.rowCount) throw new Error('Payment session not found.');
@@ -102,11 +104,13 @@ export async function recordVerifiedPayment(pool, payment) {
     const sessionMatches = String(session.user_telegram_id) === String(userId) && session.method === method &&
       session.purpose === purpose && Number(session.expected_amount_minor) === amountMinor && session.currency === currency &&
       (session.plan_id == null ? payment.planId == null : String(session.plan_id) === String(payment.planId)) &&
-      (session.file_id == null ? payment.fileId == null : String(session.file_id) === String(payment.fileId));
+      (session.file_id == null ? payment.fileId == null : String(session.file_id) === String(payment.fileId)) &&
+      (session.batch_link_id == null ? payment.batchLinkId == null : String(session.batch_link_id) === String(payment.batchLinkId)) &&
+      (session.paid_link_id == null ? payment.paidLinkId == null : String(session.paid_link_id) === String(payment.paidLinkId));
     if (!sessionMatches) throw new Error('Verified payment does not match the checkout session.');
     if (new Date(session.expires_at) <= new Date() && session.status === 'pending') throw new Error('Payment session expired.');
     const prior = await client.query(
-      'SELECT id, user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, amount_minor, currency, status, session_id, verified_at FROM payment_transactions WHERE method = $1 AND external_transaction_id = $2 LIMIT 1 FOR UPDATE',
+      'SELECT id, user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, batch_link_id, paid_link_id, amount_minor, currency, status, session_id, verified_at FROM payment_transactions WHERE method = $1 AND external_transaction_id = $2 LIMIT 1 FOR UPDATE',
       [method, transactionId],
     );
     if (prior.rowCount) {
@@ -115,17 +119,19 @@ export async function recordVerifiedPayment(pool, payment) {
         Number(tx.amount_minor) === amountMinor && tx.currency === currency &&
         String(tx.session_id) === String(sessionId) &&
         (tx.plan_id == null ? payment.planId == null : String(tx.plan_id) === String(payment.planId)) &&
-        (tx.file_id == null ? payment.fileId == null : String(tx.file_id) === String(payment.fileId));
+        (tx.file_id == null ? payment.fileId == null : String(tx.file_id) === String(payment.fileId)) &&
+        (tx.batch_link_id == null ? payment.batchLinkId == null : String(tx.batch_link_id) === String(payment.batchLinkId)) &&
+        (tx.paid_link_id == null ? payment.paidLinkId == null : String(tx.paid_link_id) === String(payment.paidLinkId));
       if (!matches) throw new Error('Transaction ID already exists but does not match this payment.');
       await client.query('COMMIT');
       return { duplicate: true, transaction: tx };
     }
     if (session.status !== 'pending') throw new Error('Payment session is no longer pending.');
     const inserted = await client.query(
-      `INSERT INTO payment_transactions (user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, amount_minor, currency, status, session_id, verified_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'verified',$9,NOW())
-       RETURNING id, user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, amount_minor, currency, status, session_id, verified_at`,
-      [userId, method, transactionId, purpose, payment.planId ?? null, payment.fileId ?? null, amountMinor, currency, sessionId],
+      `INSERT INTO payment_transactions (user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, batch_link_id, paid_link_id, amount_minor, currency, status, session_id, verified_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'verified',$11,NOW())
+       RETURNING id, user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, batch_link_id, paid_link_id, amount_minor, currency, status, session_id, verified_at`,
+      [userId, method, transactionId, purpose, payment.planId ?? null, payment.fileId ?? null, payment.batchLinkId ?? null, payment.paidLinkId ?? null, amountMinor, currency, sessionId],
     );
     await client.query(
       `UPDATE payment_sessions SET status = 'verified', provider_session_id = $2, updated_at = NOW() WHERE id = $1`,
