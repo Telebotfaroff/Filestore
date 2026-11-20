@@ -2,11 +2,11 @@ import { loadConfig } from './config/env.js';
 import { createLogger } from './logger.js';
 import { createDatabasePool, closeDatabasePool } from './database/pool.js';
 import { createMainBot } from './bot/main.js';
-import { createDeliveryBot } from './delivery/bot.js';
+import { createDeliveryBotManager } from './delivery/manager.js';
 
 let shutdownStarted = false;
 let mainBot;
-let deliveryRuntime;
+let deliveryManager;
 
 async function main() {
   const config = loadConfig();
@@ -20,35 +20,31 @@ async function main() {
   });
   if (migrations.rowCount === 0) throw new Error('No database migrations found. Run npm run migrate first.');
   const requiredTables = await pool.query(
-    "SELECT to_regclass('users') AS users, to_regclass('files') AS files, to_regclass('storage_channels') AS storage_channels, to_regclass('file_ingest_requests') AS file_ingest_requests, to_regclass('delivery_jobs') AS delivery_jobs",
+    "SELECT to_regclass('users') AS users, to_regclass('files') AS files, to_regclass('storage_channels') AS storage_channels, to_regclass('file_ingest_requests') AS file_ingest_requests, to_regclass('delivery_jobs') AS delivery_jobs, to_regclass('delivery_bots') AS delivery_bots",
   );
   if (Object.values(requiredTables.rows[0]).some((tableName) => tableName === null)) {
     throw new Error('Required FileStore tables are missing. Run npm run migrate first.');
   }
 
-  mainBot = createMainBot(config, logger, pool);
-  deliveryRuntime = createDeliveryBot(config, logger, pool);
-  registerShutdown(logger);
+  deliveryManager = createDeliveryBotManager(config, logger, pool);
+  mainBot = createMainBot({ ...config, deliveryManager }, logger, pool);
+  registerShutdown();
 
-  await mainBot.launch();
+  await mainBot.launch({ handleSignals: false });
   logger.info({ nodeEnv: config.nodeEnv, adminCount: config.adminIds.length }, 'FileStore Main Bot started');
 
-  if (deliveryRuntime) {
-    await deliveryRuntime.bot.launch();
-    await deliveryRuntime.startWorker();
-    logger.info('Delivery Bot started in administrator-only test mode');
-  } else {
-    logger.info('Delivery Bot is not configured; set DELIVERY_BOT_TOKEN to enable it');
-  }
+  await deliveryManager.startAll();
+  logger.info('Delivery Bot manager initialized (admin-only testing until access controls are completed)');
 }
 
 async function shutdown(signal) {
   if (shutdownStarted) return;
   shutdownStarted = true;
   console.info('[FileStore] Shutdown requested:', signal);
-  deliveryRuntime?.stopWorker();
+  try { await deliveryManager?.stopAll(); } catch (error) {
+    console.error('[FileStore] Delivery runtimes shutdown failed:', error.message);
+  }
   try { mainBot?.stop(signal); } catch {}
-  try { deliveryRuntime?.bot.stop(signal); } catch {}
   try {
     await closeDatabasePool();
     console.info('[FileStore] Database pool closed');
@@ -58,7 +54,7 @@ async function shutdown(signal) {
   }
 }
 
-function registerShutdown(logger) {
+function registerShutdown() {
   process.once('SIGINT', () => void shutdown('SIGINT'));
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
 }
