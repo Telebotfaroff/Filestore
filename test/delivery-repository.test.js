@@ -55,3 +55,25 @@ test('lease renewal reports false when lease ownership is lost', async () => {
   const { renewDeliveryLease } = await import('../src/delivery/repository.js');
   assert.equal(await renewDeliveryLease(pool, 42, 'bot-A'), false);
 });
+
+import { finishDelivery } from '../src/delivery/repository.js';
+
+test('finish delivery refuses to write completion when worker lease is lost', async () => {
+  const statements = [];
+  const client = { query: async (sql, args) => {
+    const query = String(sql).trim();
+    statements.push({ query, args });
+    if (query.includes('SELECT id FROM delivery_jobs WHERE id =')) return { rowCount: 0, rows: [] };
+    return { rows: [] };
+  }, release: () => {} };
+  const pool = { connect: async () => client };
+  await assert.rejects(
+    finishDelivery(pool, { jobId: 5, itemId: 6, attemptId: 7, requesterTelegramId: 8 }, 9, 'bot-A'),
+    /Delivery lease lost/,
+  );
+  assert.equal(statements[0].query, 'BEGIN');
+  assert.match(statements[1].query, /locked_by = \$2 AND locked_until > NOW\(\) FOR UPDATE/);
+  assert.deepEqual(statements[1].args, [5, 'bot-A']);
+  assert.equal(statements.some(x => x.query.includes('UPDATE delivery_attempts SET status =')), false);
+  assert.equal(statements.at(-1).query, 'ROLLBACK');
+});
