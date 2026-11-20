@@ -7,6 +7,14 @@ import {
 } from './repository.js';
 import { classifyDeliverySendError } from './error-classifier.js';
 
+async function notifyRequester(bot, userId, status) {
+  const text = status === 'uncertain'
+    ? 'FileStore: delivery outcome is uncertain. Please check your chat before requesting the file again.'
+    : 'FileStore: delivery failed. Please check the bot status or retry later.';
+  try { await bot.telegram.sendMessage(userId, text); } catch {}
+}
+
+
 export function createDeliveryWorker(bot, pool, logger, identity) {
   let timer;
   let busy = false;
@@ -26,6 +34,7 @@ export function createDeliveryWorker(bot, pool, logger, identity) {
       const source = await getDeliverySource(pool, claim.fileId);
       if (!source) {
         await failDelivery(pool, claim, 'failed', 'SOURCE_UNAVAILABLE', 'Indexed file has no enabled storage source.');
+        await notifyRequester(bot, claim.requesterTelegramId, 'failed');
         return;
       }
 
@@ -35,6 +44,7 @@ export function createDeliveryWorker(bot, pool, logger, identity) {
       } catch (error) {
         const status = classifyDeliverySendError(error);
         await failDelivery(pool, claim, status, error.response?.error_code ?? error.code ?? null, error.response?.description ?? error.message);
+        await notifyRequester(bot, claim.requesterTelegramId, status);
         logger.warn({ jobId: claim.jobId, status, error: error.message }, 'Delivery send failed');
         return;
       }
@@ -46,6 +56,7 @@ export function createDeliveryWorker(bot, pool, logger, identity) {
         // Telegram accepted the copy but the database confirmation failed: never retry blindly.
         try {
           await failDelivery(pool, claim, 'uncertain', 'DB_CONFIRMATION_FAILED', error.message);
+          await notifyRequester(bot, claim.requesterTelegramId, 'uncertain');
         } catch (markError) {
           logger.error({ jobId: claim.jobId, error: markError.message }, 'Could not mark delivery outcome uncertain');
         }
