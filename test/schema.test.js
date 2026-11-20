@@ -76,7 +76,7 @@ test('paid file links and purchase rows have unique user-link records and lifecy
 
 test('paid batch links support ordered items and unique user purchases', () => {
   for (const table of ['paid_batch_links', 'paid_batch_items', 'paid_batch_purchases']) assert.match(migration11, new RegExp('CREATE TABLE IF NOT EXISTS ' + table));
-  assert.match(migration11, /UNIQUE \(batch_link_id, file_id\)/);
+  assert.match(migration11, /PRIMARY KEY \(batch_link_id, file_id\)/);
   assert.match(migration11, /UNIQUE \(batch_link_id, user_telegram_id\)/);
   assert.match(migration11, /position INTEGER NOT NULL/);
 });
