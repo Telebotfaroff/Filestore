@@ -33,3 +33,31 @@ test('checkpoint provider remains blocked until a verifier is configured', async
   assert.equal(result.blocked, true);
   assert.equal(result.reason, 'provider_verification_not_configured');
 });
+
+test('active checkpoint grants access until expiry', async () => {
+  const pool = {
+    query: async (sql) => {
+      if (sql.includes('FROM shortener_providers')) return { rowCount: 2, rows: [{ id: 4, name: 'A', verification_mode: 'provider_api' }, { id: 5, name: 'B', verification_mode: 'callback' }] };
+      if (sql.includes('FROM user_checkpoint_state')) return { rowCount: 1, rows: [{ last_provider_id: 4, checkpoint_expires_at: new Date(Date.now() + 60_000) }] };
+      throw new Error('Unexpected query');
+    },
+  };
+  const result = await getCheckpointRequirement(pool, 1234);
+  assert.equal(result.required, false);
+  assert.equal(result.reason, 'checkpoint_active');
+});
+
+test('expired checkpoint advances to the next provider in priority order', async () => {
+  const pool = {
+    query: async (sql) => {
+      if (sql.includes('FROM shortener_providers')) return { rowCount: 2, rows: [{ id: 4, name: 'A', verification_mode: 'provider_api' }, { id: 5, name: 'B', verification_mode: 'callback' }] };
+      if (sql.includes('FROM user_checkpoint_state')) return { rowCount: 1, rows: [{ last_provider_id: 4, checkpoint_expires_at: new Date(Date.now() - 60_000) }] };
+      throw new Error('Unexpected query');
+    },
+  };
+  const result = await getCheckpointRequirement(pool, 1234);
+  assert.equal(result.required, true);
+  assert.equal(result.provider.id, 5);
+  assert.equal(result.step, 2);
+  assert.equal(result.total, 2);
+});
