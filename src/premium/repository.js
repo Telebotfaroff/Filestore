@@ -28,6 +28,7 @@ export async function grantPremiumMembership(pool, userId, planId, daysOverride,
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [userId]);
     await client.query('INSERT INTO users (telegram_id) VALUES ($1) ON CONFLICT (telegram_id) DO NOTHING', [userId]);
     const planResult = await client.query('SELECT id, name, duration_days FROM premium_plans WHERE id = $1 AND is_enabled = TRUE FOR UPDATE', [planId]);
     if (!planResult.rowCount) throw new Error('Plan not found or disabled.');
