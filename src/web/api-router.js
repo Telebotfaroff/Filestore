@@ -1,3 +1,4 @@
+import { getOwnerLinkAnalytics } from './link-analytics-repository.js';
 import { listPanelUsers, listPanelPremiumMembers } from './user-management-repository.js';
 import {
   issueOrRegenerateAccessToken,
@@ -409,6 +410,7 @@ export async function handlePanelApiRequest(req, res, state, logger) {
           linkType: r.link_type,
           title: r.title || r.primary_file_name || r.link_code,
           itemCount: Number(r.item_count ?? 1),
+          views: Number(r.view_count ?? 0),
           isEnabled: Boolean(r.is_enabled),
           createdAt: r.created_at,
           url: botUsername ? buildShareableUrl(botUsername, r.link_code) : null,
@@ -419,6 +421,7 @@ export async function handlePanelApiRequest(req, res, state, logger) {
           code: r.public_code,
           title: r.file_name || r.public_code,
           priceMinor: Number(r.price_minor ?? 0),
+          views: Number(r.view_count ?? 0),
           currency: r.currency || 'INR',
           isEnabled: Boolean(r.is_enabled),
           expiresAt: r.expires_at,
@@ -431,6 +434,7 @@ export async function handlePanelApiRequest(req, res, state, logger) {
           code: r.public_code,
           title: r.title || r.public_code,
           itemCount: Number(r.item_count ?? 0),
+          views: Number(r.view_count ?? 0),
           priceMinor: Number(r.price_minor ?? 0),
           currency: r.currency || 'INR',
           isEnabled: Boolean(r.is_enabled),
@@ -819,6 +823,15 @@ export async function handlePanelApiRequest(req, res, state, logger) {
     if (pathname.startsWith('/api/panel/owner/')) {
       if (!auth.isOwner) {
         return sendJson(res, 403, { error: 'Restricted to the platform owner.' });
+      }
+
+      if (method === 'GET' && pathname === '/api/panel/owner/link-analytics') {
+        const rows = await getOwnerLinkAnalytics(pool, 100);
+        return sendJson(res, 200, { total: rows.length, rows: rows.map((r) => ({
+          id: Number(r.id), code: r.code, title: r.title, type: r.type, kind: r.kind,
+          ownerId: r.created_by == null ? null : String(r.created_by), views: Number(r.views ?? 0),
+          uniqueViewers: Number(r.unique_viewers ?? 0), lastOpened: r.last_opened, viewers: r.viewers ?? [],
+        })) });
       }
 
       if (method === 'GET' && pathname === '/api/panel/owner/dashboard') {
