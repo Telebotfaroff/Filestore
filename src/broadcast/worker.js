@@ -8,11 +8,11 @@ export function createCreatorBroadcastWorker(telegram,pool,logger,deliveryBotId,
  const errorCode=e=>Number(e?.response?.error_code??e?.code??0);
  const isTransient=e=>errorCode(e)===429||errorCode(e)>=500||!errorCode(e);
  async function sendPayload(uid,job){
-  if(!job.media_file_id){await telegram.sendMessage(uid,job.message_text,{disable_web_page_preview:true});return;}
+  if(!job.media_file_id){await telegram.sendMessage(uid,job.message_text,{disable_web_page_preview:true,...(Array.isArray(job.buttons)&&job.buttons.length?{reply_markup:{inline_keyboard:job.buttons}}:{})});return;}
   if(!sourceTelegram)throw new Error('Media source bot is unavailable.');
   const fileUrl=await sourceTelegram.getFileLink(job.media_file_id);
   const caption=job.caption||job.message_text||undefined;
-  const opts=caption?{caption}:{};
+  const opts=caption?{caption}:{};if(Array.isArray(job.buttons)&&job.buttons.length)opts.reply_markup={inline_keyboard:job.buttons};
   if(job.media_type==='photo')return telegram.sendPhoto(uid,fileUrl,opts);
   if(job.media_type==='video')return telegram.sendVideo(uid,fileUrl,opts);
   if(job.media_type==='document')return telegram.sendDocument(uid,fileUrl,opts);
