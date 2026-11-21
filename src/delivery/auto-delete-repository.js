@@ -57,3 +57,17 @@ export async function listFailedScheduledDeletions(pool, limit = 15) {
   );
   return result.rows;
 }
+
+export async function getNextScheduledDeletionDelay(pool, identity, maxDelayMs = 60_000) {
+  const result = await pool.query(
+    `SELECT MIN(GREATEST(delete_at, COALESCE(retry_after, delete_at))) AS next_at
+     FROM scheduled_message_deletions
+     WHERE delivery_bot_identity = $1 AND status IN ('pending', 'processing')
+       AND (status = 'pending' OR locked_until IS NULL OR locked_until <= NOW())`,
+    [identity],
+  );
+  const nextAt = result.rows[0]?.next_at;
+  if (!nextAt) return maxDelayMs;
+  const delta = new Date(nextAt).getTime() - Date.now();
+  return Math.max(250, Math.min(maxDelayMs, Number.isFinite(delta) ? delta : maxDelayMs));
+}
