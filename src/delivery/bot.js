@@ -51,7 +51,10 @@ async function logForceSubEvent(pool, logger, eventType, userId, result) {
 
 
 async function enforceForceSub(ctx, telegram, pool, userId, logger, promptSuffix = 'Then tap ✅ I Joined — Verify.', ownerId = null) {
-  const forceSub = await checkForceSubscription(telegram, pool, userId, ownerId);
+  // Delivery bots enforce creator-owned channels only. Main-bot owner channels are not delivery requirements.
+  const forceSub = ownerId === null || ownerId === undefined
+    ? { enabled: false, passed: true, missing: [] }
+    : await checkForceSubscription(telegram, pool, userId, ownerId);
   await logForceSubEvent(pool, logger, forceSub.passed ? 'force_sub_verified' : 'force_sub_blocked', userId, forceSub);
   if (!forceSub.passed) {
     const labels = forceSub.missing.slice(0, 20).map((channel) => `• 📢 <b>${escapeHtml(channel.title ?? channel.telegram_chat_id)}</b>`).join('\n');
