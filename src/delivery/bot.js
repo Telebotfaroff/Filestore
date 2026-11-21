@@ -7,6 +7,7 @@ import { createDeliveryWorker } from './worker.js';
 import { createAutoDeleteWorker } from './auto-delete-worker.js';
 import { checkForceSubscription } from '../access/force-subscription.js';
 import { upsertTelegramUser } from '../access/user-repository.js';
+import { trackDeliveryBotUser } from '../web/user-management-repository.js';
 import { evaluateAccess } from '../access/access-manager.js';
 import { getCheckpointRequirement, createCheckpointChallenge, applyVerifiedCheckpoint } from '../access/checkpoint-engine.js';
 import { getPaidFileLink, requestPaidFilePurchase, hasPaidFileEntitlement } from '../paid-files/repository.js';
@@ -196,6 +197,10 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
   }
 
   bot.use(async (ctx, next) => {
+    if (ctx.from && workerScope.deliveryBotId) {
+      try { await trackDeliveryBotUser(pool, workerScope.deliveryBotId, ctx.from); }
+      catch (error) { logger.warn({ userId: ctx.from.id, error: error.message }, 'Delivery bot user tracking failed'); }
+    }
     if (isAdmin(ctx.from?.id, config.adminIds)) return next();
     const command = ctx.message?.text?.trim().split(/\s+/)[0]?.split('@')[0] ?? '';
     const cbData = ctx.callbackQuery?.data ?? '';
