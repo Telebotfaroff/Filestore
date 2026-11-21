@@ -3,6 +3,7 @@ import { isAdmin } from '../bot/admin-guard.js';
 import { getIndexedFile } from '../storage/file-query.js';
 import { createSingleDeliveryJob, createBatchDeliveryJob, getDeliveryStats } from './repository.js';
 import { getPaidBatch, requestPaidBatchPurchase, getBatchItems } from '../paid-files/batch-repository.js';
+import { recordLinkOpen } from '../web/link-analytics-repository.js';
 import { createDeliveryWorker } from './worker.js';
 import { createAutoDeleteWorker } from './auto-delete-worker.js';
 import { checkForceSubscription } from '../access/force-subscription.js';
@@ -525,6 +526,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
     await upsertTelegramUser(pool, ctx.from);
     const link = await getPaidFileLink(pool, linkCode);
     if (!link || !link.is_active) return ctx.reply('⚠️ Paid link is invalid, expired, or disabled.');
+    await recordLinkOpen(pool, 'paid_file', link.id, ctx.from.id, workerScope.deliveryBotId).catch((error) => logger.warn({ error: error.message }, 'Paid link view tracking failed'));
     const creatorOwnerScope = resolveCreatorScope(link.created_by);
     const forceSub = await enforceForceSub(ctx, ctx.telegram, pool, ctx.from.id, logger, 'Then use /verify and retry.', creatorOwnerScope);
     if (!forceSub.passed) return;
@@ -586,6 +588,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
     await upsertTelegramUser(pool, ctx.from);
     const batch = await getPaidBatch(pool, code);
     if (!batch || !batch.is_active) return ctx.reply('⚠️ Batch link invalid, expired, or disabled.');
+    await recordLinkOpen(pool, 'paid_batch', batch.id, ctx.from.id, workerScope.deliveryBotId).catch((error) => logger.warn({ error: error.message }, 'Paid batch view tracking failed'));
     const creatorOwnerScope = resolveCreatorScope(batch.created_by);
     const forceSub = await enforceForceSub(ctx, ctx.telegram, pool, ctx.from.id, logger, 'Then verify and retry.', creatorOwnerScope);
     if (!forceSub.passed) return;
@@ -736,6 +739,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
         if (!shareLink.is_enabled) {
           return ctx.reply('⏸ This share link is currently disabled.');
         }
+        await recordLinkOpen(pool, 'share', shareLink.id, ctx.from.id, workerScope.deliveryBotId).catch((error) => logger.warn({ error: error.message }, 'Share link view tracking failed'));
         const activeItems = shareLink.items.filter((item) => item.file_status === 'active');
         if (!activeItems.length) {
           return ctx.reply('📭 No active media files remain in this share link.');
