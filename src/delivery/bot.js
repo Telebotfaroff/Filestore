@@ -179,6 +179,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
   let botNumericId = null;
   const workerScope = {
     deliveryBotId: botMeta.deliveryBotId ?? null,
+    ownerTelegramId: botMeta.ownerTelegramId ?? null,
     includeGlobal: botMeta.includeGlobal !== false,
   };
   const botOwnerScope = botMeta.ownerTelegramId ?? null;
