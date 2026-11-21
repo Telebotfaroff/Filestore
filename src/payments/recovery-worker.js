@@ -1,11 +1,14 @@
 import { applyVerifiedPayment } from './fulfillment-repository.js';
 import { notifyCreatorSale } from '../wallet/notifications.js';
 
+const RECOVERY_BATCH = 25;
 const NOTIFICATION_BATCH = 25;
 const MAX_NOTIFICATION_ATTEMPTS = 10;
+const MIN_IDLE_DELAY_MS = 1_000;
+const MAX_IDLE_DELAY_MS = 60_000;
 
 async function notifyRecoveredPayments(pool, logger, telegram) {
-  if (!telegram) return;
+  if (!telegram) return 0;
   const claimed = await pool.query(
     `WITH claimed AS (
        SELECT id FROM payment_transactions
@@ -46,21 +49,35 @@ async function notifyRecoveredPayments(pool, logger, telegram) {
       logger.warn({ transactionId: tx.id, error: safeError }, 'Recovered payment notification failed');
     }
   }
+  return claimed.rows.length;
 }
 
 export function startPaymentRecoveryWorker(pool, logger, telegram = null, intervalMs = 30_000, adminIds = []) {
   let stopped = false;
   let running = false;
+  let timer = null;
+  let idleDelayMs = MIN_IDLE_DELAY_MS;
+  const maxIdleDelayMs = Math.max(MIN_IDLE_DELAY_MS, Math.min(MAX_IDLE_DELAY_MS, Number(intervalMs) || MAX_IDLE_DELAY_MS));
+
+  function schedule(delayMs) {
+    if (stopped) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => void tick(), delayMs);
+    timer.unref?.();
+  }
+
   async function tick() {
     if (stopped || running) return;
     running = true;
+    let activity = 0;
     try {
       const pending = await pool.query(
         `SELECT id,user_telegram_id,purpose,method,recovery_attempts
          FROM payment_transactions
          WHERE status='verified' AND recovery_next_at <= NOW()
-         ORDER BY recovery_next_at ASC, verified_at ASC NULLS FIRST, id ASC LIMIT 25`,
+         ORDER BY recovery_next_at ASC, verified_at ASC NULLS FIRST, id ASC LIMIT ${RECOVERY_BATCH}`,
       );
+      activity += pending.rows.length;
       for (const tx of pending.rows) {
         if (stopped) break;
         try {
@@ -85,13 +102,26 @@ export function startPaymentRecoveryWorker(pool, logger, telegram = null, interv
           logger.warn({ transactionId: tx.id, attempts, retryInSeconds: delaySeconds, error: safeError }, 'Verified payment recovery attempt failed');
         }
       }
-      await notifyRecoveredPayments(pool, logger, telegram);
+      activity += await notifyRecoveredPayments(pool, logger, telegram);
     } catch (error) {
       logger.error({ error: error.message }, 'Payment recovery scan failed');
-    } finally { running = false; }
+    } finally {
+      running = false;
+      if (activity > 0) {
+        idleDelayMs = MIN_IDLE_DELAY_MS;
+        schedule(MIN_IDLE_DELAY_MS);
+      } else {
+        idleDelayMs = Math.min(maxIdleDelayMs, Math.max(MIN_IDLE_DELAY_MS, idleDelayMs * 2));
+        schedule(idleDelayMs);
+      }
+    }
   }
-  const timer = setInterval(() => void tick(), intervalMs);
-  timer.unref?.();
+
   void tick();
-  return { stop() { stopped = true; clearInterval(timer); } };
+  return {
+    stop() {
+      stopped = true;
+      clearTimeout(timer);
+    },
+  };
 }
