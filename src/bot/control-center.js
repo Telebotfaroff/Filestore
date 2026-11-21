@@ -587,6 +587,7 @@ export function buildPublicMenuKeyboard() {
 export function registerControlCenter(bot, config, logger, pool, options = {}) {
   const deliveryManager = config.deliveryManager;
   const pendingPrompts = new Map();
+  const broadcastDrafts = new Map();
   const shortenerDrafts = new Map();
 
   function isOwnerAdmin(ctx) {
@@ -2934,6 +2935,44 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     await showAutoDelete(ctx, true);
   });
 
+  function parseBroadcastContent(raw) {
+    const lines=String(raw??'').split(/\r?\n/),buttons=[],body=[];
+    for(const line of lines){
+      const m=line.match(/^Button:\s*(.{1,40}?)\s*\|\s*(https:\/\/\S+)\s*$/i);
+      if(m){if(buttons.length>=8)throw new Error('Maximum 8 URL buttons allowed.');buttons.push([{text:m[1].trim(),url:m[2].trim()}]);}
+      else body.push(line);
+    }
+    return {body:body.join('\n').trim(),buttons};
+  }
+  async function confirmBroadcastDraft(ctx) {
+    const draft=broadcastDrafts.get(String(ctx.from.id));
+    if(!draft)return safeAnswer(ctx,'Broadcast preview expired. Please compose again.',true);
+    try {
+      if(draft.kind==='owner'){
+        if(!isOwnerAdmin(ctx))throw new Error('Owner permission required.');
+        const bots=await deliveryManager.list(draft.ownerTelegramId);
+        if(!bots.some(b=>Number(b.id)===draft.deliveryBotId&&b.is_enabled))throw new Error('Selected creator bot is no longer enabled.');
+      } else {
+        if(isOwnerAdmin(ctx))throw new Error('Creator permission required.');
+        const bots=await deliveryManager.list(Number(ctx.from.id));
+        if(!bots.some(b=>Number(b.id)===draft.deliveryBotId&&b.is_enabled))throw new Error('Your delivery bot is no longer enabled.');
+      }
+      const created=await createCreatorBroadcast(pool,{...draft,createdBy:ctx.from.id});
+      broadcastDrafts.delete(String(ctx.from.id));
+      await safeAnswer(ctx,'Broadcast queued!');
+      const history=draft.kind==='owner'?'cc:owner_broadcast':'cc:broadcast_history';
+      return renderView(ctx,'✅ <b>Broadcast queued</b>\n━━━━━━━━━━━━━━━━━━\n📋 Campaign #'+created.id+'\n👥 Recipients: '+created.totalRecipients,{inline_keyboard:[[{text:'📋 Campaigns',callback_data:history}]]},true,true,{parse_mode:'HTML'});
+    } catch(e) { await safeAnswer(ctx,e.message,true); }
+  }
+  bot.action('cc:broadcast_confirm',confirmBroadcastDraft);
+  bot.action('cc:broadcast_cancel_draft',async(ctx)=>{broadcastDrafts.delete(String(ctx.from.id));await safeAnswer(ctx,'Draft cancelled.');return renderView(ctx,'🛑 Broadcast draft cancelled.',{inline_keyboard:[[{text:'📢 Broadcast Menu',callback_data:'cc:broadcast'}]]},true,true);});
+  async function showBroadcastPreview(ctx,draft){
+    broadcastDrafts.set(String(ctx.from.id),draft);
+    const content=draft.caption||draft.messageText||'(media attachment)';
+    const type=draft.mediaType?('Media: '+draft.mediaType):'Text message';
+    return renderView(ctx,'👀 <b>Broadcast Preview</b>\n━━━━━━━━━━━━━━━━━━\n'+type+'\n\n'+escapeHtml(content.slice(0,1800))+'\n\n👥 Audience snapshot will be taken when you confirm.\n\nConfirm to queue this campaign?',{inline_keyboard:[[{text:'✅ Confirm & Queue',callback_data:'cc:broadcast_confirm'}],[{text:'✖ Cancel',callback_data:'cc:broadcast_cancel_draft'}]]},false,true,{parse_mode:'HTML'});
+  }
+
   // Platform owner broadcast: select creator, then their own delivery bot
   bot.action('cc:owner_broadcast',async(ctx)=>{
     if(!isOwnerAdmin(ctx))return denyAdminOnly(ctx);
@@ -3095,14 +3134,8 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
         if (!activeBot) throw new Error('No active delivery bot is running.');
         botId = Number(activeBot.id);
       }
-      const caption = String(m.caption ?? '').trim();
-      const created = await createCreatorBroadcast(pool, {
-        ownerTelegramId: creatorId, deliveryBotId: botId, createdBy: ctx.from.id,
-        mediaType, mediaFileId, caption,
-      });
-      return ctx.reply('✅ Media broadcast queued!\n━━━━━━━━━━━━━━━━━━\n📋 Broadcast #' + created.id + '\n🎞 Type: ' + mediaType + '\n👥 Recipients: ' + created.totalRecipients + '\n🚀 It will be delivered in the background.', {
-        reply_markup: { inline_keyboard: [[{ text: '📋 History', callback_data: active.action === 'creator_broadcast' ? 'cc:broadcast_history' : 'cc:owner_broadcast' }]] },
-      });
+      const parsed=parseBroadcastContent(m.caption??'');
+      return showBroadcastPreview(ctx,{kind:active.action==='owner_broadcast'?'owner':'creator',ownerTelegramId:creatorId,deliveryBotId:botId,mediaType,mediaFileId,caption:parsed.body,buttons:parsed.buttons});
     } catch (error) {
       return ctx.reply('❌ Could not queue media broadcast: ' + error.message, { reply_markup: { inline_keyboard: [[{ text: '↻ Try Again', callback_data: active.back || 'cc:broadcast' }]] } });
     }
@@ -3158,16 +3191,18 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
           if(!Number.isSafeInteger(creatorId)||!Number.isSafeInteger(botId))throw new Error('Missing creator or delivery bot selection.');
           const bots=await deliveryManager.list(creatorId);
           if(!bots.some(b=>Number(b.id)===botId&&b.is_enabled))throw new Error('Selected creator bot is disabled or no longer owned by them.');
-          const created=await createCreatorBroadcast(pool,{ownerTelegramId:creatorId,deliveryBotId:botId,createdBy:ctx.from.id,messageText:text});
-          return ctx.reply('✅ Owner broadcast queued on behalf of Creator '+creatorId+'\\n━━━━━━━━━━━━━━━━━━\\n📋 Broadcast #'+created.id+'\\n👥 Recipients: '+created.totalRecipients,{reply_markup:{inline_keyboard:[[{text:'👑 Owner Broadcast',callback_data:'cc:owner_broadcast'},{text:'↻ Owner Broadcast',callback_data:'cc:owner_broadcast'}]]}});
+          const parsed=parseBroadcastContent(text);
+          if(!parsed.body)throw new Error('Enter announcement text before adding buttons.');
+          return showBroadcastPreview(ctx,{kind:'owner',ownerTelegramId:creatorId,deliveryBotId:botId,messageText:parsed.body,buttons:parsed.buttons});
         }
         case 'creator_broadcast': {
           if (isOwnerAdmin(ctx)) throw new Error('Creator broadcasts must be sent from a creator account.');
           const bots = await deliveryManager.list(Number(ctx.from.id));
           const activeBot = bots.find(b => b.is_enabled && b.runtime_status === 'running');
           if (!activeBot) throw new Error('No active delivery bot is running.');
-          const created = await createCreatorBroadcast(pool,{ownerTelegramId:ctx.from.id,deliveryBotId:activeBot.id,createdBy:ctx.from.id,messageText:text});
-          return ctx.reply('✅ Broadcast queued!\\n━━━━━━━━━━━━━━━━━━\\n📋 Broadcast #'+created.id+'\\n👥 Recipients: '+created.totalRecipients+'\\n🚀 It will be sent in the background.',{reply_markup:{inline_keyboard:[[{text:'📋 History',callback_data:'cc:broadcast_history'},{text:'📢 Broadcast Menu',callback_data:'cc:broadcast'}]]}});
+          const parsed=parseBroadcastContent(text);
+          if(!parsed.body)throw new Error('Enter announcement text before adding buttons.');
+          return showBroadcastPreview(ctx,{kind:'creator',ownerTelegramId:ctx.from.id,deliveryBotId:Number(activeBot.id),messageText:parsed.body,buttons:parsed.buttons});
         }
         case 'storage_add': {
           const parsed = parseStorageIdentifier(text);
