@@ -7,6 +7,7 @@ import { listStorageChannels, setStorageEnabled } from '../src/storage/repositor
 import { getIndexedFile } from '../src/storage/file-query.js';
 import { createDeliveryBot } from '../src/delivery/bot.js';
 import { addShortenerProvider, listShortenerProviders } from '../src/access/shortener-repository.js';
+import { clearCache } from '../src/utils/cache.js';
 
 function createFakeBot() {
   const commands = [];
@@ -319,6 +320,8 @@ test('Delivery Bot /start share link enforces creator-scoped force-sub & shorten
 });
 
 test('Creator Hub renders rich HTML cards safely and /guide opens interactive multi-chapter user tutorial', async () => {
+  // This test uses a mock pool and a reused creator ID; isolate the shared TTL cache.
+  clearCache();
   const bot = createFakeBot();
   const pool = {
     query: async (sql) => {
@@ -379,5 +382,6 @@ test('Creator Hub renders rich HTML cards safely and /guide opens interactive mu
       assert.ok(Buffer.byteLength(btn.callback_data, 'utf8') <= 64, `callback_data too long: ${btn.callback_data}`);
     }
   }
+  clearCache();
 });
 
