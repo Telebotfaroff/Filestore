@@ -1,4 +1,5 @@
 import { isAdmin } from './admin-guard.js';
+import { createCreatorBroadcast, listCreatorBroadcasts } from '../broadcast/repository.js';
 import { getAdminDashboardStats, formatAdminDashboard, getPaymentReconciliationStats, searchPaymentTransactions } from '../admin/dashboard-repository.js';
 import { getOperationalHealth, formatOperationalHealth } from '../admin/operational-health.js';
 import { formatPaymentReconciliation } from '../admin/dashboard-commands.js';
@@ -367,6 +368,10 @@ export const CREATOR_GUIDE_SECTIONS = {
 };
 
 const PROMPT_CONFIGS = {
+  creator_broadcast: {
+    back: 'cc:broadcast',
+    prompt: '📢 Send the broadcast text (up to 4000 characters). It will be delivered to users who have interacted with your delivery bot.',
+  },
   storage_add: {
     back: 'cc:storage',
     prompt: '🗄 Send the Telegram channel ID (e.g. -1001234567890) or @username to add as a storage channel.\n\n⚠️ Make sure this bot is an administrator with permission to post messages.',
@@ -564,8 +569,12 @@ export function buildPublicMenuKeyboard() {
         { text: '💰 Balance & Withdraw (/me)', callback_data: 'cc:me' },
       ],
       [
-        { text: '🌐 Web Panel Token', callback_data: 'cc:webtok' },
+        { text: '📢 Broadcast to Users', callback_data: 'cc:broadcast' },
         { text: '📘 User Guide (/guide)', callback_data: 'cc:uguide:overview' },
+      ],
+      [
+        { text: '🌐 Web Panel Token', callback_data: 'cc:webtok' },
+        { text: '📢 Broadcast', callback_data: 'cc:broadcast' },
       ],
       [
         { text: '↻ Refresh', callback_data: 'cc:home' },
@@ -2924,6 +2933,39 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     await showAutoDelete(ctx, true);
   });
 
+  // Creator broadcast menu and history (creator-owned audience only)
+  bot.action('cc:broadcast', async (ctx) => {
+    if (isOwnerAdmin(ctx)) return safeAnswer(ctx, 'Creator broadcast is available from a creator account.', true);
+    await safeAnswer(ctx);
+    const ownerId = Number(ctx.from.id);
+    const bots = await deliveryManager.list(ownerId);
+    const active = bots.filter(b => b.is_enabled && b.runtime_status === 'running');
+    const history = await listCreatorBroadcasts(pool, ownerId, 5).catch(() => []);
+    const audience = await pool.query('SELECT COUNT(*)::int AS count FROM delivery_bot_user_activity WHERE delivery_bot_id = ANY($1::bigint[])', [active.map(b=>Number(b.id))]);
+    const msg = '📢 <b>Creator Broadcast</b>\\n━━━━━━━━━━━━━━━━━━\\n🤖 Active delivery bots: <b>'+active.length+'</b>\\n👥 Tracked audience: <b>'+Number(audience.rows[0]?.count||0)+'</b>\\n\\nSend a text announcement to users tracked by your delivery bot. Each broadcast runs in the background.';
+    const kb=[];
+    if(active.length)kb.push([{text:'✉️ Compose Broadcast',callback_data:'cc:broadcast_compose'}]);
+    if(history.length)kb.push([{text:'📋 Recent Broadcasts',callback_data:'cc:broadcast_history'}]);
+    kb.push([{text:'↻ Refresh',callback_data:'cc:broadcast'},{text:'← Creator Hub',callback_data:'cc:home'}]);
+    return renderView(ctx,msg,{inline_keyboard:kb},true,true,{parse_mode:'HTML'});
+  });
+  bot.action('cc:broadcast_compose', async(ctx)=>{
+    if(isOwnerAdmin(ctx))return denyAdminOnly(ctx);
+    const bots=await deliveryManager.list(Number(ctx.from.id));
+    if(!bots.some(b=>b.is_enabled&&b.runtime_status==='running')){await safeAnswer(ctx,'No active delivery bot is running.',true);return;}
+    const cfg=setPrompt(ctx.from.id,'creator_broadcast',{back:'cc:broadcast'});
+    await safeAnswer(ctx);
+    return renderView(ctx,'✏️ <b>New Broadcast</b>\\n━━━━━━━━━━━━━━━━━━\\n'+cfg.prompt,{inline_keyboard:[[{text:'✖ Cancel',callback_data:'cc:cancel_prompt'}]]},true,true,{parse_mode:'HTML'});
+  });
+  bot.action('cc:broadcast_history',async(ctx)=>{
+    if(isOwnerAdmin(ctx))return denyAdminOnly(ctx);
+    await safeAnswer(ctx);
+    const rows=await listCreatorBroadcasts(pool,Number(ctx.from.id),10);
+    const statusIcon={pending:'⏳',processing:'🚀',paused:'⏸',completed:'✅',cancelled:'🛑',failed:'⚠️'};
+    const body=rows.length?rows.map(r=>statusIcon[r.status]+' #'+r.id+' · '+r.status+'\\n👥 '+r.total_recipients+' · 📤 '+r.sent_count+' · ⚠️ '+r.failed_count).join('\\n\\n'):'No broadcasts yet.';
+    return renderView(ctx,'📋 <b>Broadcast History</b>\\n━━━━━━━━━━━━━━━━━━\\n\\n'+body,{inline_keyboard:[[{text:'← Broadcast',callback_data:'cc:broadcast'},{text:'Creator Hub',callback_data:'cc:home'}]]},true,true,{parse_mode:'HTML'});
+  });
+
   // Prompt starters & cancel
   bot.action(/^cc:prompt:([a-z_]+)$/, async (ctx) => {
     const action = ctx.match[1];
@@ -3002,6 +3044,14 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
 
     try {
       switch (active.action) {
+        case 'creator_broadcast': {
+          if (isOwnerAdmin(ctx)) throw new Error('Creator broadcasts must be sent from a creator account.');
+          const bots = await deliveryManager.list(Number(ctx.from.id));
+          const activeBot = bots.find(b => b.is_enabled && b.runtime_status === 'running');
+          if (!activeBot) throw new Error('No active delivery bot is running.');
+          const created = await createCreatorBroadcast(pool,{ownerTelegramId:ctx.from.id,deliveryBotId:activeBot.id,createdBy:ctx.from.id,messageText:text});
+          return ctx.reply('✅ Broadcast queued!\\n━━━━━━━━━━━━━━━━━━\\n📋 Broadcast #'+created.id+'\\n👥 Recipients: '+created.totalRecipients+'\\n🚀 It will be sent in the background.',{reply_markup:{inline_keyboard:[[{text:'📋 History',callback_data:'cc:broadcast_history'},{text:'📢 Broadcast Menu',callback_data:'cc:broadcast'}]]}});
+        }
         case 'storage_add': {
           const parsed = parseStorageIdentifier(text);
           const chat = await validateStorageChannel(ctx, parsed, { requireUserAdmin: !isOwnerAdmin(ctx) });
