@@ -20,7 +20,7 @@ CREATE INDEX IF NOT EXISTS creator_broadcasts_owner_idx ON creator_broadcasts(ow
 CREATE TABLE IF NOT EXISTS creator_broadcast_recipients (
   broadcast_id BIGINT NOT NULL REFERENCES creator_broadcasts(id) ON DELETE CASCADE,
   telegram_user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sent','failed','skipped')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sending','sent','failed','skipped')),
   attempts INTEGER NOT NULL DEFAULT 0,
   error_code TEXT,
   sent_at TIMESTAMPTZ,
