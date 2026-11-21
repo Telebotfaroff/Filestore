@@ -1,6 +1,8 @@
 import { formatMoney, formatRevenueSummary, parsePositiveInt } from '../utils/validation.js';
+import { cached } from '../utils/cache.js';
 
 export async function getAdminDashboardStats(pool) {
+  return cached('dashboard:admin-stats', 10_000, async () => {
   const result = await pool.query(`SELECT
     (SELECT COUNT(*)::int FROM users) AS users_total,
     (SELECT COUNT(*)::int FROM users WHERE last_seen_at >= NOW() - INTERVAL '7 days') AS users_active_7d,
@@ -22,7 +24,9 @@ export async function getAdminDashboardStats(pool) {
     (SELECT COALESCE(jsonb_object_agg(currency, total_minor), '{}'::jsonb) FROM (SELECT currency, SUM(amount_minor)::bigint AS total_minor FROM payment_transactions WHERE status = 'applied' GROUP BY currency) revenue) AS revenue_by_currency,
     (SELECT COUNT(*)::int FROM activity_logs WHERE created_at >= NOW() - INTERVAL '24 hours') AS events_24h`);
   return result.rows[0];
+  });
 }
+
 
 export function formatAdminDashboard(stats) {
   return [
@@ -50,6 +54,7 @@ export function formatAdminDashboard(stats) {
 
 
 export async function getPaymentReconciliationStats(pool) {
+  return cached('dashboard:payment-reconciliation', 10_000, async () => {
   const { rows } = await pool.query(`SELECT
     (SELECT COUNT(*)::int FROM payment_transactions WHERE status='verified') AS verified_pending,
     (SELECT COUNT(*)::int FROM payment_transactions WHERE status='applied') AS applied,
@@ -62,7 +67,9 @@ export async function getPaymentReconciliationStats(pool) {
     (SELECT COUNT(*)::int FROM payment_provider_events WHERE processing_status='processed') AS events_processed,
     (SELECT COUNT(*)::int FROM payment_provider_events WHERE processing_status='ignored') AS events_ignored`);
   return rows[0];
+  });
 }
+
 
 export async function listRecentPayments(pool, limit = 10) {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 10, 20));
