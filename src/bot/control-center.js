@@ -2965,7 +2965,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     const count=await pool.query('SELECT COUNT(*)::int AS count FROM delivery_bot_user_activity WHERE delivery_bot_id=$1',[botId]);
     setPrompt(ctx.from.id,'owner_broadcast',{back:'cc:owner_broadcast:creator:'+creatorId,meta:{creatorId,botId}});
     await safeAnswer(ctx);
-    return renderView(ctx,'✏️ <b>Broadcast on behalf of Creator '+creatorId+'</b>\\n━━━━━━━━━━━━━━━━━━\\n🤖 @'+selected.username+'\\n👥 Audience: '+Number(count.rows[0]?.count||0)+'\\n\nSend the announcement text (up to 4000 characters).',{inline_keyboard:[[{text:'✖ Cancel',callback_data:'cc:cancel_prompt'}]]},true,true,{parse_mode:'HTML'});
+    return renderView(ctx,'✏️ <b>Broadcast on behalf of Creator '+creatorId+'</b>\\n━━━━━━━━━━━━━━━━━━\\n🤖 @'+selected.username+'\\n👥 Audience: '+Number(count.rows[0]?.count||0)+'\\n\nSend text, or attach a photo, video, document, or GIF with an optional caption.',{inline_keyboard:[[{text:'✖ Cancel',callback_data:'cc:cancel_prompt'}]]},true,true,{parse_mode:'HTML'});
   });
 
   // Creator broadcast menu and history (creator-owned audience only)
@@ -3065,6 +3065,47 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
       { inline_keyboard: [[{ text: '← Back', callback_data: back }, { text: '🎛 Main Menu', callback_data: 'cc:home' }]] },
       true,
     );
+  });
+
+  // Media input for creator/owner broadcast prompts. The main bot's file_id is
+  // resolved to a Telegram file URL by the source bot, then re-uploaded by each delivery bot.
+  bot.on('message', async (ctx, next) => {
+    const active = getActivePrompt(ctx.from?.id);
+    if (!active || !['creator_broadcast','owner_broadcast'].includes(active.action)) return next();
+    const m = ctx.message;
+    let mediaType = null, mediaFileId = null;
+    if (m.photo?.length) { mediaType = 'photo'; mediaFileId = m.photo[m.photo.length - 1].file_id; }
+    else if (m.video) { mediaType = 'video'; mediaFileId = m.video.file_id; }
+    else if (m.document) { mediaType = 'document'; mediaFileId = m.document.file_id; }
+    else if (m.animation) { mediaType = 'animation'; mediaFileId = m.animation.file_id; }
+    else return next();
+    clearPrompt(ctx.from.id);
+    try {
+      let creatorId, botId;
+      if (active.action === 'owner_broadcast') {
+        if (!isOwnerAdmin(ctx)) throw new Error('Owner permission required.');
+        creatorId = Number(active.meta?.creatorId); botId = Number(active.meta?.botId);
+        const bots = await deliveryManager.list(creatorId);
+        if (!bots.some(b => Number(b.id) === botId && b.is_enabled)) throw new Error('Selected creator bot is disabled or no longer owned by them.');
+      } else {
+        if (isOwnerAdmin(ctx)) throw new Error('Creator broadcasts must be sent from a creator account.');
+        creatorId = Number(ctx.from.id);
+        const bots = await deliveryManager.list(creatorId);
+        const activeBot = bots.find(b => b.is_enabled && b.runtime_status === 'running');
+        if (!activeBot) throw new Error('No active delivery bot is running.');
+        botId = Number(activeBot.id);
+      }
+      const caption = String(m.caption ?? '').trim();
+      const created = await createCreatorBroadcast(pool, {
+        ownerTelegramId: creatorId, deliveryBotId: botId, createdBy: ctx.from.id,
+        mediaType, mediaFileId, caption,
+      });
+      return ctx.reply('✅ Media broadcast queued!\n━━━━━━━━━━━━━━━━━━\n📋 Broadcast #' + created.id + '\n🎞 Type: ' + mediaType + '\n👥 Recipients: ' + created.totalRecipients + '\n🚀 It will be delivered in the background.', {
+        reply_markup: { inline_keyboard: [[{ text: '📋 History', callback_data: active.action === 'creator_broadcast' ? 'cc:broadcast_history' : 'cc:owner_broadcast' }]] },
+      });
+    } catch (error) {
+      return ctx.reply('❌ Could not queue media broadcast: ' + error.message, { reply_markup: { inline_keyboard: [[{ text: '↻ Try Again', callback_data: active.back || 'cc:broadcast' }]] } });
+    }
   });
 
   // Text handler for guided interactive prompts
