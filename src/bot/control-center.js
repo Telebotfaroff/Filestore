@@ -369,10 +369,10 @@ export const CREATOR_GUIDE_SECTIONS = {
 };
 
 const PROMPT_CONFIGS = {
-  owner_broadcast: { back: 'cc:owner_broadcast:bot', prompt: '📢 Send the broadcast text (up to 4000 characters). This will be sent to the selected creator audience.' },
+  owner_broadcast: { back: 'cc:owner_broadcast:bot', prompt: '📢 Send text or attach a photo/video/document/GIF. Optional URL buttons: add lines like Button: Open Channel | https://t.me/example.' },
   creator_broadcast: {
     back: 'cc:broadcast',
-    prompt: '📢 Send the broadcast text (up to 4000 characters). It will be delivered to users who have interacted with your delivery bot.',
+    prompt: '📢 Send text or attach a photo/video/document/GIF. Optional URL buttons: add lines like Button: Open Channel | https://t.me/example.',
   },
   storage_add: {
     back: 'cc:storage',
@@ -3004,7 +3004,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     const count=await pool.query('SELECT COUNT(*)::int AS count FROM delivery_bot_user_activity WHERE delivery_bot_id=$1',[botId]);
     setPrompt(ctx.from.id,'owner_broadcast',{back:'cc:owner_broadcast:creator:'+creatorId,meta:{creatorId,botId}});
     await safeAnswer(ctx);
-    return renderView(ctx,'✏️ <b>Broadcast on behalf of Creator '+creatorId+'</b>\\n━━━━━━━━━━━━━━━━━━\\n🤖 @'+selected.username+'\\n👥 Audience: '+Number(count.rows[0]?.count||0)+'\\n\nSend text, or attach a photo, video, document, or GIF with an optional caption.',{inline_keyboard:[[{text:'✖ Cancel',callback_data:'cc:cancel_prompt'}]]},true,true,{parse_mode:'HTML'});
+    return renderView(ctx,'✏️ <b>Broadcast on behalf of Creator '+creatorId+'</b>\\n━━━━━━━━━━━━━━━━━━\\n🤖 @'+selected.username+'\\n👥 Audience: '+Number(count.rows[0]?.count||0)+'\\n\nSend text, or attach a photo, video, document, or GIF with an optional caption. Add URL buttons on separate lines: Button: Label | https://example.com',{inline_keyboard:[[{text:'✖ Cancel',callback_data:'cc:cancel_prompt'}]]},true,true,{parse_mode:'HTML'});
   });
 
   // Creator broadcast menu and history (creator-owned audience only)
