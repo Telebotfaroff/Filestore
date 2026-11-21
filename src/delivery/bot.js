@@ -5,6 +5,7 @@ import { createSingleDeliveryJob, createBatchDeliveryJob, getDeliveryStats } fro
 import { getPaidBatch, requestPaidBatchPurchase, getBatchItems } from '../paid-files/batch-repository.js';
 import { recordLinkOpen } from '../web/link-analytics-repository.js';
 import { createDeliveryWorker } from './worker.js';
+import { createCreatorBroadcastWorker } from '../broadcast/worker.js';
 import { createAutoDeleteWorker } from './auto-delete-worker.js';
 import { checkForceSubscription } from '../access/force-subscription.js';
 import { upsertTelegramUser } from '../access/user-repository.js';
@@ -171,6 +172,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
   const bot = new Telegraf(token);
   const pendingUtrInputs = new Map();
   let worker;
+  let broadcastWorker;
   let autoDeleteWorker;
   let famPayWorker;
   let identity = 'delivery-bot';
@@ -1199,12 +1201,18 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
       if (worker) return;
       worker = createDeliveryWorker(bot, pool, logger, identity, workerScope);
       worker.start();
+      if (workerScope.deliveryBotId && workerScope.ownerTelegramId) {
+        broadcastWorker = createCreatorBroadcastWorker(bot.telegram, pool, logger, workerScope.deliveryBotId);
+        broadcastWorker.start();
+      }
       autoDeleteWorker = createAutoDeleteWorker(bot, pool, logger, identity);
       autoDeleteWorker.start();
       famPayWorker = startFamPayVerificationWorker(pool, config, logger, bot.telegram, me.id);
     },
     stopWorker() {
       worker?.stop();
+      broadcastWorker?.stop();
+      broadcastWorker = undefined;
       autoDeleteWorker?.stop();
       famPayWorker?.stop();
       worker = undefined;
