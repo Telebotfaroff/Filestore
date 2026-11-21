@@ -1,15 +1,27 @@
 import { subscribeDeliveryWorkerWake } from '../delivery/wake.js';
 import { claimCreatorBroadcast, claimBroadcastRecipients, markBroadcastRecipient, getBroadcastState, finalizeCreatorBroadcast } from './repository.js';
 
-export function createCreatorBroadcastWorker(telegram,pool,logger,deliveryBotId) {
+export function createCreatorBroadcastWorker(telegram,pool,logger,deliveryBotId,sourceTelegram=null) {
  const botId=Number(deliveryBotId);let stopped=true,busy=false,pending=false,timer,unsubscribe;
  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
  const retryAfter=e=>Number(e?.response?.parameters?.retry_after??e?.response?.retry_after??0);
  const errorCode=e=>Number(e?.response?.error_code??e?.code??0);
  const isTransient=e=>errorCode(e)===429||errorCode(e)>=500||!errorCode(e);
- async function sendWithRetry(uid,text){
+ async function sendPayload(uid,job){
+  if(!job.media_file_id){await telegram.sendMessage(uid,job.message_text,{disable_web_page_preview:true});return;}
+  if(!sourceTelegram)throw new Error('Media source bot is unavailable.');
+  const fileUrl=await sourceTelegram.getFileLink(job.media_file_id);
+  const caption=job.caption||job.message_text||undefined;
+  const opts=caption?{caption}:{};
+  if(job.media_type==='photo')return telegram.sendPhoto(uid,fileUrl,opts);
+  if(job.media_type==='video')return telegram.sendVideo(uid,fileUrl,opts);
+  if(job.media_type==='document')return telegram.sendDocument(uid,fileUrl,opts);
+  if(job.media_type==='animation')return telegram.sendAnimation(uid,fileUrl,opts);
+  throw new Error('Unsupported broadcast media type.');
+ }
+ async function sendWithRetry(uid,job){
   for(let attempt=0;attempt<4;attempt++){
-   try{await telegram.sendMessage(uid,text,{disable_web_page_preview:true});return {ok:true};}
+   try{await sendPayload(uid,job);return {ok:true};}
    catch(e){
     const wait=retryAfter(e);
     if(attempt<3&&isTransient(e)){
@@ -30,7 +42,7 @@ export function createCreatorBroadcastWorker(telegram,pool,logger,deliveryBotId)
     const users=await claimBroadcastRecipients(pool,job.id,25);if(!users.length)break;
     for(const u of users){
      if(stopped||await getBroadcastState(pool,job.id)!=='processing')break;
-     const result=await sendWithRetry(u.telegram_user_id,job.message_text);
+     const result=await sendWithRetry(u.telegram_user_id,job);
      if(result.stopped)break;
      await markBroadcastRecipient(pool,job.id,u.telegram_user_id,result.ok?'sent':'failed',result.error??null);
      await sleep(100);
