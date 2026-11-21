@@ -2953,7 +2953,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
       const count=await pool.query('SELECT COUNT(*)::int AS count FROM delivery_bot_user_activity WHERE delivery_bot_id=$1',[b.id]);
       kb.push([{text:'🤖 @'+b.username+' · '+Number(count.rows[0]?.count||0)+' users',callback_data:'cc:owner_broadcast:bot:'+creatorId+':'+b.id}]);
     }
-    kb.push([{text:'← Creators',callback_data:'cc:owner_broadcast'}]]);
+    kb.push([{text:'← Creators',callback_data:'cc:owner_broadcast'}]);
     return renderView(ctx,'👑 <b>Broadcast for Creator '+creatorId+'</b>\\nSelect their running delivery bot and audience.',{inline_keyboard:kb},true,true,{parse_mode:'HTML'});
   });
   bot.action(/^cc:owner_broadcast:bot:(\d+):(\d+)$/,async(ctx)=>{
