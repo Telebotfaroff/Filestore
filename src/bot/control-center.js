@@ -541,6 +541,9 @@ export function buildMainMenuKeyboard() {
         { text: '🌐 Web Panel Token', callback_data: 'cc:webtok' },
       ],
       [
+        { text: '👑 Broadcast for Creator', callback_data: 'cc:owner_broadcast' },
+      ],
+      [
         { text: '↻ Refresh Overview', callback_data: 'cc:home' },
       ],
     ],
@@ -3083,7 +3086,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
           const bots=await deliveryManager.list(creatorId);
           if(!bots.some(b=>Number(b.id)===botId&&b.is_enabled))throw new Error('Selected creator bot is disabled or no longer owned by them.');
           const created=await createCreatorBroadcast(pool,{ownerTelegramId:creatorId,deliveryBotId:botId,createdBy:ctx.from.id,messageText:text});
-          return ctx.reply('✅ Owner broadcast queued on behalf of Creator '+creatorId+'\\n━━━━━━━━━━━━━━━━━━\\n📋 Broadcast #'+created.id+'\\n👥 Recipients: '+created.totalRecipients,{reply_markup:{inline_keyboard:[[{text:'👑 Owner Broadcast',callback_data:'cc:owner_broadcast'},{text:'📋 Creator Broadcast History',callback_data:'cc:broadcast_history'}]]}});
+          return ctx.reply('✅ Owner broadcast queued on behalf of Creator '+creatorId+'\\n━━━━━━━━━━━━━━━━━━\\n📋 Broadcast #'+created.id+'\\n👥 Recipients: '+created.totalRecipients,{reply_markup:{inline_keyboard:[[{text:'👑 Owner Broadcast',callback_data:'cc:owner_broadcast'},{text:'↻ Owner Broadcast',callback_data:'cc:owner_broadcast'}]]}});
         }
         case 'creator_broadcast': {
           if (isOwnerAdmin(ctx)) throw new Error('Creator broadcasts must be sent from a creator account.');
