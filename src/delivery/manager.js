@@ -381,6 +381,7 @@ export function createDeliveryBotManager(config, logger, pool) {
       scope.params,
     );
     return result.rows;
+    });
   }
 
   return { startAll, stopAll, addToken, pause, resume, restart, remove, promotePrimary, setPriority, test, list };
