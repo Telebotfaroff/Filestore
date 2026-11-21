@@ -1,13 +1,15 @@
 import { wakeDeliveryWorkers } from '../delivery/wake.js';
 
-export async function createCreatorBroadcast(pool,{ownerTelegramId,deliveryBotId,createdBy,messageText}) {
- const owner=Number(ownerTelegramId),botId=Number(deliveryBotId),actor=Number(createdBy),text=String(messageText??'').trim();
+export async function createCreatorBroadcast(pool,{ownerTelegramId,deliveryBotId,createdBy,messageText='',mediaType=null,mediaFileId=null,caption=''}) {
+ const owner=Number(ownerTelegramId),botId=Number(deliveryBotId),actor=Number(createdBy),text=String(messageText??'').trim(),media=String(mediaFileId??'').trim(),mediaKind=mediaType?String(mediaType):null,mediaCaption=String(caption??'').trim();
  if(![owner,botId,actor].every(n=>Number.isSafeInteger(n)&&n>0))throw new Error('Invalid creator, bot, or sender ID.');
- if(!text||text.length>4000)throw new Error('Broadcast text must be between 1 and 4000 characters.');
+ if(!text&&!media)throw new Error('Broadcast must contain text or supported media.');
+ if(text.length>4000||mediaCaption.length>1024)throw new Error('Broadcast text or caption is too long.');
+ if(media&&!['photo','video','document','animation'].includes(mediaKind))throw new Error('Unsupported broadcast media type.');
  const client=await pool.connect();try{await client.query('BEGIN');
  const bot=await client.query('SELECT id FROM delivery_bots WHERE id=$1 AND owner_telegram_id=$2 AND is_enabled=TRUE LIMIT 1',[botId,owner]);if(!bot.rowCount)throw new Error('Creator delivery bot not found or disabled.');
  const count=await client.query('SELECT COUNT(*)::int AS total FROM delivery_bot_user_activity WHERE delivery_bot_id=$1',[botId]);if(!count.rows[0].total)throw new Error('No tracked users for this delivery bot.');
- const ins=await client.query('INSERT INTO creator_broadcasts(owner_telegram_id,delivery_bot_id,created_by,message_text,total_recipients) VALUES($1,$2,$3,$4,$5) RETURNING id',[owner,botId,actor,text,count.rows[0].total]);const id=ins.rows[0].id;
+ const ins=await client.query('INSERT INTO creator_broadcasts(owner_telegram_id,delivery_bot_id,created_by,message_text,media_type,media_file_id,caption,total_recipients) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',[owner,botId,actor,text||mediaCaption,mediaKind,media||null,mediaCaption,count.rows[0].total]);const id=ins.rows[0].id;
  await client.query('INSERT INTO creator_broadcast_recipients(broadcast_id,telegram_user_id) SELECT $1,telegram_user_id FROM delivery_bot_user_activity WHERE delivery_bot_id=$2 ON CONFLICT DO NOTHING',[id,botId]);await client.query('COMMIT');wakeDeliveryWorkers('broadcast-created');return {id,totalRecipients:count.rows[0].total};
  }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
 }
