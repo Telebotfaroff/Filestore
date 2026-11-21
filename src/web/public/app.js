@@ -38,6 +38,7 @@ const state = {
 const appEl = document.getElementById('app');
 const toastRoot = document.getElementById('toast-root');
 const modalRoot = document.getElementById('modal-root');
+let directorySearchTimer = null;
 
 function esc(value) {
   return String(value ?? '')
@@ -1573,9 +1574,34 @@ function bindWorkspaceEvents() {
   });
 
   // User and premium directory search/filter events
-  document.getElementById('users-search')?.addEventListener('input', (e) => { state.filters.usersSearch = e.target.value; loadViewData('users'); });
-  document.getElementById('premium-search')?.addEventListener('input', (e) => { state.filters.premiumSearch = e.target.value; loadViewData('premium_members'); });
-  document.getElementById('premium-status')?.addEventListener('change', (e) => { state.filters.premiumStatus = e.target.value; loadViewData('premium_members'); });
+  const bindDirectorySearch = (inputId, view, buildUrl, saveValue) => {
+    document.getElementById(inputId)?.addEventListener('input', (e) => {
+      saveValue(e.target.value);
+      clearTimeout(directorySearchTimer);
+      const inputValue = e.target.value;
+      directorySearchTimer = setTimeout(async () => {
+        try {
+          if (view === 'users') state.data.users = await api(buildUrl(inputValue));
+          else state.data.premiumMembers = await api(buildUrl(inputValue));
+          const focused = document.activeElement?.id === inputId;
+          const cursor = focused ? document.getElementById(inputId)?.selectionStart : null;
+          render();
+          if (focused) {
+            const next = document.getElementById(inputId);
+            next?.focus();
+            if (cursor !== null) next?.setSelectionRange(cursor, cursor);
+          }
+        } catch (err) { toast(err.message || 'Search failed.', true); }
+      }, 300);
+    });
+  };
+  bindDirectorySearch('users-search', 'users', (value) => `/api/panel/users?q=${encodeURIComponent(value)}`, (value) => { state.filters.usersSearch = value; });
+  bindDirectorySearch('premium-search', 'premium_members', (value) => `/api/panel/premium-members?q=${encodeURIComponent(value)}&status=${encodeURIComponent(state.filters.premiumStatus)}`, (value) => { state.filters.premiumSearch = value; });
+  document.getElementById('premium-status')?.addEventListener('change', async (e) => {
+    state.filters.premiumStatus = e.target.value;
+    try { state.data.premiumMembers = await api(`/api/panel/premium-members?q=${encodeURIComponent(state.filters.premiumSearch)}&status=${encodeURIComponent(state.filters.premiumStatus)}`); render(); }
+    catch (err) { toast(err.message || 'Filter failed.', true); }
+  });
 
   // Links view events
   appEl.querySelectorAll('[data-link-tab]').forEach((el) => {
