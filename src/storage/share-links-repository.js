@@ -209,6 +209,7 @@ export async function listShareLinks(pool, { limit = 6, offset = 0, ownerId = nu
     const { rows } = await pool.query(
       `SELECT sl.id, sl.link_code, sl.link_type, sl.title, sl.is_enabled, sl.created_by, sl.created_at, sl.updated_at,
          COUNT(sli.file_id)::int AS item_count,
+         (SELECT COUNT(*)::int FROM link_open_events e WHERE e.link_kind='share' AND e.link_id=sl.id) AS view_count,
          MIN(f.file_code) FILTER (WHERE sli.position = 1) AS first_file_code
        FROM share_links sl
        LEFT JOIN share_link_items sli ON sli.link_id = sl.id
