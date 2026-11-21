@@ -79,6 +79,19 @@ export async function disablePaidFileLink(pool, publicCode, adminId, ownerId = n
   return rows[0] ?? null;
 }
 
+export async function updatePaidFileLinkPrice(pool, idOrCode, priceMinor, currency = null, ownerId = null) {
+  const { column, value } = parsePaidIdOrHash(idOrCode);
+  const price = Number(priceMinor);
+  if (!Number.isSafeInteger(price) || price < 1) throw new Error('Price must be a positive integer in minor currency units.');
+  if (ownerId !== null && ownerId !== undefined) {
+    const { rows } = await pool.query(`UPDATE paid_file_links SET price_minor=$2, currency=COALESCE($3,currency), updated_at=NOW() WHERE ${column}=$1 AND created_by=$4 RETURNING id, public_code, price_minor, currency`, [value, price, currency, Number(ownerId)]);
+    return rows[0] ?? null;
+  }
+  const { rows } = await pool.query(`UPDATE paid_file_links SET price_minor=$2, currency=COALESCE($3,currency), updated_at=NOW() WHERE ${column}=$1 RETURNING id, public_code, price_minor, currency`, [value, price, currency]);
+  return rows[0] ?? null;
+}
+
+
 export async function setPaidFileLinkEnabled(pool, idOrCode, enabled, ownerId = null) {
   const { column, value } = parsePaidIdOrHash(idOrCode);
   if (ownerId !== null && ownerId !== undefined) {
