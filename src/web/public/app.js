@@ -21,6 +21,7 @@ const state = {
     ownerPayments: null,
     users: null,
     premiumMembers: null,
+    ownerLinkAnalytics: null,
   },
   filters: {
     linksTab: 'all',
@@ -219,6 +220,8 @@ async function loadViewData(view = state.activeView) {
     } else if (view === 'premium_members') {
       const params = new URLSearchParams({ q: state.filters.premiumSearch.trim(), status: state.filters.premiumStatus });
       state.data.premiumMembers = await api(`/api/panel/premium-members?${params.toString()}`);
+    } else if (view === 'owner_link_analytics') {
+      state.data.ownerLinkAnalytics = await api('/api/panel/owner/link-analytics');
     } else if (view === 'owner_kpis' || view === 'owner_delivery') {
       state.data.ownerDashboard = await api('/api/panel/owner/dashboard');
     } else if (view === 'owner_withdrawals') {
@@ -269,6 +272,7 @@ const NAV_ICONS = {
   owner_payments: '<svg class="nav-icon" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>',
   users: '<svg class="nav-icon" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   premium_members: '<svg class="nav-icon" viewBox="0 0 24 24"><path d="m12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"/></svg>',
+  owner_link_analytics: '<svg class="nav-icon" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>',
   owner_delivery: '<svg class="nav-icon" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>',
 };
 
@@ -305,6 +309,7 @@ function getNavSections() {
         { id: 'owner_kpis', label: 'Platform KPIs', count: null },
         { id: 'owner_withdrawals', label: 'Withdrawals Queue', count: ov?.ownerSummary?.pendingWithdrawals ?? null },
         { id: 'owner_payments', label: 'Payments & Gateways', count: null },
+        { id: 'owner_link_analytics', label: 'Link Analytics', count: null },
         { id: 'owner_delivery', label: 'Delivery & Auto-Delete', count: null },
       ],
     });
@@ -646,6 +651,7 @@ function renderLinks() {
                 <th>Type</th>
                 <th class="col-right">Price</th>
                 <th>Status</th>
+                <th class="col-right">Views</th>
                 <th>Created</th>
                 <th class="col-right">Actions</th>
               </tr>
@@ -662,6 +668,7 @@ function renderLinks() {
                   <td data-label="Type">${esc(item.typeLabel)}</td>
                   <td data-label="Price" class="col-right mono">${esc(item.priceText)}</td>
                   <td data-label="Status"><span class="${item.isEnabled ? 'status-ok' : 'status-muted'}">${item.isEnabled ? 'Active' : 'Paused'}</span></td>
+                  <td data-label="Views" class="col-right num"><span class="view-count">${Number(item.views||0).toLocaleString()}</span></td>
                   <td data-label="Created" class="num">${esc(formatDate(item.createdAt))}</td>
                   <td data-label="Actions" class="col-right">
                     <div class="row-actions">
@@ -1456,6 +1463,19 @@ function renderPremiumDirectory() {
     </tbody></table></div></div>`;
 }
 
+function renderOwnerLinkAnalytics() {
+  const d=state.data.ownerLinkAnalytics;
+  if(state.loading&&!d)return `<div class="surface">${renderSkeletonRows(6)}</div>`;
+  const rows=d?.rows||[];
+  const totalViews=rows.reduce((sum,row)=>sum+Number(row.views||0),0);
+  return `<div class="page-header"><div><h1>Link Analytics</h1><p class="page-sub">Most opened links across the platform, with viewer-level open counts.</p></div></div>
+    <div class="stats-grid"><div class="stat-card"><div class="stat-label">Tracked Links</div><div class="stat-value">${(d?.total||0).toLocaleString()}</div></div><div class="stat-card"><div class="stat-label">Recorded Opens (Top 100)</div><div class="stat-value">${totalViews.toLocaleString()}</div></div></div>
+    <div class="surface"><div class="surface-header"><div><div class="surface-title">Top Opened Links</div><div class="surface-meta">Sorted by recorded opens</div></div></div>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Link</th><th>Type</th><th class="col-right">Opens</th><th class="col-right">Unique viewers</th><th>Top viewers · opens</th><th>Last opened</th></tr></thead><tbody>
+    ${rows.length?rows.map(row=>`<tr><td><div class="cell-primary">${esc(row.title||row.code)}</div><div class="cell-sub mono">${esc(row.code)} · ${esc(row.kind)}</div></td><td>${esc(row.type||row.kind)}</td><td class="col-right num">${Number(row.views||0).toLocaleString()}</td><td class="col-right num">${Number(row.uniqueViewers||0).toLocaleString()}</td><td>${(row.viewers||[]).length?(row.viewers||[]).map(v=>`<div class="cell-sub"><strong>${esc([v.firstName,v.lastName].filter(Boolean).join(' ')||'User')}</strong> ${v.username?'@'+esc(v.username):''} · <span class="num">${Number(v.views||0)} opens</span><br><span class="mono">${esc(v.userId)}</span></div>`).join(''):'—'}</td><td>${esc(formatDateTime(row.lastOpened))}</td></tr>`).join(''):`<tr><td colspan="6"><div class="empty-state"><h3>No link opens yet</h3><p>Open counts will appear after users open links through the delivery bot.</p></div></td></tr>`}
+    </tbody></table></div></div>`;
+}
+
 function renderActiveView() {
   switch (state.activeView) {
     case 'overview': return renderOverview();
@@ -1470,6 +1490,7 @@ function renderActiveView() {
     case 'owner_kpis': return renderOwnerKpis();
     case 'owner_withdrawals': return renderOwnerWithdrawals();
     case 'owner_payments': return renderOwnerPayments();
+    case 'owner_link_analytics': return renderOwnerLinkAnalytics();
     case 'owner_delivery': return renderOwnerDelivery();
     default: return renderOverview();
   }
