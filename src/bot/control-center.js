@@ -1,5 +1,5 @@
 import { isAdmin } from './admin-guard.js';
-import { createCreatorBroadcast, listCreatorBroadcasts } from '../broadcast/repository.js';
+import { createCreatorBroadcast, listCreatorBroadcasts, listOwnerCreatedBroadcasts } from '../broadcast/repository.js';
 import { getAdminDashboardStats, formatAdminDashboard, getPaymentReconciliationStats, searchPaymentTransactions } from '../admin/dashboard-repository.js';
 import { getOperationalHealth, formatOperationalHealth } from '../admin/operational-health.js';
 import { formatPaymentReconciliation } from '../admin/dashboard-commands.js';
@@ -2984,8 +2984,17 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     await safeAnswer(ctx);
     const creators=await pool.query("SELECT owner_telegram_id, COUNT(*)::int AS bots FROM delivery_bots WHERE owner_telegram_id IS NOT NULL AND is_enabled=TRUE GROUP BY owner_telegram_id ORDER BY owner_telegram_id");
     const kb=creators.rows.map(c=>[{text:'👤 Creator '+c.owner_telegram_id+' · '+c.bots+' bot(s)',callback_data:'cc:owner_broadcast:creator:'+c.owner_telegram_id}]);
+    kb.push([{text:'📋 My Campaign History',callback_data:'cc:owner_broadcast_history'}]);
     kb.push([{text:'← Main Menu',callback_data:'cc:home'}]);
     return renderView(ctx,'👑 <b>Owner Broadcast</b>\\n━━━━━━━━━━━━━━━━━━\\nChoose a creator to broadcast on their behalf. The audience is restricted to their delivery bot.',{inline_keyboard:kb},true,true,{parse_mode:'HTML'});
+  });
+  bot.action('cc:owner_broadcast_history',async(ctx)=>{
+    if(!isOwnerAdmin(ctx))return denyAdminOnly(ctx);
+    await safeAnswer(ctx);
+    const rows=await listOwnerCreatedBroadcasts(pool,ctx.from.id,20);
+    const icons={pending:'⏳',processing:'🚀',paused:'⏸',completed:'✅',cancelled:'🛑',failed:'⚠️'};
+    const body=rows.length?rows.map(r=>icons[r.status]+' #'+r.id+' · Creator '+r.owner_telegram_id+' · '+r.status+'\n👥 '+r.total_recipients+' · 📤 '+r.sent_count+' · ⚠️ '+r.failed_count).join('\n\n'):'No owner-created campaigns yet.';
+    return renderView(ctx,'📋 <b>Owner Campaign History</b>\n━━━━━━━━━━━━━━━━━━\n\n'+body,{inline_keyboard:[[{text:'← Owner Broadcast',callback_data:'cc:owner_broadcast'},{text:'Main Menu',callback_data:'cc:home'}]]},true,true,{parse_mode:'HTML'});
   });
   bot.action(/^cc:owner_broadcast:creator:(\d+)$/,async(ctx)=>{
     if(!isOwnerAdmin(ctx))return denyAdminOnly(ctx);
