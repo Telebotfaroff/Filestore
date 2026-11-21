@@ -939,7 +939,9 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
       await ctx.answerCbQuery('Checking subscriptions… 🔍');
       await upsertTelegramUser(pool, ctx.from);
       const ownerScope = ctx.match?.[1] ? Number(ctx.match[1]) : null;
-      const result = await checkForceSubscription(ctx.telegram, pool, ctx.from.id, ownerScope);
+      const result = ownerScope === null
+        ? { enabled: false, passed: true, missing: [] }
+        : await checkForceSubscription(ctx.telegram, pool, ctx.from.id, ownerScope);
       await logForceSubEvent(pool, logger, result.passed ? 'force_sub_verified' : 'force_sub_blocked', ctx.from.id, result);
       if (result.passed) {
         try { await ctx.editMessageText('✅ <b>Subscription verification passed!</b>\n\nAll required channels are joined — open your link again to receive your files! 🚀', HTML); } catch {}
