@@ -2943,7 +2943,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     kb.push([{text:'← Main Menu',callback_data:'cc:home'}]);
     return renderView(ctx,'👑 <b>Owner Broadcast</b>\\n━━━━━━━━━━━━━━━━━━\\nChoose a creator to broadcast on their behalf. The audience is restricted to their delivery bot.',{inline_keyboard:kb},true,true,{parse_mode:'HTML'});
   });
-  bot.action(/^cc:owner_broadcast:creator:(\\d+)$/,async(ctx)=>{
+  bot.action(/^cc:owner_broadcast:creator:(\d+)$/,async(ctx)=>{
     if(!isOwnerAdmin(ctx))return denyAdminOnly(ctx);
     const creatorId=Number(ctx.match[1]);
     await safeAnswer(ctx);
@@ -2956,7 +2956,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     kb.push([{text:'← Creators',callback_data:'cc:owner_broadcast'}]]);
     return renderView(ctx,'👑 <b>Broadcast for Creator '+creatorId+'</b>\\nSelect their running delivery bot and audience.',{inline_keyboard:kb},true,true,{parse_mode:'HTML'});
   });
-  bot.action(/^cc:owner_broadcast:bot:(\\d+):(\\d+)$/,async(ctx)=>{
+  bot.action(/^cc:owner_broadcast:bot:(\d+):(\d+)$/,async(ctx)=>{
     if(!isOwnerAdmin(ctx))return denyAdminOnly(ctx);
     const creatorId=Number(ctx.match[1]),botId=Number(ctx.match[2]);
     const bots=await deliveryManager.list(creatorId);
