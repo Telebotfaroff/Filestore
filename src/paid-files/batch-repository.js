@@ -166,6 +166,21 @@ export async function disablePaidBatchLink(pool, code, ownerId = null) {
   return rows[0] ?? null;
 }
 
+export async function updatePaidBatchLink(pool, idOrCode, title, priceMinor, currency = null, ownerId = null) {
+  const { column, value } = parseBatchIdOrHash(idOrCode);
+  const cleanTitle = String(title ?? '').trim().slice(0, 160);
+  const price = Number(priceMinor);
+  if (!cleanTitle) throw new Error('Batch title cannot be empty.');
+  if (!Number.isSafeInteger(price) || price < 1) throw new Error('Price must be a positive integer in minor currency units.');
+  if (ownerId !== null && ownerId !== undefined) {
+    const { rows } = await pool.query(`UPDATE paid_batch_links SET title=$2, price_minor=$3, currency=COALESCE($4,currency), updated_at=NOW() WHERE ${column}=$1 AND created_by=$5 RETURNING id, public_code, title, price_minor, currency`, [value, cleanTitle, price, currency, Number(ownerId)]);
+    return rows[0] ?? null;
+  }
+  const { rows } = await pool.query(`UPDATE paid_batch_links SET title=$2, price_minor=$3, currency=COALESCE($4,currency), updated_at=NOW() WHERE ${column}=$1 RETURNING id, public_code, title, price_minor, currency`, [value, cleanTitle, price, currency]);
+  return rows[0] ?? null;
+}
+
+
 export async function setPaidBatchLinkEnabled(pool, idOrCode, enabled, ownerId = null) {
   const { column, value } = parseBatchIdOrHash(idOrCode);
   if (ownerId !== null && ownerId !== undefined) {
