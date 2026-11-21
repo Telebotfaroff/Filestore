@@ -19,6 +19,8 @@ const state = {
     ownerDashboard: null,
     ownerWithdrawals: null,
     ownerPayments: null,
+    users: null,
+    premiumMembers: null,
   },
   filters: {
     linksTab: 'all',
@@ -26,6 +28,9 @@ const state = {
     withdrawalsStatus: 'pending',
     paymentsStatus: 'all',
     paymentsSearch: '',
+    usersSearch: '',
+    premiumSearch: '',
+    premiumStatus: 'all',
   },
   freshRotatedToken: null,
 };
@@ -207,6 +212,12 @@ async function loadViewData(view = state.activeView) {
       state.data.plans = await api('/api/panel/plans');
     } else if (view === 'wallet') {
       state.data.wallet = await api('/api/panel/wallet');
+    } else if (view === 'users') {
+      const q = encodeURIComponent(state.filters.usersSearch.trim());
+      state.data.users = await api(`/api/panel/users?q=${q}`);
+    } else if (view === 'premium_members') {
+      const params = new URLSearchParams({ q: state.filters.premiumSearch.trim(), status: state.filters.premiumStatus });
+      state.data.premiumMembers = await api(`/api/panel/premium-members?${params.toString()}`);
     } else if (view === 'owner_kpis' || view === 'owner_delivery') {
       state.data.ownerDashboard = await api('/api/panel/owner/dashboard');
     } else if (view === 'owner_withdrawals') {
@@ -255,6 +266,8 @@ const NAV_ICONS = {
   owner_kpis: '<svg class="nav-icon" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>',
   owner_withdrawals: '<svg class="nav-icon" viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
   owner_payments: '<svg class="nav-icon" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>',
+  users: '<svg class="nav-icon" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  premium_members: '<svg class="nav-icon" viewBox="0 0 24 24"><path d="m12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"/></svg>',
   owner_delivery: '<svg class="nav-icon" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>',
 };
 
@@ -278,6 +291,8 @@ function getNavSections() {
     { id: 'channels', label: 'Channels', count: totalChannels },
     { id: 'plans', label: state.user?.isOwner ? 'Platform Plans' : 'My Premium Plans', count: ov ? ov.counts?.plans : null },
     { id: 'wallet', label: 'Wallet & Payouts', count: null },
+    { id: 'users', label: state.user?.isOwner ? 'All Users' : 'My Bot Users', count: null },
+    { id: 'premium_members', label: state.user?.isOwner ? 'Premium Members' : 'My Premium Members', count: null },
     { id: 'token', label: 'Access Token', count: null },
   ];
 
@@ -1419,6 +1434,27 @@ function renderOwnerDelivery() {
   `;
 }
 
+function renderUserDirectory() {
+  const d=state.data.users;
+  if(state.loading&&!d)return `<div class="surface">${renderSkeletonRows(6)}</div>`;
+  const rows=d?.rows||[];
+  return `<div class="page-head"><div><h1>${state.user?.isOwner?'All Platform Users':'My Bot Users'}</h1><p class="page-subtitle">Telegram users tracked by your bot workspace.</p></div></div>
+    <div class="surface"><div class="surface-header"><div class="surface-title">${d?.total??0} users</div><div class="input-row"><input class="input" id="users-search" placeholder="Search name, username or ID" value="${esc(state.filters.usersSearch)}"/></div></div>
+    <div class="table-wrap"><table><thead><tr><th>User</th><th>Telegram ID</th><th>Joined</th><th>Last seen</th><th>Premium</th><th>Interactions</th><th>Status</th></tr></thead><tbody>
+    ${rows.length?rows.map(u=>`<tr><td><strong>${esc([u.firstName,u.lastName].filter(Boolean).join(' ')||'Telegram User')}</strong><div class="cell-sub">${u.username?'@'+esc(u.username):'No username'}</div></td><td class="mono">${esc(u.userId)}</td><td>${esc(formatDate(u.joinedAt))}</td><td>${esc(formatDateTime(u.lastSeenAt))}</td><td><span class="${u.premiumActive?'status-ok':'status-muted'}">${u.premiumActive?'Premium':'Free'}</span></td><td class="num">${Number(u.interactions||0).toLocaleString()}</td><td><span class="${u.isBlocked?'status-danger':'status-ok'}">${u.isBlocked?'Blocked':'Active'}</span></td></tr>`).join(''):`<tr><td colspan="7"><div class="empty-state"><h3>No users found</h3><p>Users will appear as they interact with your bots.</p></div></td></tr>`}
+    </tbody></table></div></div>`;
+}
+function renderPremiumDirectory() {
+  const d=state.data.premiumMembers;
+  if(state.loading&&!d)return `<div class="surface">${renderSkeletonRows(6)}</div>`;
+  const rows=d?.rows||[];
+  return `<div class="page-head"><div><h1>${state.user?.isOwner?'Platform Premium Members':'My Premium Members'}</h1><p class="page-subtitle">Subscriptions, expiry dates and remaining days.</p></div></div>
+    <div class="surface"><div class="surface-header"><div class="surface-title">${d?.total??0} memberships</div><div class="input-row"><input class="input" id="premium-search" placeholder="Search name, username or ID" value="${esc(state.filters.premiumSearch)}"/><select class="select" id="premium-status"><option value="all" ${state.filters.premiumStatus==='all'?'selected':''}>All</option><option value="active" ${state.filters.premiumStatus==='active'?'selected':''}>Active</option><option value="expired" ${state.filters.premiumStatus==='expired'?'selected':''}>Expired</option><option value="permanent" ${state.filters.premiumStatus==='permanent'?'selected':''}>Lifetime</option></select></div></div>
+    <div class="table-wrap"><table><thead><tr><th>Member</th><th>Telegram ID</th><th>Plan</th><th>Start</th><th>Expiry</th><th>Days left</th><th>Status</th></tr></thead><tbody>
+    ${rows.length?rows.map(m=>`<tr><td><strong>${esc([m.firstName,m.lastName].filter(Boolean).join(' ')||'Telegram User')}</strong><div class="cell-sub">${m.username?'@'+esc(m.username):'No username'}</div></td><td class="mono">${esc(m.userId)}</td><td>${esc(m.planName)}</td><td>${esc(formatDate(m.startedAt))}</td><td>${m.expiresAt?esc(formatDateTime(m.expiresAt)):'Lifetime'}</td><td class="num">${m.daysRemaining===null?'∞':Number(m.daysRemaining)+' days'}</td><td><span class="${m.status==='active'&& (m.daysRemaining===null||m.daysRemaining>0)?'status-ok':'status-warn'}">${m.daysRemaining===null?'Lifetime':m.daysRemaining>0?'Active':'Expired'}</span></td></tr>`).join(''):`<tr><td colspan="7"><div class="empty-state"><h3>No premium members</h3><p>Premium memberships will appear here.</p></div></td></tr>`}
+    </tbody></table></div></div>`;
+}
+
 function renderActiveView() {
   switch (state.activeView) {
     case 'overview': return renderOverview();
@@ -1427,6 +1463,8 @@ function renderActiveView() {
     case 'channels': return renderChannels();
     case 'plans': return renderPlans();
     case 'wallet': return renderWallet();
+    case 'users': return renderUserDirectory();
+    case 'premium_members': return renderPremiumDirectory();
     case 'token': return renderTokenSettings();
     case 'owner_kpis': return renderOwnerKpis();
     case 'owner_withdrawals': return renderOwnerWithdrawals();
@@ -1533,6 +1571,11 @@ function bindWorkspaceEvents() {
   appEl.querySelectorAll('[data-copy-url]').forEach((el) => {
     el.addEventListener('click', () => copyText(el.dataset.copyUrl, 'Copied to clipboard'));
   });
+
+  // User and premium directory search/filter events
+  document.getElementById('users-search')?.addEventListener('input', (e) => { state.filters.usersSearch = e.target.value; loadViewData('users'); });
+  document.getElementById('premium-search')?.addEventListener('input', (e) => { state.filters.premiumSearch = e.target.value; loadViewData('premium_members'); });
+  document.getElementById('premium-status')?.addEventListener('change', (e) => { state.filters.premiumStatus = e.target.value; loadViewData('premium_members'); });
 
   // Links view events
   appEl.querySelectorAll('[data-link-tab]').forEach((el) => {
