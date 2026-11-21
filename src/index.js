@@ -3,12 +3,13 @@ import { createLogger } from './logger.js';
 import { createDatabasePool, activateMockDatabasePool, closeDatabasePool } from './database/pool.js';
 import { runMigrations } from './database/migrate.js';
 import { resolveTokenEncryptionKey } from './security/token-encryption.js';
-import { createMainBot } from './bot/main.js';
+import { createMainBot, MAIN_BOT_MENU_COMMANDS } from './bot/main.js';
 import { createDeliveryBotManager } from './delivery/manager.js';
 import { startCheckpointSessionCleanup } from './access/checkpoint-cleanup-worker.js';
 import { startPaymentRecoveryWorker } from './payments/recovery-worker.js';
 import { startPaymentSessionExpiryWorker } from './payments/session-expiry-worker.js';
 import { startHttpServer } from './server.js';
+import { launchTelegramBot } from './bot/telegram-utils.js';
 
 let shutdownStarted = false;
 let httpServer;
@@ -36,22 +37,6 @@ async function verifyDatabaseSchema(pool) {
   }
 }
 
-function launchBot(bot, onRuntimeError) {
-  return new Promise((resolve, reject) => {
-    let launched = false;
-    bot.launch({ handleSignals: false }, () => {
-      launched = true;
-      resolve(bot.botInfo);
-    }).catch((error) => {
-      if (!launched) {
-        reject(error);
-      } else {
-        onRuntimeError?.(error);
-      }
-    });
-  });
-}
-
 async function main() {
   const config = loadRuntimeConfig();
   const logger = createLogger(config);
@@ -69,6 +54,8 @@ async function main() {
     botUsername: null,
     missingEnv: config.missingEnv,
     pool: null,
+    config,
+    notifyTelegram: null,
   };
 
   registerShutdown();
@@ -93,15 +80,19 @@ async function main() {
 
   if (!config.previewMode && config.mainBotToken && !pool.isMock) {
     const tokenEncryptionKey = await resolveTokenEncryptionKey(pool, config.tokenEncryptionKey);
-    const effectiveConfig = Object.freeze({ ...config, tokenEncryptionKey });
+    const effectiveConfig = { ...config, tokenEncryptionKey, notifyTelegram: null };
     try {
       deliveryManager = createDeliveryBotManager(effectiveConfig, logger, pool);
       checkpointCleanupWorker = startCheckpointSessionCleanup(pool, logger);
       mainBot = createMainBot({ ...effectiveConfig, deliveryManager }, logger, pool);
-      paymentRecoveryWorker = startPaymentRecoveryWorker(pool, logger, mainBot.telegram);
+      effectiveConfig.notifyTelegram = mainBot.telegram;
+      Object.freeze(effectiveConfig);
+      runtimeState.config = effectiveConfig;
+      runtimeState.notifyTelegram = mainBot.telegram;
+      paymentRecoveryWorker = startPaymentRecoveryWorker(pool, logger, mainBot.telegram, 30_000, config.adminIds);
       paymentSessionExpiryWorker = startPaymentSessionExpiryWorker(pool, logger);
 
-      const botInfo = await launchBot(mainBot, (error) => {
+      const botInfo = await launchTelegramBot(mainBot, (error) => {
         const safeMessage = sanitizeErrorMessage(error);
         runtimeState.telegram = 'standby';
         runtimeState.telegramError = safeMessage;
@@ -111,6 +102,7 @@ async function main() {
       runtimeState.telegramError = null;
       runtimeState.botUsername = botInfo?.username ?? null;
       logger.info({ nodeEnv: config.nodeEnv, adminCount: config.adminIds.length, username: runtimeState.botUsername }, 'FileStore Main Bot started');
+      void mainBot.telegram.setMyCommands([...MAIN_BOT_MENU_COMMANDS]).catch(() => {});
     } catch (error) {
       const safeMessage = sanitizeErrorMessage(error);
       runtimeState.telegramError = safeMessage;

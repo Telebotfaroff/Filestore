@@ -1,3 +1,5 @@
+import { formatMoney, formatRevenueSummary, parsePositiveInt } from '../utils/validation.js';
+
 export async function getAdminDashboardStats(pool) {
   const result = await pool.query(`SELECT
     (SELECT COUNT(*)::int FROM users) AS users_total,
@@ -24,23 +26,25 @@ export async function getAdminDashboardStats(pool) {
 
 export function formatAdminDashboard(stats) {
   return [
-    'FileStore Dashboard',
+    '📊 FileStore Dashboard',
+    '━━━━━━━━━━━━━━━━━━',
     '',
-    'Users: ' + stats.users_total + ' (active 7d: ' + stats.users_active_7d + ')',
-    'Files: ' + stats.files_active + ' active · ' + stats.files_disabled + ' disabled',
-    'Storage channels: ' + stats.storage_channels_active,
-    'Delivery bots: ' + stats.delivery_bots_active,
+    '👥 Users: ' + stats.users_total + ' (active 7d: ' + stats.users_active_7d + ')',
+    '📁 Files: ' + stats.files_active + ' active · ' + stats.files_disabled + ' disabled',
+    '🗄 Storage channels: ' + stats.storage_channels_active,
+    '🤖 Delivery bots: ' + stats.delivery_bots_active,
     '',
-    'Delivery queue',
-    'Pending: ' + stats.jobs_pending + ' · Processing: ' + stats.jobs_processing,
-    'Completed: ' + stats.jobs_completed + ' · Failed: ' + stats.jobs_failed + ' · Uncertain: ' + stats.jobs_uncertain,
+    '📬 Delivery Queue',
+    '• ⏳ Pending: ' + stats.jobs_pending + ' · ⚡ Processing: ' + stats.jobs_processing,
+    '• ✅ Completed: ' + stats.jobs_completed + ' · ❌ Failed: ' + stats.jobs_failed + ' · ⚠️ Uncertain: ' + stats.jobs_uncertain,
     '',
-    'Premium active: ' + stats.premium_active,
-    'Active paid links: single ' + stats.paid_file_links_active + ' · batch ' + stats.paid_batch_links_active,
-    'Pending purchases: single ' + stats.paid_file_requests_pending + ' · batch ' + stats.paid_batch_requests_pending,
-    'Payments applied: ' + stats.payments_applied,
-    'Recorded revenue: ' + (Object.entries(stats.revenue_by_currency ?? {}).map(([currency, minor]) => currency + ' ' + (Number(minor) / 100).toFixed(2)).join(' · ') || 'none'),
-    'Activity events (24h): ' + stats.events_24h,
+    '💎 Monetization & Activity',
+    '• 🌟 Premium active: ' + stats.premium_active,
+    '• 🏷 Active paid links: single ' + stats.paid_file_links_active + ' · batch ' + stats.paid_batch_links_active,
+    '• 📥 Pending purchases: single ' + stats.paid_file_requests_pending + ' · batch ' + stats.paid_batch_requests_pending,
+    '• 💳 Payments applied: ' + stats.payments_applied,
+    '• 💰 Recorded revenue: ' + formatRevenueSummary(stats.revenue_by_currency),
+    '• 📈 Activity events (24h): ' + stats.events_24h,
   ].join('\n');
 }
 
@@ -71,8 +75,9 @@ export async function listRecentPayments(pool, limit = 10) {
 }
 
 export async function getPaymentTransactionDetail(pool, transactionId) {
-  const id = Number(transactionId);
-  if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Invalid payment transaction ID.');
+  let id;
+  try { id = parsePositiveInt(transactionId, 'Payment transaction ID'); }
+  catch { throw new Error('Invalid payment transaction ID.'); }
   const txResult = await pool.query(
     `SELECT t.id, t.user_telegram_id, t.method, t.external_transaction_id, t.utr, t.purpose,
             t.plan_id, t.file_id, t.batch_link_id, t.paid_link_id, t.amount_minor, t.currency,
@@ -176,15 +181,23 @@ export async function getPaymentAnalytics(pool) {
 }
 
 export function formatPaymentAnalytics(analytics) {
-  const amount = (minor, currency) => (Number(minor ?? 0) / 100).toFixed(2) + ' ' + currency;
-  const lines = ['Payment Analytics · Last 30 days', '', 'Revenue and outcomes'];
-  for (const row of analytics.totals) lines.push(row.currency + ' · Revenue: ' + amount(row.successful_minor, row.currency) + ' · Successful: ' + row.successful_count + ' · Failed/expired: ' + row.unsuccessful_count + ' · Total: ' + row.total_count);
-  if (!analytics.totals.length) lines.push('No payment records in the selected period.');
-  lines.push('', 'Payment method breakdown');
-  for (const row of analytics.methods) lines.push(row.method + ' · ' + row.currency + ' · Revenue ' + amount(row.successful_minor, row.currency) + ' · Success ' + row.successful_count + ' · Failed/expired ' + row.unsuccessful_count + ' · Total ' + row.total_count);
-  if (!analytics.methods.length) lines.push('No method records.');
-  lines.push('', 'Premium conversion snapshot', 'Active memberships now: ' + Number(analytics.premium.active_members ?? 0), 'New active memberships (30d): ' + Number(analytics.premium.new_members_30d ?? 0), 'Membership records created (30d): ' + Number(analytics.premium.membership_records_30d ?? 0), 'Unique paying users (30d): ' + Number(analytics.payingUsers ?? 0), '', 'Daily applied revenue');
-  for (const row of analytics.daily) lines.push(new Date(row.day).toISOString().slice(0, 10) + ' · ' + row.currency + ' · ' + amount(row.successful_minor, row.currency) + ' · ' + row.successful_count + ' successful');
-  if (!analytics.daily.length) lines.push('No daily payment totals.');
+  const lines = ['📈 Payment Analytics · Last 30 Days', '━━━━━━━━━━━━━━━━━━', '', '💰 Revenue & Outcomes'];
+  for (const row of analytics.totals) lines.push('• ' + row.currency + ' · Revenue: ' + formatMoney(row.successful_minor, row.currency) + ' · ✅ ' + row.successful_count + ' · ❌ ' + row.unsuccessful_count + ' · Total: ' + row.total_count);
+  if (!analytics.totals.length) lines.push('• No payment records in the selected period.');
+  lines.push('', '💳 Payment Method Breakdown');
+  for (const row of analytics.methods) lines.push('• ' + row.method + ' · ' + row.currency + ' · Revenue ' + formatMoney(row.successful_minor, row.currency) + ' · ✅ ' + row.successful_count + ' · ❌ ' + row.unsuccessful_count + ' · Total: ' + row.total_count);
+  if (!analytics.methods.length) lines.push('• No method records.');
+  lines.push(
+    '',
+    '💎 Premium Conversion Snapshot',
+    '• 🌟 Active memberships now: ' + Number(analytics.premium.active_members ?? 0),
+    '• 🆕 New active memberships (30d): ' + Number(analytics.premium.new_members_30d ?? 0),
+    '• 🧾 Membership records created (30d): ' + Number(analytics.premium.membership_records_30d ?? 0),
+    '• 👥 Unique paying users (30d): ' + Number(analytics.payingUsers ?? 0),
+    '',
+    '📅 Daily Applied Revenue',
+  );
+  for (const row of analytics.daily) lines.push('• ' + new Date(row.day).toISOString().slice(0, 10) + ' · ' + row.currency + ' · ' + formatMoney(row.successful_minor, row.currency) + ' · ✅ ' + row.successful_count + ' successful');
+  if (!analytics.daily.length) lines.push('• No daily payment totals.');
   return lines.join('\n');
 }

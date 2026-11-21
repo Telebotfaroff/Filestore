@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { z } from 'zod';
+import { normalizeSecret } from '../utils/validation.js';
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -29,15 +30,19 @@ export function loadConfig(source = process.env) {
     throw new Error(`Invalid FileStore configuration:\n${details}`);
   }
   const value = result.data;
+  const mainBotToken = normalizeSecret(value.MAIN_BOT_TOKEN);
+  if (!mainBotToken) {
+    throw new Error('Invalid FileStore configuration:\n- MAIN_BOT_TOKEN: MAIN_BOT_TOKEN is required');
+  }
   const adminIds = parseAdminIds(value.ADMIN_IDS);
   if (adminIds.length === 0) throw new Error('ADMIN_IDS must contain at least one Telegram administrator ID');
   return Object.freeze({
     nodeEnv: value.NODE_ENV,
     logLevel: value.LOG_LEVEL,
-    mainBotToken: value.MAIN_BOT_TOKEN,
-    deliveryBotToken: value.DELIVERY_BOT_TOKEN,
+    mainBotToken,
+    deliveryBotToken: normalizeSecret(value.DELIVERY_BOT_TOKEN),
     databaseUrl: value.DATABASE_URL,
-    tokenEncryptionKey: value.TOKEN_ENCRYPTION_KEY,
+    tokenEncryptionKey: normalizeSecret(value.TOKEN_ENCRYPTION_KEY),
     adminIds: Object.freeze(adminIds),
   });
 }
@@ -57,12 +62,14 @@ export function loadDatabaseConfig(source = process.env) {
 
 export function loadRuntimeConfig(source = process.env) {
   const port = Number(source.FILESTORE_PORT) || 3000;
+  const appUrl = String(source.APP_URL ?? '').trim();
   try {
     const strict = loadConfig(source);
-    return Object.freeze({ ...strict, port, previewMode: false, missingEnv: Object.freeze([]) });
+    return Object.freeze({ ...strict, port, appUrl, previewMode: false, missingEnv: Object.freeze([]) });
   } catch {
+    const mainBotToken = normalizeSecret(source.MAIN_BOT_TOKEN);
     const missingEnv = [];
-    if (!String(source.MAIN_BOT_TOKEN ?? '').trim()) missingEnv.push('MAIN_BOT_TOKEN');
+    if (!mainBotToken) missingEnv.push('MAIN_BOT_TOKEN');
     if (!String(source.DATABASE_URL ?? '').trim()) missingEnv.push('DATABASE_URL');
     if (!String(source.ADMIN_IDS ?? '').trim()) missingEnv.push('ADMIN_IDS');
     const nodeEnv = ['development', 'test', 'production'].includes(source.NODE_ENV) ? source.NODE_ENV : 'development';
@@ -73,10 +80,11 @@ export function loadRuntimeConfig(source = process.env) {
       nodeEnv,
       logLevel,
       port,
-      mainBotToken: String(source.MAIN_BOT_TOKEN ?? '').trim(),
-      deliveryBotToken: String(source.DELIVERY_BOT_TOKEN ?? '').trim(),
+      appUrl,
+      mainBotToken,
+      deliveryBotToken: normalizeSecret(source.DELIVERY_BOT_TOKEN),
       databaseUrl: String(source.DATABASE_URL ?? '').trim(),
-      tokenEncryptionKey: String(source.TOKEN_ENCRYPTION_KEY ?? '').trim(),
+      tokenEncryptionKey: normalizeSecret(source.TOKEN_ENCRYPTION_KEY),
       adminIds: Object.freeze(adminIds),
       previewMode: true,
       missingEnv: Object.freeze(missingEnv),

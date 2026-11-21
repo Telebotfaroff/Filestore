@@ -1,116 +1,63 @@
 import http from 'node:http';
+import path from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { getOperationalHealth } from './admin/operational-health.js';
+import { handlePanelApiRequest } from './web/api-router.js';
 
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PUBLIC_DIR = path.resolve(__dirname, 'web', 'public');
 
-function renderStatusPage(status) {
-  const missingItems = status.missingEnv.length
-    ? status.missingEnv.map((name) => `<li><code>${escapeHtml(name)}</code></li>`).join('')
-    : '<li>None — all required variables configured</li>';
+const ASSET_CONTENT_TYPES = Object.freeze({
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+});
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>FileStore — Telegram File Indexing &amp; Delivery Platform</title>
-  <style>
-    :root { color-scheme: dark; }
-    body {
-      margin: 0;
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background: #0b101b;
-      color: #e2e8f0;
-      line-height: 1.5;
-    }
-    main {
-      max-width: 760px;
-      margin: 48px auto;
-      padding: 0 20px;
-    }
-    .card {
-      background: #131b2e;
-      border: 1px solid #24304a;
-      border-radius: 10px;
-      padding: 20px 24px;
-      margin-bottom: 16px;
-    }
-    h1 { margin: 0 0 8px; font-size: 1.5rem; color: #f8fafc; }
-    h2 { margin: 0 0 12px; font-size: 1.05rem; color: #cbd5e1; }
-    p { margin: 0 0 12px; color: #94a3b8; }
-    dl {
-      display: grid;
-      grid-template-columns: 180px 1fr;
-      gap: 8px 16px;
-      margin: 0;
-      font-size: 0.95rem;
-    }
-    dt { color: #94a3b8; }
-    dd { margin: 0; color: #f1f5f9; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    ul { margin: 8px 0 0; padding-left: 20px; color: #cbd5e1; }
-    code {
-      background: #1e293b;
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 0.9em;
-    }
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 0.8rem;
-      font-weight: 600;
-      background: #1e293b;
-      color: #38bdf8;
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <div class="card">
-      <h1>FileStore</h1>
-      <p>Telegram file indexing, access control, payments, and delivery platform.</p>
-      <span class="badge">${escapeHtml(status.mode)}</span>
-    </div>
-    <div class="card">
-      <h2>Runtime Status</h2>
-      <dl>
-        <dt>HTTP Server</dt><dd>Listening on 0.0.0.0:${escapeHtml(status.port)}</dd>
-        <dt>Database</dt><dd>${escapeHtml(status.database)}${status.databaseError ? ` (${escapeHtml(status.databaseError)})` : ''}</dd>
-        <dt>Main Bot</dt><dd>${escapeHtml(status.telegram)}${status.botUsername ? ` (@${escapeHtml(status.botUsername)})` : ''}${status.telegramError ? ` (${escapeHtml(status.telegramError)})` : ''}</dd>
-        <dt>Delivery Bots</dt><dd>${escapeHtml(status.delivery)}${status.deliveryError ? ` (${escapeHtml(status.deliveryError)})` : ''}</dd>
-        <dt>Environment</dt><dd>${escapeHtml(status.nodeEnv)}</dd>
-        <dt>Uptime</dt><dd>${escapeHtml(status.uptimeSeconds)}s</dd>
-      </dl>
-    </div>
-    <div class="card">
-      <h2>Configuration</h2>
-      <p>Missing environment variables for live Telegram &amp; PostgreSQL operation:</p>
-      <ul>${missingItems}</ul>
-    </div>
-    <div class="card">
-      <h2>HTTP Endpoints</h2>
-      <ul>
-        <li><code>GET /</code> — Service overview</li>
-        <li><code>GET /health</code> — JSON health probe</li>
-        <li><code>GET /api/status</code> — Operational status JSON</li>
-      </ul>
-    </div>
-  </main>
-</body>
-</html>`;
+async function serveStaticFile(res, relativeName, cacheControl = 'no-cache') {
+  let decoded;
+  try {
+    decoded = decodeURIComponent(String(relativeName || ''));
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Bad request');
+    return;
+  }
+  if (decoded.includes('\0')) {
+    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Bad request');
+    return;
+  }
+  const safeName = decoded.replace(/^\/+/, '');
+  const resolved = path.resolve(PUBLIC_DIR, safeName);
+  if (!resolved.startsWith(PUBLIC_DIR + path.sep)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Forbidden');
+    return;
+  }
+  try {
+    const body = await readFile(resolved);
+    const ext = path.extname(resolved).toLowerCase();
+    res.writeHead(200, {
+      'Content-Type': ASSET_CONTENT_TYPES[ext] || 'application/octet-stream',
+      'Cache-Control': cacheControl,
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+    });
+    res.end(body);
+  } catch {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Not found');
+  }
 }
 
 export function startHttpServer(state, logger) {
   const startedAt = Date.now();
-  const port = Number(state.port) || 3000;
+  const port = state.port !== undefined && state.port !== null && Number.isInteger(Number(state.port))
+    ? Number(state.port)
+    : 3000;
 
   function buildSummary() {
     return {
@@ -170,17 +117,23 @@ export function startHttpServer(state, logger) {
       return;
     }
 
-    if (req.method === 'GET' && urlPath === '/') {
-      const summary = buildSummary();
+    if (urlPath.startsWith('/api/panel/')) {
+      return handlePanelApiRequest(req, res, state, logger);
+    }
+
+    if (req.method === 'GET' && urlPath.startsWith('/assets/')) {
+      const assetName = urlPath.slice('/assets/'.length);
+      return serveStaticFile(res, assetName, 'no-cache');
+    }
+
+    if (req.method === 'GET' && (urlPath === '/' || urlPath === '/panel')) {
       const accept = String(req.headers.accept || '');
       if (accept.includes('application/json') && !accept.includes('text/html')) {
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify(summary));
+        res.end(JSON.stringify(buildSummary()));
         return;
       }
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(renderStatusPage(summary));
-      return;
+      return serveStaticFile(res, 'index.html', 'no-store');
     }
 
     res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });

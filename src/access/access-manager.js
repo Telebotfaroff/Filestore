@@ -1,9 +1,21 @@
 import { getCheckpointRequirement } from './checkpoint-engine.js';
 
-async function isPremiumActive(pool, userId, now = new Date()) {
+async function isPremiumActive(pool, userId, now = new Date(), ownerId = null) {
+  if (ownerId !== null && ownerId !== undefined) {
+    const result = await pool.query(
+      `SELECT 1 FROM premium_memberships
+       WHERE user_telegram_id = $1 AND status = 'active'
+         AND (owner_telegram_id = $3 OR owner_telegram_id IS NULL)
+         AND starts_at <= $2 AND (expires_at IS NULL OR expires_at > $2)
+       ORDER BY expires_at DESC NULLS FIRST LIMIT 1`,
+      [userId, now, Number(ownerId)],
+    );
+    return result.rowCount > 0;
+  }
   const result = await pool.query(
     `SELECT 1 FROM premium_memberships
      WHERE user_telegram_id = $1 AND status = 'active'
+       AND owner_telegram_id IS NULL
        AND starts_at <= $2 AND (expires_at IS NULL OR expires_at > $2)
      ORDER BY expires_at DESC NULLS FIRST LIMIT 1`,
     [userId, now],
@@ -11,7 +23,14 @@ async function isPremiumActive(pool, userId, now = new Date()) {
   return result.rowCount > 0;
 }
 
-async function checkpointEnabled(pool) {
+async function checkpointEnabled(pool, ownerId = null) {
+  if (ownerId !== null && ownerId !== undefined) {
+    const result = await pool.query(
+      'SELECT checkpoint_enabled FROM user_creator_settings WHERE user_telegram_id = $1 LIMIT 1',
+      [Number(ownerId)],
+    );
+    return result.rowCount ? result.rows[0].checkpoint_enabled === true : false;
+  }
   const result = await pool.query("SELECT value FROM app_settings WHERE key = 'checkpoint_enabled' LIMIT 1");
   return result.rowCount ? result.rows[0].value === true : false;
 }
@@ -25,6 +44,7 @@ export async function evaluateAccess(pool, request, forceSubResult, now = new Da
   }
 
   const userId = Number(request.userId);
+  const ownerId = request?.ownerId !== undefined && request?.ownerId !== null ? Number(request.ownerId) : null;
   if (request.type === 'paid_file') {
     if (!Number.isSafeInteger(Number(request.resourceId))) return { allowed: false, reason: 'invalid_resource' };
     const grants = await pool.query(
@@ -36,15 +56,15 @@ export async function evaluateAccess(pool, request, forceSubResult, now = new Da
   }
 
   if (!['free_file', 'batch'].includes(request.type)) return { allowed: false, reason: 'unsupported_access_type' };
-  const premium = await isPremiumActive(pool, userId, now);
+  const premium = await isPremiumActive(pool, userId, now, ownerId);
   if (premium) return { allowed: true, reason: 'premium' };
 
-  if (!await checkpointEnabled(pool)) return { allowed: true, reason: 'checkpoint_disabled' };
-  const checkpoint = await getCheckpointRequirement(pool, userId);
+  if (!await checkpointEnabled(pool, ownerId)) return { allowed: true, reason: 'checkpoint_disabled' };
+  const checkpoint = await getCheckpointRequirement(pool, userId, ownerId);
   if (checkpoint.reason === 'checkpoint_active') return { allowed: true, reason: 'checkpoint_active', expiresAt: checkpoint.expiresAt };
   if (checkpoint.reason === 'no_active_providers') return { allowed: false, reason: 'checkpoint_provider_unavailable' };
   if (checkpoint.blocked) return { allowed: false, reason: 'checkpoint_verification_unavailable', provider: checkpoint.provider };
-  return { allowed: false, reason: 'checkpoint_required', provider: checkpoint.provider, step: checkpoint.step, total: checkpoint.total };
+  return { allowed: false, reason: 'checkpoint_required', provider: checkpoint.provider, candidates: checkpoint.candidates, step: checkpoint.step, total: checkpoint.total };
 }
 
 export async function grantAccess(pool, userId, resourceType, resourceId, reason, expiresAt, adminId) {

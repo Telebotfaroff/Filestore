@@ -20,3 +20,8 @@ test('rejects malformed admin IDs', () => {
 test('requires at least one administrator', () => {
   assert.throws(() => loadConfig({ ...valid, ADMIN_IDS: '' }), /at least one Telegram administrator ID/);
 });
+test('strips accidental surrounding quotes and whitespace from tokens', () => {
+  const config = loadConfig({ ...valid, MAIN_BOT_TOKEN: ' "123:TEST_TOKEN" ', DELIVERY_BOT_TOKEN: " '456:DELIVERY' " });
+  assert.equal(config.mainBotToken, '123:TEST_TOKEN');
+  assert.equal(config.deliveryBotToken, '456:DELIVERY');
+});

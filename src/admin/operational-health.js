@@ -23,26 +23,29 @@ export async function getOperationalHealth(pool) {
 
 export function formatOperationalHealth(health) {
   const s = health.stats;
+  const statusIcon = health.status === 'ok' ? '🟢' : '⚠️';
   const lines = [
-    'FileStore Operational Health',
-    'Database: OK · query ' + health.latencyMs + 'ms',
-    'Overall: ' + health.status.toUpperCase(),
+    '🩺 FileStore Operational Health',
+    '━━━━━━━━━━━━━━━━━━',
     '',
-    'Delivery queue',
-    'Pending: ' + s.delivery_pending + ' (older than 10m: ' + s.delivery_pending_stale + ')',
-    'Processing: ' + s.delivery_processing + ' (stale leases: ' + s.delivery_processing_stale + ')',
-    'Failed: ' + s.delivery_failed + ' · Uncertain: ' + s.delivery_uncertain,
+    '🗄 Database: 🟢 OK · query ' + health.latencyMs + 'ms',
+    `${statusIcon} Overall: ${health.status.toUpperCase()}`,
     '',
-    'Auto-delete',
-    'Due now: ' + s.deletions_due + ' · Stale leases: ' + s.deletions_stale + ' · Failed: ' + s.deletions_failed,
+    '📬 Delivery Queue',
+    '• ⏳ Pending: ' + s.delivery_pending + ' (older than 10m: ' + s.delivery_pending_stale + ')',
+    '• ⚡ Processing: ' + s.delivery_processing + ' (stale leases: ' + s.delivery_processing_stale + ')',
+    '• ❌ Failed: ' + s.delivery_failed + ' · ⚠️ Uncertain: ' + s.delivery_uncertain,
     '',
-    'Payments',
-    'Verified recovery pending: ' + s.payment_recovery_pending,
-    'Customer notifications pending: ' + s.payment_notifications_pending + ' · Exhausted retries: ' + s.payment_notifications_exhausted,
+    '⏱ Auto-Delete',
+    '• Due now: ' + s.deletions_due + ' · Stale leases: ' + s.deletions_stale + ' · Failed: ' + s.deletions_failed,
     '',
-    'Checkpoint cleanup',
-    'Expired pending sessions: ' + s.checkpoint_expired_pending,
+    '💳 Payments',
+    '• 🔁 Verified recovery pending: ' + s.payment_recovery_pending,
+    '• 🔔 Customer notifications pending: ' + s.payment_notifications_pending + ' · Exhausted retries: ' + s.payment_notifications_exhausted,
+    '',
+    '🔐 Checkpoint Cleanup',
+    '• 🧹 Expired pending sessions: ' + s.checkpoint_expired_pending,
   ];
-  if (health.warnings.length) lines.push('', 'Attention: ' + health.warnings.map(key => key.replaceAll('_',' ')).join(' · '));
+  if (health.warnings.length) lines.push('', '⚠️ Attention: ' + health.warnings.map(key => key.replaceAll('_',' ')).join(' · '));
   return lines.join('\n');
 }

@@ -127,11 +127,12 @@ export async function recordVerifiedPayment(pool, payment) {
       return { duplicate: true, transaction: tx };
     }
     if (session.status !== 'pending' && !(method === 'telegram_stars' && payment.allowExpiredSession === true && session.status === 'expired')) throw new Error('Payment session is no longer pending.');
+    const utr = payment.utr ? String(payment.utr).trim().slice(0, 64) : null;
     const inserted = await client.query(
-      `INSERT INTO payment_transactions (user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, batch_link_id, paid_link_id, amount_minor, currency, status, session_id, verified_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'verified',$11,NOW())
-       RETURNING id, user_telegram_id, method, external_transaction_id, purpose, plan_id, file_id, batch_link_id, paid_link_id, amount_minor, currency, status, session_id, verified_at`,
-      [userId, method, transactionId, purpose, payment.planId ?? null, payment.fileId ?? null, payment.batchLinkId ?? null, payment.paidLinkId ?? null, amountMinor, currency, sessionId],
+      `INSERT INTO payment_transactions (user_telegram_id, method, external_transaction_id, utr, purpose, plan_id, file_id, batch_link_id, paid_link_id, amount_minor, currency, status, session_id, verified_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'verified',$12,NOW())
+       RETURNING id, user_telegram_id, method, external_transaction_id, utr, purpose, plan_id, file_id, batch_link_id, paid_link_id, amount_minor, currency, status, session_id, verified_at`,
+      [userId, method, transactionId, utr, purpose, payment.planId ?? null, payment.fileId ?? null, payment.batchLinkId ?? null, payment.paidLinkId ?? null, amountMinor, currency, sessionId],
     );
     await client.query(
       `UPDATE payment_sessions SET status = 'verified', updated_at = NOW() WHERE id = $1`,

@@ -1,7 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { buildShortenerApiRequest, createCheckpointSession, applyVerifiedCheckpoint, getCheckpointRequirement } from '../src/access/checkpoint-engine.js';
+import { createHash, randomBytes } from 'node:crypto';
+import {
+  buildShortenerApiRequest,
+  createCheckpointSession,
+  applyVerifiedCheckpoint,
+  getCheckpointRequirement,
+  extractShortenedUrl,
+  shortenUrlWithProvider,
+  createCheckpointChallenge,
+} from '../src/access/checkpoint-engine.js';
+import {
+  normalizeShortenerUrls,
+  parseShortenerInput,
+} from '../src/access/shortener-repository.js';
+import { encryptBotToken } from '../src/security/token-encryption.js';
 
 test('builds API request using configured parameter names without unsafe protocols', () => {
   const provider = {
@@ -93,4 +106,105 @@ test('checkpoint credit rejects untrusted verifier names before database access'
   const pool = { connect: async () => { touched = true; throw new Error('should not be called'); } };
   await assert.rejects(applyVerifiedCheckpoint(pool, 'arbitrary-token', 'manual'), /Untrusted checkpoint verification method/);
   assert.equal(touched, false);
+});
+
+test('parseShortenerInput handles base_url|api_key and multiple shorteners cleanly', () => {
+  const first = parseShortenerInput('shrinkme.io|my_secret_api_key_1');
+  assert.equal(first.name, 'shrinkme.io');
+  assert.equal(first.baseUrl, 'https://shrinkme.io');
+  assert.equal(first.apiEndpoint, 'https://shrinkme.io/api');
+  assert.equal(first.verificationMode, 'callback');
+  assert.equal(first.enabled, true);
+
+  const duplicateHost = parseShortenerInput('https://shrinkme.io|another_key_2', [{ name: 'shrinkme.io' }]);
+  assert.equal(duplicateHost.name, 'shrinkme.io #2');
+
+  const named = parseShortenerInput('GPLinks|https://gplinks.com/api|gplink_key_99|720|5');
+  assert.equal(named.name, 'GPLinks');
+  assert.equal(named.baseUrl, 'https://gplinks.com');
+  assert.equal(named.apiEndpoint, 'https://gplinks.com/api');
+  assert.equal(named.checkpointMinutes, 720);
+  assert.equal(named.priority, 5);
+
+  assert.throws(() => normalizeShortenerUrls('http://insecure.example'), /HTTPS/);
+});
+
+test('extractShortenedUrl and shortenUrlWithProvider parse JSON and text responses', async () => {
+  assert.equal(
+    extractShortenedUrl('{"status":"success","shortenedUrl":"https://shrinkme.io/abc"}', { response_url_path: 'shortenedUrl', response_format: 'json' }),
+    'https://shrinkme.io/abc',
+  );
+  assert.equal(
+    extractShortenedUrl('{"data":{"url":"https://short.io/xyz"}}', { response_url_path: 'shortenedUrl', response_format: 'json' }),
+    'https://short.io/xyz',
+  );
+  assert.equal(
+    extractShortenedUrl('https://tiny.one/test123\n', { response_url_path: 'shortenedUrl', response_format: 'text' }),
+    'https://tiny.one/test123',
+  );
+  assert.throws(
+    () => extractShortenedUrl('{"status":"error","message":"Invalid API key"}', { response_format: 'json' }),
+    /Invalid API key/,
+  );
+
+  let calledUrl;
+  const fakeFetch = async (url) => {
+    calledUrl = url;
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ status: 'success', shortenedUrl: 'https://shrinkme.io/ok' }),
+    };
+  };
+  const provider = {
+    name: 'ShrinkMe',
+    api_endpoint: 'https://shrinkme.io/api',
+    api_key_param: 'api',
+    target_url_param: 'url',
+    response_url_path: 'shortenedUrl',
+    response_format: 'json',
+  };
+  const res = await shortenUrlWithProvider(provider, 'https://t.me/TestBot?start=chk_123', 'key_abc', fakeFetch);
+  assert.equal(res.shortUrl, 'https://shrinkme.io/ok');
+  const parsedCalled = new URL(calledUrl);
+  assert.equal(parsedCalled.searchParams.get('api'), 'key_abc');
+  assert.equal(parsedCalled.searchParams.get('url'), 'https://t.me/TestBot?start=chk_123');
+});
+
+test('createCheckpointChallenge decrypts API key, persists session hash, and calls shortener API', async () => {
+  const tokenEncryptionKey = randomBytes(32).toString('base64');
+  const encrypted = encryptBotToken('live_api_key_777', tokenEncryptionKey);
+  const queries = [];
+  const pool = {
+    query: async (sql, args) => {
+      queries.push({ sql, args });
+      if (sql.includes('INSERT INTO checkpoint_sessions')) {
+        return { rows: [{ id: 88, provider_id: 9, expires_at: new Date(Date.now() + 1800000) }] };
+      }
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  const provider = {
+    id: 9,
+    name: 'ShrinkMe',
+    base_url: 'https://shrinkme.io',
+    api_endpoint: 'https://shrinkme.io/api',
+    api_key_ciphertext: encrypted,
+    api_key_param: 'api',
+    target_url_param: 'url',
+    response_url_path: 'shortenedUrl',
+    response_format: 'json',
+    checkpoint_minutes: 1440,
+    verification_mode: 'callback',
+  };
+  const fakeFetch = async (url) => {
+    const req = new URL(url);
+    assert.equal(req.searchParams.get('api'), 'live_api_key_777');
+    assert.match(req.searchParams.get('url'), /^https:\/\/t\.me\/FileDeliveryBot\?start=chk_[A-Za-z0-9_-]{40,}$/);
+    return { ok: true, status: 200, text: async () => JSON.stringify({ shortenedUrl: 'https://shrinkme.io/verified' }) };
+  };
+  const challenge = await createCheckpointChallenge(pool, { tokenEncryptionKey }, 555, provider, '@FileDeliveryBot', fakeFetch);
+  assert.equal(challenge.shortUrl, 'https://shrinkme.io/verified');
+  assert.match(challenge.destinationUrl, /^https:\/\/t\.me\/FileDeliveryBot\?start=chk_/);
+  assert.equal(queries.length, 1);
 });
