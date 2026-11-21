@@ -2969,8 +2969,13 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
   async function showBroadcastPreview(ctx,draft){
     broadcastDrafts.set(String(ctx.from.id),draft);
     const content=draft.caption||draft.messageText||'(media attachment)';
-    const type=draft.mediaType?('Media: '+draft.mediaType):'Text message';
-    return renderView(ctx,'👀 <b>Broadcast Preview</b>\n━━━━━━━━━━━━━━━━━━\n'+type+'\n\n'+escapeHtml(content.slice(0,1800))+'\n\n👥 Audience snapshot will be taken when you confirm.\n\nConfirm to queue this campaign?',{inline_keyboard:[[{text:'✅ Confirm & Queue',callback_data:'cc:broadcast_confirm'}],[{text:'✖ Cancel',callback_data:'cc:broadcast_cancel_draft'}]]},false,true,{parse_mode:'HTML'});
+    const keyboard=[...(draft.buttons||[]),[{text:'✅ Confirm & Queue',callback_data:'cc:broadcast_confirm'}],[{text:'✖ Cancel',callback_data:'cc:broadcast_cancel_draft'}]];
+    if(draft.mediaType){
+      const method={photo:'replyWithPhoto',video:'replyWithVideo',document:'replyWithDocument',animation:'replyWithAnimation'}[draft.mediaType];
+      if(!method)throw new Error('Unsupported media preview type.');
+      return ctx[method](draft.mediaFileId,{...(content?{caption:content.slice(0,1024)}:{}),reply_markup:{inline_keyboard:keyboard}});
+    }
+    return renderView(ctx,'👀 <b>Broadcast Preview</b>\n━━━━━━━━━━━━━━━━━━\nText message\n\n'+escapeHtml(content.slice(0,1800))+'\n\n👥 Audience snapshot will be taken when you confirm.\n\nConfirm to queue this campaign?',{inline_keyboard:keyboard},false,true,{parse_mode:'HTML'});
   }
 
   // Platform owner broadcast: select creator, then their own delivery bot
