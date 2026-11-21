@@ -3,7 +3,7 @@ const state = {
   token: '',
   user: null,
   botUsername: null,
-  theme: 'light',
+  theme: 'dark',
   mobileNavOpen: false,
   sidebarCollapsed: false,
   activeView: 'overview',
@@ -2006,6 +2006,7 @@ function render() {
 }
 
 (async function bootstrap() {
+  document.documentElement.classList.add('dark');
   await loadMeta();
   render();
 })();
