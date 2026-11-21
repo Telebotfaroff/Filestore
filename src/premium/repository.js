@@ -1,3 +1,7 @@
+import { cached, cacheDeletePrefix } from '../utils/cache.js';
+const PLAN_TTL = 60_000;
+const ownerKey = (ownerId) => ownerId == null ? 'main' : String(Number(ownerId));
+const invalidatePlanCache = (ownerId) => { cacheDeletePrefix(`premium-plan:${ownerKey(ownerId)}:`); cacheDeletePrefix('premium-plan:any:'); };
 function normalizeOwnerId(ownerId) {
   if (ownerId === null || ownerId === undefined) return null;
   const n = Number(ownerId);
@@ -13,6 +17,7 @@ function ownerWhere(ownerId, paramIdx) {
 }
 
 export async function listPremiumPlans(pool, ownerId = null) {
+  return cached(`premium-plan:${ownerKey(ownerId)}:list`, PLAN_TTL, async () => {
   const scope = ownerWhere(ownerId, 1);
   const { rows } = await pool.query(
     `SELECT id, name, price_minor, currency, duration_days, is_enabled, owner_telegram_id
@@ -22,11 +27,14 @@ export async function listPremiumPlans(pool, ownerId = null) {
     scope.params,
   );
   return rows;
+  });
 }
 
 export async function getPremiumPlanById(pool, id, ownerId = undefined) {
   const planId = Number(id);
   if (!Number.isSafeInteger(planId) || planId <= 0) return null;
+  const keyScope = ownerId === undefined ? 'any' : ownerKey(ownerId);
+  return cached(`premium-plan:${keyScope}:id:${planId}`, PLAN_TTL, async () => {
   if (ownerId !== undefined) {
     const scope = ownerWhere(ownerId, 2);
     const { rows } = await pool.query(
@@ -40,6 +48,7 @@ export async function getPremiumPlanById(pool, id, ownerId = undefined) {
     [planId],
   );
   return rows[0] ?? null;
+  });
 }
 
 export async function upsertPremiumPlan(pool, input, actorId, ownerId = null) {
@@ -56,9 +65,9 @@ export async function upsertPremiumPlan(pool, input, actorId, ownerId = null) {
      RETURNING id, name, price_minor, currency, duration_days, is_enabled, owner_telegram_id`,
     [input.name, input.priceMinor, input.currency, input.durationDays, input.enabled, actorId, normalizedOwner],
   );
+  invalidatePlanCache(ownerId);
   return rows[0];
 }
-
 export async function setPremiumPlanEnabled(pool, id, enabled, ownerId = undefined) {
   const planId = Number(id);
   if (!Number.isSafeInteger(planId) || planId <= 0) return null;
