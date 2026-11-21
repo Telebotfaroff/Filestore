@@ -41,16 +41,16 @@ export function createDeliveryBotManager(config, logger, pool) {
   async function getBotRecord(id, ownerId = undefined) {
     const cacheKey = `${DELIVERY_BOT_CACHE_PREFIX}record:${id}:${ownerId === undefined ? 'any' : String(normalizeOwnerId(ownerId))}`;
     return cached(cacheKey, 15_000, async () => {
-    if (ownerId !== undefined) {
-      const scope = ownerWhere(ownerId, 2);
-      const result = await pool.query(
-        `SELECT * FROM delivery_bots WHERE id = $1 AND ${scope.clause} LIMIT 1`,
-        [id, ...scope.params],
-      );
+      if (ownerId !== undefined) {
+        const scope = ownerWhere(ownerId, 2);
+        const result = await pool.query(
+          `SELECT * FROM delivery_bots WHERE id = $1 AND ${scope.clause} LIMIT 1`,
+          [id, ...scope.params],
+        );
+        return result.rows[0] ?? null;
+      }
+      const result = await pool.query('SELECT * FROM delivery_bots WHERE id = $1 LIMIT 1', [id]);
       return result.rows[0] ?? null;
-    }
-    const result = await pool.query('SELECT * FROM delivery_bots WHERE id = $1 LIMIT 1', [id]);
-    return result.rows[0] ?? null;
     });
   }
 
@@ -135,7 +135,7 @@ export function createDeliveryBotManager(config, logger, pool) {
       if (!runtime) throw new Error('Delivery runtime could not be created');
       await launchTelegramBot(runtime.bot, (error) => {
         logger.error({ botId: record.telegram_bot_id, error: error.message }, 'Delivery Bot polling stopped unexpectedly');
-        pool.query("UPDATE delivery_bots SET runtime_status = 'error', last_error = $2, updated_at = NOW() WHERE id = $1", [record.id, String(error.message).slice(0, 500)]).catch(() => {});
+        pool.query("UPDATE delivery_bots SET runtime_status = 'error', last_error = $2, updated_at = NOW() WHERE id = $1", [record.id, String(error.message).slice(0, 500)]).then(invalidateDeliveryBotCache).catch(() => {});
       });
       runtimes.set(id, {
         runtime,
@@ -285,6 +285,7 @@ export function createDeliveryBotManager(config, logger, pool) {
     const scopeOwner = normalizeOwnerId(record.owner_telegram_id);
     stopRuntime(id);
     await pool.query("UPDATE delivery_bots SET runtime_status = 'starting', updated_at = NOW() WHERE id = $1", [id]);
+    invalidateDeliveryBotCache();
     const refreshed = await getBotRecord(id);
     const runtime = await startRuntime(refreshed);
     if (record.role === 'primary' && runtime) await promotePrimary(id, scopeOwner);
@@ -374,13 +375,13 @@ export function createDeliveryBotManager(config, logger, pool) {
     const normalizedOwner = normalizeOwnerId(ownerId);
     const cacheKey = `${DELIVERY_BOT_CACHE_PREFIX}list:${normalizedOwner === null ? 'global' : normalizedOwner}`;
     return cached(cacheKey, 15_000, async () => {
-    const scope = ownerWhere(normalizedOwner, 1);
-    const result = await pool.query(
-      `SELECT id, telegram_bot_id, username, role, priority, is_enabled, runtime_status, last_health_at, last_error, owner_telegram_id
-       FROM delivery_bots WHERE ${scope.clause} ORDER BY priority ASC, id ASC`,
-      scope.params,
-    );
-    return result.rows;
+      const scope = ownerWhere(normalizedOwner, 1);
+      const result = await pool.query(
+        `SELECT id, telegram_bot_id, username, role, priority, is_enabled, runtime_status, last_health_at, last_error, owner_telegram_id
+         FROM delivery_bots WHERE ${scope.clause} ORDER BY priority ASC, id ASC`,
+        scope.params,
+      );
+      return result.rows;
     });
   }
 
