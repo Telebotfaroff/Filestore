@@ -1,4 +1,5 @@
 import { applyVerifiedPayment } from './fulfillment-repository.js';
+import { notifyCreatorSale } from '../wallet/notifications.js';
 
 const NOTIFICATION_BATCH = 25;
 const MAX_NOTIFICATION_ATTEMPTS = 10;
@@ -47,7 +48,7 @@ async function notifyRecoveredPayments(pool, logger, telegram) {
   }
 }
 
-export function startPaymentRecoveryWorker(pool, logger, telegram = null, intervalMs = 30_000) {
+export function startPaymentRecoveryWorker(pool, logger, telegram = null, intervalMs = 30_000, adminIds = []) {
   let stopped = false;
   let running = false;
   async function tick() {
@@ -63,9 +64,12 @@ export function startPaymentRecoveryWorker(pool, logger, telegram = null, interv
       for (const tx of pending.rows) {
         if (stopped) break;
         try {
-          const result = await applyVerifiedPayment(pool, tx.id);
+          const result = await applyVerifiedPayment(pool, tx.id, { adminIds });
           if (result.applied) {
             await pool.query(`UPDATE payment_transactions SET recovery_last_error=NULL,recovery_next_at=NOW(),recovery_notification_required=TRUE WHERE id=$1 AND status='applied'`, [tx.id]);
+            if (result.creatorCredit && telegram) {
+              await notifyCreatorSale(telegram, result.creatorCredit, logger).catch(() => {});
+            }
             logger.info({ transactionId: tx.id, userId: tx.user_telegram_id, purpose: tx.purpose, method: tx.method }, 'Recovered verified payment fulfillment');
           }
         } catch (error) {

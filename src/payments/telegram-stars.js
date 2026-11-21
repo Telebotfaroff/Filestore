@@ -1,10 +1,12 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createPaymentSession, recordProviderEvent, markProviderEvent, recordVerifiedPayment } from './verification-repository.js';
 import { applyVerifiedPayment } from './fulfillment-repository.js';
+import { markPaymentMethodTest } from './repository.js';
 
 const METHOD = 'telegram_stars';
 const CURRENCY = 'XTR';
 const EXPIRY_MS = 10 * 60 * 1000;
+const ALLOWED_PURPOSES = new Set(['premium', 'paid_file', 'paid_batch']);
 
 function pricesMap(config, purpose) {
   const map = config?.stars_prices?.[purpose];
@@ -21,6 +23,146 @@ export function getTelegramStarsPrice(config, purpose, target) {
   if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 100000000) return null;
   return amount;
 }
+export function hasConfiguredStarsPrices(config) {
+  const prices = config?.stars_prices;
+  if (!prices || typeof prices !== 'object' || Array.isArray(prices)) return false;
+  return [...ALLOWED_PURPOSES].some((purpose) => {
+    const bucket = prices[purpose];
+    if (!bucket || typeof bucket !== 'object' || Array.isArray(bucket)) return false;
+    return Object.values(bucket).some((n) => Number.isSafeInteger(Number(n)) && Number(n) > 0 && Number(n) <= 100000000);
+  });
+}
+export function countConfiguredStarsPrices(config) {
+  const counts = { premium: 0, paid_file: 0, paid_batch: 0, total: 0 };
+  const prices = config?.stars_prices;
+  if (!prices || typeof prices !== 'object' || Array.isArray(prices)) return counts;
+  for (const purpose of ALLOWED_PURPOSES) {
+    const bucket = prices[purpose];
+    if (!bucket || typeof bucket !== 'object' || Array.isArray(bucket)) continue;
+    for (const val of Object.values(bucket)) {
+      const n = Number(val);
+      if (Number.isSafeInteger(n) && n > 0 && n <= 100000000) {
+        counts[purpose] += 1;
+        counts.total += 1;
+      }
+    }
+  }
+  return counts;
+}
+export async function loadStarsConfig(pool) {
+  const { rows } = await pool.query(
+    'SELECT is_enabled, public_config, setup_status, last_test_status, last_test_error FROM payment_methods WHERE method = $1 LIMIT 1',
+    [METHOD],
+  );
+  const row = rows[0] ?? {};
+  const publicConfig = row.public_config && typeof row.public_config === 'object' ? row.public_config : {};
+  const starsPrices = {
+    premium: { ...pricesMap(publicConfig, 'premium') },
+    paid_file: { ...pricesMap(publicConfig, 'paid_file') },
+    paid_batch: { ...pricesMap(publicConfig, 'paid_batch') },
+  };
+  const counts = countConfiguredStarsPrices({ stars_prices: starsPrices });
+  return {
+    isEnabled: Boolean(row.is_enabled),
+    setupStatus: row.setup_status ?? 'not_configured',
+    lastTestStatus: row.last_test_status ?? 'unknown',
+    lastTestError: row.last_test_error ?? null,
+    starsPrices,
+    counts,
+    isConfigured: counts.total > 0,
+  };
+}
+export async function setTelegramStarsPrice(pool, purpose, targetId, starsAmount, adminId = null) {
+  if (!ALLOWED_PURPOSES.has(purpose)) {
+    throw new Error('Stars price purpose must be premium, paid_file, or paid_batch.');
+  }
+  const cleanId = Number(targetId);
+  if (!Number.isSafeInteger(cleanId) || cleanId <= 0) {
+    throw new Error('Target ID must be a positive integer.');
+  }
+  const stars = Number(starsAmount);
+  if (!Number.isSafeInteger(stars) || stars < 0 || stars > 100000000) {
+    throw new Error('Stars price must be an integer between 0 and 100000000 (0 removes the Stars price).');
+  }
+
+  const currentRes = await pool.query('SELECT is_enabled, public_config FROM payment_methods WHERE method = $1 LIMIT 1', [METHOD]);
+  const existingConfig = currentRes.rows[0]?.public_config && typeof currentRes.rows[0].public_config === 'object'
+    ? currentRes.rows[0].public_config
+    : {};
+  const existingPrices = existingConfig.stars_prices && typeof existingConfig.stars_prices === 'object' && !Array.isArray(existingConfig.stars_prices)
+    ? existingConfig.stars_prices
+    : {};
+  const nextPurposeMap = {
+    ...(existingPrices[purpose] && typeof existingPrices[purpose] === 'object' && !Array.isArray(existingPrices[purpose]) ? existingPrices[purpose] : {}),
+  };
+
+  if (stars === 0) {
+    delete nextPurposeMap[String(cleanId)];
+  } else {
+    nextPurposeMap[String(cleanId)] = stars;
+  }
+
+  const nextPublicConfig = {
+    ...existingConfig,
+    stars_prices: {
+      ...existingPrices,
+      [purpose]: nextPurposeMap,
+    },
+  };
+  const configured = hasConfiguredStarsPrices(nextPublicConfig);
+  const setupStatus = configured ? 'configured' : 'not_configured';
+  const nextEnabled = configured ? Boolean(currentRes.rows[0]?.is_enabled) : false;
+
+  await pool.query(
+    `UPDATE payment_methods
+     SET public_config = $2::jsonb,
+         setup_status = $3,
+         is_enabled = $4,
+         last_test_status = 'unknown',
+         last_test_error = NULL,
+         updated_by = $5,
+         updated_at = NOW()
+     WHERE method = $1`,
+    [METHOD, JSON.stringify(nextPublicConfig), setupStatus, nextEnabled, adminId],
+  );
+  return loadStarsConfig(pool);
+}
+export async function enableTelegramStars(pool, adminId = null) {
+  const cfg = await loadStarsConfig(pool);
+  if (!cfg.isConfigured) {
+    throw new Error('Set at least one Telegram Stars price (for a Premium plan, Paid Link, or Batch Link) first.');
+  }
+  await pool.query(
+    `UPDATE payment_methods
+     SET is_enabled = TRUE, setup_status = 'configured', updated_by = $2, updated_at = NOW()
+     WHERE method = $1`,
+    [METHOD, adminId],
+  );
+  return loadStarsConfig(pool);
+}
+export async function testTelegramStars(telegram, pool) {
+  const cfg = await loadStarsConfig(pool);
+  if (!cfg.isConfigured) {
+    const err = 'No Telegram Stars prices configured yet.';
+    await markPaymentMethodTest(pool, METHOD, 'failed', err).catch(() => {});
+    throw new Error(err);
+  }
+  try {
+    const me = telegram ? await telegram.getMe() : null;
+    await markPaymentMethodTest(pool, METHOD, 'ok');
+    return {
+      ok: true,
+      botUsername: me?.username ?? null,
+      counts: cfg.counts,
+      isEnabled: cfg.isEnabled,
+    };
+  } catch (error) {
+    const msg = String(error?.message ?? 'Telegram API check failed');
+    await markPaymentMethodTest(pool, METHOD, 'failed', msg).catch(() => {});
+    throw new Error(`Telegram Stars check failed: ${msg}`);
+  }
+}
+
 function signature(token, sessionId) {
   return createHmac('sha256', token).update('FileStoreStars:' + sessionId).digest('hex').slice(0, 32);
 }
@@ -55,8 +197,17 @@ export async function sendStarsInvoice(bot, pool, ctx, purpose, target, label, d
     metadata: { starsPrice: stars, label: String(label).slice(0, 120) },
   });
   const payload = createStarsPayload(token, session.id);
+  const cleanTitle = String(label || 'FileStore Purchase').trim().slice(0, 32) || 'Purchase';
+  const cleanDescription = String(description || cleanTitle).trim().slice(0, 255) || cleanTitle;
   try {
-    await bot.telegram.sendInvoice(ctx.chat.id, String(label).slice(0, 32), String(description).slice(0, 255), payload, '', CURRENCY, [{ label: String(label).slice(0, 32), amount: stars }]);
+    await bot.telegram.sendInvoice(ctx.chat.id, {
+      title: cleanTitle,
+      description: cleanDescription,
+      payload,
+      provider_token: '',
+      currency: CURRENCY,
+      prices: [{ label: cleanTitle, amount: stars }],
+    });
   } catch (error) {
     await pool.query("UPDATE payment_sessions SET status='failed',updated_at=NOW() WHERE id=$1 AND status='pending'", [session.id]).catch(() => {});
     throw error;
@@ -87,7 +238,7 @@ export async function handleStarsPreCheckout(bot, pool, ctx, token, logger) {
     await ctx.telegram.answerPreCheckoutQuery(query.id, false, 'Payment check unavailable. Try again later.');
   }
 }
-export async function handleStarsSuccessfulPayment(pool, ctx, token, logger) {
+export async function handleStarsSuccessfulPayment(pool, ctx, token, logger, adminIds = [], notifyTelegram = null) {
   const payment = ctx.message?.successful_payment;
   if (!payment || payment.currency !== CURRENCY) return false;
   const sessionId = parsePayload(token, payment.invoice_payload);
@@ -106,14 +257,26 @@ export async function handleStarsSuccessfulPayment(pool, ctx, token, logger) {
     event = receipt.event;
     const result = await recordVerifiedPayment(pool, {
       method: METHOD, sessionId, externalTransactionId: payment.telegram_payment_charge_id,
-      userId: ctx.from.id, purpose: session?.purpose ?? (await pool.query('SELECT purpose FROM payment_sessions WHERE id=$1',[sessionId])).rows[0].purpose,
-      planId: session?.plan_id ?? null, fileId: session?.file_id ?? null,
-      paidLinkId: session?.paid_link_id ?? null, batchLinkId: session?.batch_link_id ?? null,
+      userId: ctx.from.id, purpose: session.purpose,
+      planId: session.plan_id ?? null, fileId: session.file_id ?? null,
+      paidLinkId: session.paid_link_id ?? null, batchLinkId: session.batch_link_id ?? null,
       amountMinor: payment.total_amount, currency: CURRENCY, allowExpiredSession: true,
     });
-    const fulfilled = await applyVerifiedPayment(pool, result.transaction.id);
+    const fulfilled = await applyVerifiedPayment(pool, result.transaction.id, { adminIds });
     await markProviderEvent(pool, event.id, 'processed', result.transaction.id);
-    await ctx.reply(fulfilled.alreadyApplied ? 'Your Stars payment was already processed. Your access is ready.' : 'Payment successful! Your access has been activated. Use /get or /batch_get to request your files.');
+    if (fulfilled.creatorCredit) {
+      const { notifyCreatorSale } = await import('../wallet/notifications.js');
+      await notifyCreatorSale(notifyTelegram ?? ctx.telegram, fulfilled.creatorCredit, logger).catch(() => {});
+    }
+    if (fulfilled.alreadyApplied) {
+      await ctx.reply('✅ Your Telegram Stars payment was already processed. Your access is active.');
+    } else if (fulfilled.type === 'premium') {
+      await ctx.reply(`✅ Telegram Stars payment successful!\nPlan: ${fulfilled.plan ?? 'Premium'}\nYour Premium access is now active. Check /access_status anytime.`);
+    } else if (fulfilled.type === 'paid_batch') {
+      await ctx.reply(`✅ Telegram Stars payment successful!\nAll ${fulfilled.fileCount ?? ''} files in the batch are unlocked. Open the batch again or use /batch_get <code> to receive them.`.trim());
+    } else {
+      await ctx.reply('✅ Telegram Stars payment successful! Your file is now unlocked. Use /get <file_code> or open your share link again to receive it.');
+    }
   } catch (error) {
     if (event?.id) await markProviderEvent(pool, event.id, 'failed', null, error.message).catch(() => {});
     logger.error({ error: error.message, userId: ctx.from?.id, sessionId }, 'Telegram Stars fulfillment failed');

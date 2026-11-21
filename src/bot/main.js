@@ -1,5 +1,10 @@
 import { Telegraf } from 'telegraf';
 import { isAdmin } from './admin-guard.js';
+import { createAdminCommandRouter } from './admin-router.js';
+import { escapeHtml } from './telegram-utils.js';
+import { registerControlCenter } from './control-center.js';
+import { upsertTelegramUser } from '../access/user-repository.js';
+import { formatRevenueSummary } from '../utils/validation.js';
 import { registerStorageAdminCommands } from '../storage/admin-commands.js';
 import { registerFileIngestHandler } from '../storage/ingest-handler.js';
 import { registerFileCommands } from '../storage/file-commands.js';
@@ -14,31 +19,42 @@ import { registerPaidBatchAdminCommands } from '../paid-files/batch-admin-comman
 import { registerAutoDeleteCommands } from '../delivery/auto-delete-admin-commands.js';
 import { registerDashboardCommands } from '../admin/dashboard-commands.js';
 
+export const MAIN_BOT_MENU_COMMANDS = Object.freeze([
+  { command: 'start', description: 'Open FileStore Hub & main menu' },
+  { command: 'me', description: 'View balance, earnings & withdraw UPI' },
+  { command: 'guide', description: 'Step-by-step user guide & tutorial' },
+  { command: 'help', description: 'Quick help & command guide' },
+]);
+
 export function createMainBot(config, logger, pool) {
   const bot = new Telegraf(config.mainBotToken);
   bot.use(async (ctx, next) => {
-    if (!isAdmin(ctx.from?.id, config.adminIds)) {
-      if (ctx.chat?.type === 'private') await ctx.reply('This bot is restricted to administrators.');
+    if (ctx.chat?.type && ctx.chat.type !== 'private' && !isAdmin(ctx.from?.id, config.adminIds)) {
       return;
+    }
+    if (ctx.from?.id) {
+      try {
+        await upsertTelegramUser(pool, ctx.from);
+      } catch (error) {
+        logger?.warn?.({ userId: ctx.from.id, error: error.message }, 'Main Bot user upsert failed');
+      }
     }
     return next();
   });
 
-  bot.command('start', async (ctx) => {
-    await ctx.reply(
-      'FileStore Control Center\n\n' +
-      'Send supported media here to store and index it.\n\n' +
-      'Storage: /storage · /storage_add\nFiles: /files · /find <query> · /fileinfo <code>\nDelivery bots: /delivery_bots\nForce-sub: /force_sub\nShorteners: /shorteners\nUse /help for all commands.'
-    );
+  let controlCenter;
+  const adminRouter = createAdminCommandRouter(bot, config, logger, {
+    onAdminHome: (ctx) => controlCenter.showHome(ctx, false),
+    clearOtherSessions: (userId) => controlCenter?.clearAllSessions?.(userId),
   });
 
-  bot.command('help', async (ctx) => {
-    await ctx.reply(
-      '/start — Admin welcome\n/status — Database status\n/health — Queue, workers and recovery diagnostics\n/storage — Storage channels\n/storage_add — Add channel\n/storage_test — Test channel permissions\n/storage_enable — Enable channel\n/storage_disable — Disable channel\n/storage_primary — Set primary storage\n/storage_remove — Remove/disable channel\n/files — List indexed files\n/find — Search files\n/fileinfo — File metadata\n/delivery_bots — List managed bots\n/delivery_jobs — Recent delivery jobs\n/delivery_retry — Retry failed delivery job (safe retry only)\n/delivery_bot_add — Add token\n/delivery_bot_pause — Pause worker\n/delivery_bot_resume — Resume bot\n/delivery_bot_restart — Restart runtime\n/delivery_bot_remove — Remove bot\n/delivery_bot_primary — Set primary\n/delivery_bot_priority — Set priority\n/delivery_bot_test — Test bot access\n/force_sub — List force-sub channels\n/force_sub_add — Add channel + join URL\n/force_sub_test — Test Main Bot permissions\n/force_sub_enable — Enable channel\n/force_sub_disable — Disable channel\n/force_sub_remove — Remove channel\n/force_sub_global_on — Enable force-sub globally\n/force_sub_global_off — Disable force-sub globally\n/shorteners — List providers\n/shortener_add — Add provider config\n/shortener_test — Test config\n/shortener_duration — Set checkpoint minutes\n/shortener_priority — Set provider priority\n/shortener_enable — Activation (currently blocked until verification adapters exist)\n/shortener_disable — Disable provider\n/shortener_remove — Remove provider\n/checkpoint_global_on — Enable checkpoints\n/checkpoint_global_off — Disable checkpoints\n/plans — List Premium plans\n/plan_add — Add/upsert plan\n/plan_edit — Edit plan\n/plan_remove — Delete plan\n/premium_grant — Grant Premium manually\n/premium_revoke — Revoke Premium\n/premium_status — Inspect user Premium\n/payment_methods — List payment methods\n/payment_set — Configure payment method (Stars example: telegram_stars||{\"stars_prices\":{\"premium\":{\"1\":120},\"paid_file\":{\"2\":25},\"paid_batch\":{\"1\":150}}})\n/payment_enable telegram_stars — Enable configured Stars checkout\n/payment_test — Config validation\n/payment_enable — Enable a supported gateway (Telegram Stars active; others blocked)\n/payment_apply — Apply verified transaction (retry-safe)\n/payment_recovery_pending — Inspect verified payment fulfillment retry failures\n/payments — Payment reconciliation dashboard\n/payment_recent — Latest payment transactions\n/payment_detail — Full payment transaction details\n/payment_analytics — Revenue, outcomes and Premium analytics (30 days)\n/payment_reconcile — Retry verified payment fulfillment\n/payment_disable — Disable method\n/paid_link_create — Create paid file link\n/paid_links — List paid links\n/paid_requests — Pending purchase requests\n/paid_link_disable — Disable paid link\n/paid_confirm — Confirm payment manually (admin)\n/batch_link_create — Create paid multi-file link\n/batch_links — List batch links\n/batch_requests — Pending batch purchase requests\n/batch_link_disable — Disable batch link\n/batch_confirm — Confirm batch purchase\n/auto_delete — Set/check delivery auto-delete timer\n/auto_delete_failed — Inspect terminal deletion failures\n/auto_delete_off — Disable auto-delete\n/dashboard — Admin statistics overview\n/stats — Alias for dashboard\n/help — Command list'
-    );
+  controlCenter = registerControlCenter(bot, config, logger, pool, {
+    adminBot: adminRouter.adminBot,
+    onClearAdminPrompt: (userId) => adminRouter.clearPrompt(userId),
+    hasActiveAdminPrompt: (userId) => Boolean(adminRouter.getActivePrompt(userId)),
   });
 
-  bot.command('status', async (ctx) => {
+  adminRouter.adminBot.command('status', async (ctx) => {
     const results = await pool.query(
       `SELECT (SELECT COUNT(*)::int FROM users) AS tracked_users,
               (SELECT COUNT(*)::int FROM files WHERE status = $1) AS active_files,
@@ -47,32 +63,51 @@ export function createMainBot(config, logger, pool) {
               (SELECT COALESCE(jsonb_object_agg(currency, total_minor), '{}'::jsonb) FROM (SELECT currency, SUM(amount_minor)::bigint AS total_minor FROM payment_transactions WHERE status='applied' GROUP BY currency) revenue) AS revenue_by_currency`,
       ['active'],
     );
-    const botInfo = await ctx.telegram.getMe();
+    const botInfo = ctx.botInfo ?? await ctx.telegram.getMe();
+    const row = results.rows[0];
     await ctx.reply(
-      'FileStore Status\n\n' +
-      'Main Bot: Connected (@' + botInfo.username + ')\n' +
-      'Database: Connected\n' +
-      'Tracked users: ' + results.rows[0].tracked_users + '\n' +
-      'Indexed files: ' + results.rows[0].active_files + '\n' +
-      'Premium active: ' + results.rows[0].premium_active + '\n' +
-      'Payments applied: ' + results.rows[0].payments_applied + '\n' +
-      'Recorded revenue: ' + (Object.entries(results.rows[0].revenue_by_currency ?? {}).map(([currency, minor]) => currency + ' ' + (Number(minor) / 100).toFixed(2)).join(' · ') || 'none')
+      [
+        '📡 <b>FileStore Live Status</b>',
+        '━━━━━━━━━━━━━━━━━━',
+        '',
+        `🤖 <b>Main Bot:</b> 🟢 Connected (<code>@${escapeHtml(botInfo.username)}</code>)`,
+        '🗄 <b>Database:</b> 🟢 Connected',
+        '',
+        `👥 <b>Tracked Users:</b> <code>${row.tracked_users}</code>`,
+        `📁 <b>Indexed Files:</b> <code>${row.active_files}</code>`,
+        `💎 <b>Active Premium:</b> <code>${row.premium_active}</code>`,
+        `💳 <b>Applied Payments:</b> <code>${row.payments_applied}</code>`,
+        `💰 <b>Recorded Revenue:</b> <code>${escapeHtml(formatRevenueSummary(row.revenue_by_currency))}</code>`,
+      ].join('\n'),
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '🎛 Control Center', callback_data: 'cc:home' },
+            { text: '🩺 Health', callback_data: 'cc:health' },
+          ]],
+        },
+      },
     );
   });
 
-  registerStorageAdminCommands(bot, pool, logger);
-  registerFileCommands(bot, pool, logger);
+  registerStorageAdminCommands(bot, pool, logger, config);
+  registerFileCommands(bot, pool, logger, config);
   registerFileIngestHandler(bot, pool, logger);
-  registerDeliveryBotManagerCommands(bot, config.deliveryManager, logger, pool);
-  registerForceSubAdminCommands(bot, pool, logger);
+  registerDeliveryBotManagerCommands(bot, config.deliveryManager, logger, pool, config, adminRouter.adminBot);
+  registerForceSubAdminCommands(bot, pool, logger, config);
   registerShortenerAdminCommands(bot, pool, config, logger);
-  registerCheckpointPolicyCommands(bot, pool, logger);
-  registerPremiumAdminCommands(bot, pool, logger);
-  registerPaymentAdminCommands(bot, pool, config, logger);
-  registerPaidFileAdminCommands(bot, pool, logger);
-  registerPaidBatchAdminCommands(bot, pool, logger);
-  registerAutoDeleteCommands(bot, pool, logger);
-  registerDashboardCommands(bot, pool, logger);
+  registerCheckpointPolicyCommands(bot, pool, logger, config);
+  registerPaidFileAdminCommands(bot, pool, logger, config, adminRouter.adminBot);
+  registerPaidBatchAdminCommands(bot, pool, logger, config, adminRouter.adminBot);
+
+  registerPremiumAdminCommands(adminRouter.adminBot, pool, logger);
+  registerPaymentAdminCommands(adminRouter.adminBot, pool, config, logger);
+  registerAutoDeleteCommands(adminRouter.adminBot, pool, logger);
+  registerDashboardCommands(adminRouter.adminBot, pool, logger, config);
+
+  adminRouter.registerPromptTextHandler();
+  bot.adminRouter = adminRouter;
 
   bot.catch((error, ctx) => {
     logger.error({ updateId: ctx.update?.update_id, error: error.message }, 'Telegram handler error');

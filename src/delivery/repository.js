@@ -1,11 +1,16 @@
-export async function createSingleDeliveryJob(pool, requesterTelegramId, fileId, requestedBy = requesterTelegramId) {
+export async function createSingleDeliveryJob(pool, requesterTelegramId, fileId, requestedBy = requesterTelegramId, deliveryBotId = null) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const job = await client.query(
-      'INSERT INTO delivery_jobs (job_type, requester_telegram_id, requested_by) VALUES ($1, $2, $3) RETURNING id',
-      ['single', requesterTelegramId, requestedBy],
-    );
+    const job = deliveryBotId !== null && deliveryBotId !== undefined
+      ? await client.query(
+        'INSERT INTO delivery_jobs (job_type, requester_telegram_id, requested_by, delivery_bot_id) VALUES ($1, $2, $3, $4) RETURNING id',
+        ['single', requesterTelegramId, requestedBy, Number(deliveryBotId)],
+      )
+      : await client.query(
+        'INSERT INTO delivery_jobs (job_type, requester_telegram_id, requested_by) VALUES ($1, $2, $3) RETURNING id',
+        ['single', requesterTelegramId, requestedBy],
+      );
     await client.query(
       'INSERT INTO delivery_items (job_id, file_id, position) VALUES ($1, $2, 0)',
       [job.rows[0].id, fileId],
@@ -20,15 +25,28 @@ export async function createSingleDeliveryJob(pool, requesterTelegramId, fileId,
   }
 }
 
-export async function claimNextDeliveryJob(pool, workerIdentity) {
+export async function claimNextDeliveryJob(pool, workerIdentity, options = {}) {
+  const deliveryBotId = options?.deliveryBotId !== undefined && options?.deliveryBotId !== null
+    ? Number(options.deliveryBotId)
+    : null;
+  const includeGlobal = options?.includeGlobal !== false;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const jobResult = await client.query(
-      `SELECT id, requester_telegram_id FROM delivery_jobs
-       WHERE status = 'pending' ORDER BY created_at ASC
-       LIMIT 1 FOR UPDATE SKIP LOCKED`,
-    );
+    const jobResult = deliveryBotId !== null
+      ? await client.query(
+        `SELECT id, requester_telegram_id FROM delivery_jobs
+         WHERE status = 'pending'
+           AND (delivery_bot_id = $1 OR ($2::boolean = TRUE AND delivery_bot_id IS NULL))
+         ORDER BY created_at ASC
+         LIMIT 1 FOR UPDATE SKIP LOCKED`,
+        [deliveryBotId, includeGlobal],
+      )
+      : await client.query(
+        `SELECT id, requester_telegram_id FROM delivery_jobs
+         WHERE status = 'pending' ORDER BY created_at ASC
+         LIMIT 1 FOR UPDATE SKIP LOCKED`,
+      );
     if (!jobResult.rowCount) {
       await client.query('COMMIT');
       return null;
@@ -264,15 +282,20 @@ export async function retryFailedDeliveryJob(pool, jobId) {
   }
 }
 
-export async function createBatchDeliveryJob(pool, requesterTelegramId, fileIds, requestedBy = requesterTelegramId) {
+export async function createBatchDeliveryJob(pool, requesterTelegramId, fileIds, requestedBy = requesterTelegramId, deliveryBotId = null) {
   if (!Array.isArray(fileIds) || !fileIds.length || fileIds.length > 100) throw new Error('Batch delivery requires 1–100 files.');
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const job = await client.query(
-      'INSERT INTO delivery_jobs (job_type, requester_telegram_id, requested_by) VALUES ($1, $2, $3) RETURNING id',
-      ['batch', requesterTelegramId, requestedBy],
-    );
+    const job = deliveryBotId !== null && deliveryBotId !== undefined
+      ? await client.query(
+        'INSERT INTO delivery_jobs (job_type, requester_telegram_id, requested_by, delivery_bot_id) VALUES ($1, $2, $3, $4) RETURNING id',
+        ['batch', requesterTelegramId, requestedBy, Number(deliveryBotId)],
+      )
+      : await client.query(
+        'INSERT INTO delivery_jobs (job_type, requester_telegram_id, requested_by) VALUES ($1, $2, $3) RETURNING id',
+        ['batch', requesterTelegramId, requestedBy],
+      );
     for (let i = 0; i < fileIds.length; i++) {
       await client.query('INSERT INTO delivery_items (job_id, file_id, position) VALUES ($1, $2, $3)', [job.rows[0].id, fileIds[i], i + 1]);
     }

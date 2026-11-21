@@ -13,11 +13,18 @@ export async function claimIngestRequest(pool, sourceChatId, sourceMessageId) {
   return result.rows[0]?.id ?? null;
 }
 
-export async function findDuplicateByUniqueId(pool, uniqueId) {
+export async function findDuplicateByUniqueId(pool, uniqueId, uploaderId = null) {
   if (!uniqueId) return null;
+  if (uploaderId === null || uploaderId === undefined) {
+    const result = await pool.query(
+      'SELECT id, file_code, file_name FROM files WHERE telegram_file_unique_id = $1 AND status = $2 ORDER BY created_at ASC LIMIT 1',
+      [uniqueId, 'active'],
+    );
+    return result.rows[0] ?? null;
+  }
   const result = await pool.query(
-    'SELECT id, file_code, file_name FROM files WHERE telegram_file_unique_id = $1 AND status = $2 ORDER BY created_at ASC LIMIT 1',
-    [uniqueId, 'active'],
+    'SELECT id, file_code, file_name FROM files WHERE telegram_file_unique_id = $1 AND status = $2 AND COALESCE(uploaded_by, 0) = $3 ORDER BY created_at ASC LIMIT 1',
+    [uniqueId, 'active', Number(uploaderId)],
   );
   return result.rows[0] ?? null;
 }
@@ -38,10 +45,19 @@ export async function markIngestFailed(pool, requestId, errorMessage) {
   );
 }
 
-export async function getPrimaryStorageChannel(pool) {
+export async function getPrimaryStorageChannel(pool, ownerId = null) {
+  if (ownerId !== null && ownerId !== undefined) {
+    const own = await pool.query(
+      `SELECT id, telegram_chat_id, title FROM storage_channels
+       WHERE is_enabled = TRUE AND role = 'primary' AND last_test_status = 'ok' AND owner_telegram_id = $1
+       ORDER BY priority ASC, id ASC LIMIT 1`,
+      [Number(ownerId)],
+    );
+    if (own.rowCount) return own.rows[0];
+  }
   const result = await pool.query(
     `SELECT id, telegram_chat_id, title FROM storage_channels
-     WHERE is_enabled = TRUE AND role = 'primary' AND last_test_status = 'ok'
+     WHERE is_enabled = TRUE AND role = 'primary' AND last_test_status = 'ok' AND owner_telegram_id IS NULL
      ORDER BY priority ASC, id ASC LIMIT 1`,
   );
   return result.rows[0] ?? null;

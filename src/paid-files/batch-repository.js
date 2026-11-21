@@ -1,27 +1,38 @@
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
+import { normalizeUpperCode, hashUpperCode } from '../utils/validation.js';
+import { setTelegramStarsPrice } from '../payments/telegram-stars.js';
 
-function normalize(code) { return String(code ?? '').trim().toUpperCase(); }
-function digest(code) { return createHash('sha256').update(normalize(code)).digest('hex'); }
+function parseBatchIdOrHash(idOrCode) {
+  const raw = String(idOrCode ?? '').trim();
+  if (!raw) throw new Error('Batch link ID or code is required.');
+  if (/^\d+$/.test(raw)) {
+    return { column: 'id', value: Number(raw) };
+  }
+  return { column: 'public_code_hash', value: hashUpperCode(raw) };
+}
 
-export async function createPaidBatch(pool, fileCodes, title, priceMinor, currency, expiresAt, adminId) {
+export async function createPaidBatch(pool, fileCodes, title, priceMinor, currency, expiresAt, adminId, ownerId = null) {
   if (!Array.isArray(fileCodes) || fileCodes.length < 2 || fileCodes.length > 100) throw new Error('Batch requires 2–100 files.');
-  const codes = fileCodes.map(normalize);
+  const codes = fileCodes.map(normalizeUpperCode);
   if (new Set(codes).size !== codes.length) throw new Error('Duplicate file codes in batch.');
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const files = await client.query(
-      `SELECT id, file_code, file_name, status FROM files WHERE file_code = ANY($1::text[]) ORDER BY array_position($1::text[], file_code) FOR SHARE`,
+      `SELECT id, file_code, file_name, status, uploaded_by FROM files WHERE file_code = ANY($1::text[]) ORDER BY array_position($1::text[], file_code) FOR SHARE`,
       [codes],
     );
     if (files.rowCount !== codes.length) throw new Error('One or more file codes are missing or inactive.');
     if (files.rows.some((f) => f.status !== 'active')) throw new Error('Batch contains an inactive file.');
+    if (ownerId !== null && ownerId !== undefined && files.rows.some((f) => String(f.uploaded_by ?? '') !== String(ownerId))) {
+      throw new Error('You can only include files you uploaded in your paid batch.');
+    }
     const code = randomBytes(10).toString('hex').toUpperCase();
     const link = await client.query(
       `INSERT INTO paid_batch_links (public_code, public_code_hash, title, price_minor, currency, expires_at, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, public_code, title, price_minor, currency, expires_at`,
-      [code, digest(code), title, priceMinor, currency, expiresAt ?? null, adminId],
+       RETURNING id, public_code, title, price_minor, currency, expires_at, created_by`,
+      [code, hashUpperCode(code), title, priceMinor, currency, expiresAt ?? null, adminId],
     );
     const id = link.rows[0].id;
     for (let i = 0; i < files.rows.length; i++) {
@@ -37,11 +48,11 @@ export async function createPaidBatch(pool, fileCodes, title, priceMinor, curren
 
 export async function getPaidBatch(pool, code) {
   const result = await pool.query(
-    `SELECT b.id, b.public_code, b.title, b.price_minor, b.currency, b.expires_at, b.is_enabled,
+    `SELECT b.id, b.public_code, b.title, b.price_minor, b.currency, b.expires_at, b.is_enabled, b.created_by,
        COUNT(i.file_id)::int AS item_count
      FROM paid_batch_links b JOIN paid_batch_items i ON i.batch_link_id = b.id
      WHERE b.public_code_hash = $1 GROUP BY b.id LIMIT 1`,
-    [digest(code)],
+    [hashUpperCode(code)],
   );
   const row = result.rows[0] ?? null;
   if (row) row.is_active = Boolean(row.is_enabled) && (!row.expires_at || new Date(row.expires_at) > new Date());
@@ -60,7 +71,7 @@ export async function requestPaidBatchPurchase(pool, code, user) {
     const batch = await client.query(
       `SELECT id, title, price_minor, currency FROM paid_batch_links WHERE public_code_hash = $1 AND is_enabled = TRUE
        AND (expires_at IS NULL OR expires_at > NOW()) FOR UPDATE`,
-      [digest(code)],
+      [hashUpperCode(code)],
     );
     if (!batch.rowCount) throw new Error('Batch link invalid, expired or disabled.');
     const b = batch.rows[0];
@@ -82,7 +93,7 @@ export async function confirmPaidBatchPurchase(pool, code, userId, adminId) {
   try {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [userId]);
-    const batch = await client.query('SELECT id, title FROM paid_batch_links WHERE public_code_hash=$1 FOR UPDATE', [digest(code)]);
+    const batch = await client.query('SELECT id, title FROM paid_batch_links WHERE public_code_hash=$1 FOR UPDATE', [hashUpperCode(code)]);
     if (!batch.rowCount) throw new Error('Batch link not found.');
     const purchase = await client.query('SELECT id,status FROM paid_batch_purchases WHERE batch_link_id=$1 AND user_telegram_id=$2 FOR UPDATE', [batch.rows[0].id, userId]);
     if (!purchase.rowCount) throw new Error('User has no purchase request for this batch.');
@@ -115,26 +126,121 @@ export async function getBatchItems(pool, code) {
      LEFT JOIN storage_messages sm ON sm.file_id = f.id AND sm.is_primary = TRUE
      LEFT JOIN storage_channels sc ON sc.id = sm.storage_channel_id
      WHERE b.public_code_hash = $1 ORDER BY i.position`,
-    [digest(code)],
+    [hashUpperCode(code)],
   );
   return rows;
 }
 
-export async function listPaidBatchLinks(pool, limit = 30) {
+export async function listPaidBatchLinks(pool, limit = 30, ownerId = null) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 30, 1), 100);
+  if (ownerId !== null && ownerId !== undefined) {
+    const { rows } = await pool.query(
+      `SELECT b.id,b.public_code,b.title,b.price_minor,b.currency,b.is_enabled,b.expires_at,b.created_by,b.created_at,
+         COUNT(DISTINCT i.file_id)::int AS item_count, COUNT(DISTINCT p.id)::int AS purchase_count
+       FROM paid_batch_links b LEFT JOIN paid_batch_items i ON i.batch_link_id=b.id
+       LEFT JOIN paid_batch_purchases p ON p.batch_link_id=b.id
+       WHERE b.created_by = $2
+       GROUP BY b.id ORDER BY b.created_at DESC LIMIT $1`,
+      [safeLimit, Number(ownerId)],
+    );
+    return rows;
+  }
   const { rows } = await pool.query(
-    `SELECT b.id,b.public_code,b.title,b.price_minor,b.currency,b.is_enabled,b.expires_at,b.created_at,
+    `SELECT b.id,b.public_code,b.title,b.price_minor,b.currency,b.is_enabled,b.expires_at,b.created_by,b.created_at,
        COUNT(DISTINCT i.file_id)::int AS item_count, COUNT(DISTINCT p.id)::int AS purchase_count
      FROM paid_batch_links b LEFT JOIN paid_batch_items i ON i.batch_link_id=b.id
      LEFT JOIN paid_batch_purchases p ON p.batch_link_id=b.id
      GROUP BY b.id ORDER BY b.created_at DESC LIMIT $1`,
-    [Math.min(Math.max(Number(limit)||30,1),100)],
+    [safeLimit],
   );
   return rows;
 }
 
-export async function disablePaidBatchLink(pool, code) {
-  const { rows } = await pool.query('UPDATE paid_batch_links SET is_enabled=FALSE, updated_at=NOW() WHERE public_code_hash=$1 RETURNING public_code', [digest(code)]);
+export async function disablePaidBatchLink(pool, code, ownerId = null) {
+  if (ownerId !== null && ownerId !== undefined) {
+    const { rows } = await pool.query('UPDATE paid_batch_links SET is_enabled=FALSE, updated_at=NOW() WHERE public_code_hash=$1 AND created_by=$2 RETURNING public_code', [hashUpperCode(code), Number(ownerId)]);
+    return rows[0] ?? null;
+  }
+  const { rows } = await pool.query('UPDATE paid_batch_links SET is_enabled=FALSE, updated_at=NOW() WHERE public_code_hash=$1 RETURNING public_code', [hashUpperCode(code)]);
   return rows[0] ?? null;
+}
+
+export async function setPaidBatchLinkEnabled(pool, idOrCode, enabled, ownerId = null) {
+  const { column, value } = parseBatchIdOrHash(idOrCode);
+  if (ownerId !== null && ownerId !== undefined) {
+    const { rows } = await pool.query(
+      `UPDATE paid_batch_links SET is_enabled = $2, updated_at = NOW() WHERE ${column} = $1 AND created_by = $3 RETURNING id, public_code, is_enabled`,
+      [value, Boolean(enabled), Number(ownerId)],
+    );
+    return rows[0] ?? null;
+  }
+  const { rows } = await pool.query(
+    `UPDATE paid_batch_links SET is_enabled = $2, updated_at = NOW() WHERE ${column} = $1 RETURNING id, public_code, is_enabled`,
+    [value, Boolean(enabled)],
+  );
+  return rows[0] ?? null;
+}
+
+export async function getPaidBatchByIdOrCode(pool, idOrCode, ownerId = null) {
+  const { column, value } = parseBatchIdOrHash(idOrCode);
+  const { rows } = await pool.query(
+    `SELECT b.id, b.public_code, b.title, b.price_minor, b.currency, b.is_enabled, b.expires_at, b.created_by, b.created_at,
+       COUNT(DISTINCT i.file_id)::int AS item_count,
+       COUNT(DISTINCT p.id)::int AS purchase_count
+     FROM paid_batch_links b
+     LEFT JOIN paid_batch_items i ON i.batch_link_id = b.id
+     LEFT JOIN paid_batch_purchases p ON p.batch_link_id = b.id
+     WHERE b.${column} = $1
+     GROUP BY b.id
+     LIMIT 1`,
+    [value],
+  );
+  const row = rows[0] ?? null;
+  if (!row) return null;
+  if (ownerId !== null && ownerId !== undefined && String(row.created_by ?? '') !== String(ownerId)) {
+    return null;
+  }
+  return row;
+}
+
+export async function deletePaidBatchLink(pool, idOrCode, ownerId = null) {
+  const { column, value } = parseBatchIdOrHash(idOrCode);
+  const client = await pool.connect();
+  let deleted = null;
+  try {
+    await client.query('BEGIN');
+    const existing = ownerId !== null && ownerId !== undefined
+      ? await client.query(
+          `SELECT id, public_code, title FROM paid_batch_links WHERE ${column} = $1 AND created_by = $2 LIMIT 1 FOR UPDATE`,
+          [value, Number(ownerId)],
+        )
+      : await client.query(
+          `SELECT id, public_code, title FROM paid_batch_links WHERE ${column} = $1 LIMIT 1 FOR UPDATE`,
+          [value],
+        );
+    if (!existing.rowCount) {
+      await client.query('COMMIT');
+      return null;
+    }
+    const targetId = existing.rows[0].id;
+    await client.query('DELETE FROM paid_batch_purchases WHERE batch_link_id = $1', [targetId]);
+    await client.query('DELETE FROM paid_batch_items WHERE batch_link_id = $1', [targetId]);
+    const delRes = await client.query(
+      'DELETE FROM paid_batch_links WHERE id = $1 RETURNING id, public_code, title',
+      [targetId],
+    );
+    await client.query('COMMIT');
+    deleted = delRes.rows[0] ?? null;
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+  if (deleted) {
+    await setTelegramStarsPrice(pool, 'paid_batch', deleted.id, 0).catch(() => {});
+  }
+  return deleted;
 }
 
 export async function listPendingBatchPurchases(pool, limit=40) {

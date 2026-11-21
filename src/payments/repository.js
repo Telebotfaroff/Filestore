@@ -45,7 +45,7 @@ export async function disablePaymentMethod(pool, method, adminId) {
 export async function markPaymentMethodTest(pool, method, status, error = null) {
   await pool.query(
     'UPDATE payment_methods SET last_test_status = $2, last_test_error = $3, updated_at = NOW() WHERE method = $1',
-    [status, error?.slice(0, 500) ?? null, method],
+    [method, status, error ? String(error).slice(0, 500) : null],
   );
 }
 

@@ -1,4 +1,6 @@
+import { isAdmin } from '../bot/admin-guard.js';
 import { parseStorageIdentifier } from './identifier.js';
+import { getCommandArgText, validateStorageChannel } from '../bot/telegram-utils.js';
 import {
   listStorageChannels,
   saveStorageChannel,
@@ -8,114 +10,118 @@ import {
   removeStorageChannel,
 } from './repository.js';
 
-function getCommandArgument(ctx) {
-  return ctx.message?.text?.trim().split(/\s+/).slice(1).join(' ') ?? '';
-}
-
 function getNumericChannelId(raw) {
   const id = parseStorageIdentifier(raw);
   if (typeof id !== 'number') throw new Error('Use the numeric channel ID for this command.');
   return id;
 }
 
-async function validateStorageChannel(ctx, channelInput) {
-  const chat = await ctx.telegram.getChat(channelInput);
-  if (chat.type !== 'channel') throw new Error('Only Telegram channels are supported as storage destinations in this milestone.');
-  const botInfo = await ctx.telegram.getMe();
-  const member = await ctx.telegram.getChatMember(chat.id, botInfo.id);
-  if (member.status !== 'administrator') throw new Error('The Main Bot must be an administrator in this channel.');
-  if (member.can_post_messages !== true) throw new Error('The Main Bot must have explicit permission to post in this channel.');
-  return chat;
-}
+export function registerStorageAdminCommands(bot, pool, logger, config = null) {
+  const getScope = (ctx) => {
+    const admin = !Array.isArray(config?.adminIds) || isAdmin(ctx.from?.id, config.adminIds);
+    return { admin, ownerId: admin ? null : Number(ctx.from.id) };
+  };
 
-export function registerStorageAdminCommands(bot, pool, logger) {
   bot.command('storage', async (ctx) => {
     try {
-      const rows = await listStorageChannels(pool);
-      if (!rows.length) return ctx.reply('No storage channels configured yet. Add one with /storage_add <channel_id or @username.');
+      const { ownerId } = getScope(ctx);
+      const rows = await listStorageChannels(pool, ownerId);
+      if (!rows.length) return ctx.reply('🗄 No storage channels configured yet.\n💡 Add one with /storage_add <channel_id or @username>.');
       const lines = rows.map((row) => {
-        const state = row.is_enabled ? 'Enabled' : 'Disabled';
-        const primary = row.role === 'primary' ? ' ⭐ PRIMARY' : ' backup';
-        return `${primary} · ${state}\n${row.title ?? 'Untitled channel'}\nID: ${row.telegram_chat_id}\nPriority: ${row.priority}\nPermission test: ${row.last_test_status}`;
+        const state = row.is_enabled ? '🟢 Enabled' : '⚪ Disabled';
+        const primary = row.role === 'primary' ? '⭐ PRIMARY' : '📦 Backup';
+        return `${primary} · ${state}\n📢 ${row.title ?? 'Untitled channel'}\n🆔 ID: ${row.telegram_chat_id}\n🔢 Priority: ${row.priority} · 🧪 Test: ${row.last_test_status}`;
       });
-      await ctx.reply('Storage Channel Manager\n\n' + lines.join('\n\n'));
+      await ctx.reply('🗄 Storage Channel Manager\n━━━━━━━━━━━━━━━━━━\n' + lines.join('\n\n'));
     } catch (error) {
       logger.error({ error: error.message }, 'Storage list failed');
-      await ctx.reply('Could not load storage channels. Check the database and logs.');
+      await ctx.reply('❌ Could not load storage channels. Check the database and logs.');
     }
   });
 
   bot.command('storage_add', async (ctx) => {
     try {
-      const input = getCommandArgument(ctx);
-      if (!input) return ctx.reply('Usage: /storage_add <channel_id or @username>');
+      const input = getCommandArgText(ctx);
+      if (!input) return ctx.reply('ℹ️ Usage: /storage_add <channel_id or @username>');
+      const { admin, ownerId } = getScope(ctx);
       const parsed = parseStorageIdentifier(input);
-      const chat = await validateStorageChannel(ctx, parsed);
-      const saved = await saveStorageChannel(pool, chat, ctx.from.id);
-      await ctx.reply(`Storage channel saved and permission-tested.\n${saved.title ?? 'Channel'}\nID: ${saved.telegram_chat_id}\nStatus: ${saved.is_enabled ? 'Enabled' : 'Disabled'}`);
+      const chat = await validateStorageChannel(ctx, parsed, { requireUserAdmin: !admin });
+      const saved = await saveStorageChannel(pool, chat, ctx.from.id, ownerId);
+      await ctx.reply(`✅ Storage Channel Saved & Tested!\n━━━━━━━━━━━━━━━━━━\n📢 ${saved.title ?? 'Channel'}\n🆔 ID: ${saved.telegram_chat_id}\n⚡ Status: ${saved.is_enabled ? '🟢 Enabled' : '⚪ Disabled'}`);
     } catch (error) {
       logger.warn({ error: error.message }, 'Storage channel add rejected');
-      await ctx.reply('Could not add channel: ' + error.message);
+      await ctx.reply('❌ Could not add channel: ' + error.message);
     }
   });
 
   bot.command('storage_test', async (ctx) => {
     let channelId;
+    const { admin, ownerId } = getScope(ctx);
     try {
-      channelId = getNumericChannelId(getCommandArgument(ctx));
-      const chat = await validateStorageChannel(ctx, channelId);
-      await updateStorageTest(pool, channelId, 'ok');
-      await ctx.reply(`Storage permission test passed.\n${chat.title ?? 'Channel'}\nID: ${chat.id}\nBot is administrator and can post.`);
+      channelId = getNumericChannelId(getCommandArgText(ctx));
+      if (!admin) {
+        const owned = await listStorageChannels(pool, ownerId);
+        if (!owned.some((c) => Number(c.telegram_chat_id) === Number(channelId))) {
+          throw new Error('Channel not found in your storage channels.');
+        }
+      }
+      const chat = await validateStorageChannel(ctx, channelId, { requireUserAdmin: !admin });
+      await updateStorageTest(pool, channelId, 'ok', null, ownerId);
+      await ctx.reply(`✅ Storage Permission Test Passed!\n━━━━━━━━━━━━━━━━━━\n📢 ${chat.title ?? 'Channel'}\n🆔 ID: ${chat.id}\n🛡️ Bot is administrator and can post.`);
     } catch (error) {
       if (channelId !== undefined) {
-        try { await updateStorageTest(pool, channelId, 'failed', error.message); } catch {}
+        try { await updateStorageTest(pool, channelId, 'failed', error.message, ownerId); } catch {}
       }
       logger.warn({ channelId, error: error.message }, 'Storage permission test failed');
-      await ctx.reply('Storage test failed: ' + error.message);
+      await ctx.reply('❌ Storage test failed: ' + error.message);
     }
   });
 
   bot.command('storage_enable', async (ctx) => {
     try {
-      const id = getNumericChannelId(getCommandArgument(ctx));
-      if (!await setStorageEnabled(pool, id, true)) return ctx.reply('Channel not found. Use /storage to see registered channels.');
-      await ctx.reply('Storage channel enabled. Run /storage_test before using it for uploads.');
-    } catch (error) {
-      await ctx.reply('Usage: /storage_enable <channel_id>');
+      const id = getNumericChannelId(getCommandArgText(ctx));
+      const { ownerId } = getScope(ctx);
+      if (!await setStorageEnabled(pool, id, true, ownerId)) return ctx.reply('❌ Channel not found. Use /storage to see registered channels.');
+      await ctx.reply('🟢 Storage channel enabled! Run /storage_test before uploading.');
+    } catch {
+      await ctx.reply('ℹ️ Usage: /storage_enable <channel_id>');
     }
   });
 
   bot.command('storage_disable', async (ctx) => {
     try {
-      const id = getNumericChannelId(getCommandArgument(ctx));
-      if (!await setStorageEnabled(pool, id, false)) return ctx.reply('Channel not found.');
-      await ctx.reply('Storage channel disabled. Existing stored files remain indexed.');
-    } catch (error) {
-      await ctx.reply('Usage: /storage_disable <channel_id>');
+      const id = getNumericChannelId(getCommandArgText(ctx));
+      const { ownerId } = getScope(ctx);
+      if (!await setStorageEnabled(pool, id, false, ownerId)) return ctx.reply('❌ Channel not found.');
+      await ctx.reply('⚪ Storage channel disabled. Existing stored files remain indexed.');
+    } catch {
+      await ctx.reply('ℹ️ Usage: /storage_disable <channel_id>');
     }
   });
 
   bot.command('storage_primary', async (ctx) => {
     try {
-      const id = getNumericChannelId(getCommandArgument(ctx));
-      if (!await setPrimaryStorageChannel(pool, id)) return ctx.reply('Channel not found.');
-      await ctx.reply('Primary storage channel changed. Other channels are now backups.');
+      const id = getNumericChannelId(getCommandArgText(ctx));
+      const { ownerId } = getScope(ctx);
+      if (!await setPrimaryStorageChannel(pool, id, ownerId)) return ctx.reply('❌ Channel not found.');
+      await ctx.reply('⭐ Primary storage channel updated! Other channels are now backups.');
     } catch (error) {
       logger.error({ error: error.message }, 'Primary storage change failed');
-      await ctx.reply('Could not change primary storage channel.');
+      await ctx.reply('❌ Could not change primary storage channel.');
     }
   });
 
   bot.command('storage_remove', async (ctx) => {
     try {
-      const id = getNumericChannelId(getCommandArgument(ctx));
-      const result = await removeStorageChannel(pool, id);
-      if (result.removed) return ctx.reply('Storage channel removed from FileStore.');
-      if (result.reason === 'referenced') return ctx.reply(`Channel contains ${result.references} indexed storage messages, so it was disabled instead of deleted.`);
-      return ctx.reply('Channel not found.');
+      const id = getNumericChannelId(getCommandArgText(ctx));
+      const { ownerId } = getScope(ctx);
+      const result = await removeStorageChannel(pool, id, ownerId);
+      if (result.removed) return ctx.reply('🗑️ Storage channel removed from FileStore.');
+      if (result.reason === 'referenced') return ctx.reply(`⚠️ Channel contains ${result.references} indexed storage messages, so it was disabled instead of deleted.`);
+      return ctx.reply('❌ Channel not found.');
     } catch (error) {
       logger.error({ error: error.message }, 'Storage channel removal failed');
-      await ctx.reply('Could not remove storage channel.');
+      await ctx.reply('❌ Could not remove storage channel.');
     }
   });
 }

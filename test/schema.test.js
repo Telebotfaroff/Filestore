@@ -168,3 +168,27 @@ test('payment recovery notification migration adds retry and lease fields', () =
   assert.match(migration20, /recovery_notification_last_error TEXT/);
   assert.match(migration20, /recovery_notification_attempts < 10/);
 });
+
+const migration21 = await readFile(new URL('../src/database/migrations/021_shareable_links.sql', import.meta.url), 'utf8');
+test('shareable links migration supports single and batch links up to 20 items', () => {
+  assert.match(migration21, /CREATE TABLE IF NOT EXISTS share_links/);
+  assert.match(migration21, /CREATE TABLE IF NOT EXISTS share_link_items/);
+  assert.match(migration21, /link_type TEXT NOT NULL CHECK \(link_type IN \('single', 'batch'\)\)/);
+  assert.match(migration21, /position >= 1 AND position <= 20/);
+});
+
+const migration22 = await readFile(new URL('../src/database/migrations/022_public_creators_and_wallet.sql', import.meta.url), 'utf8');
+test('public creators and wallet migration adds tenant scoping, wallets, ledger, and withdrawal requests', () => {
+  assert.match(migration22, /files_active_uploader_unique_id_idx/);
+  for (const table of ['storage_channels', 'delivery_bots', 'force_sub_channels', 'shortener_providers']) {
+    assert.match(migration22, new RegExp(`ALTER TABLE ${table}[\\s\\S]*owner_telegram_id`));
+  }
+  assert.match(migration22, /ALTER TABLE delivery_jobs[\s\S]*delivery_bot_id/);
+  assert.match(migration22, /CREATE TABLE IF NOT EXISTS user_creator_settings/);
+  assert.match(migration22, /CREATE TABLE IF NOT EXISTS creator_checkpoint_states/);
+  assert.match(migration22, /CREATE TABLE IF NOT EXISTS creator_wallets/);
+  assert.match(migration22, /CREATE TABLE IF NOT EXISTS withdrawal_requests/);
+  assert.match(migration22, /CREATE TABLE IF NOT EXISTS wallet_ledger/);
+  assert.match(migration22, /wallet_ledger_sale_tx_idx/);
+});
+

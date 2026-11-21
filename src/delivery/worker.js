@@ -16,7 +16,7 @@ async function notifyRequester(bot, userId, status) {
 }
 
 
-export function createDeliveryWorker(bot, pool, logger, identity) {
+export function createDeliveryWorker(bot, pool, logger, identity, workerOptions = {}) {
   let timer;
   let busy = false;
   let lastRecoveryAt = 0;
@@ -29,7 +29,7 @@ export function createDeliveryWorker(bot, pool, logger, identity) {
         await recoverExpiredDeliveryJobs(pool);
         lastRecoveryAt = Date.now();
       }
-      const claim = await claimNextDeliveryJob(pool, identity);
+      const claim = await claimNextDeliveryJob(pool, identity, workerOptions);
       if (!claim) return;
 
       // Refresh the lease during slow Telegram operations to prevent other workers reclaiming it.
