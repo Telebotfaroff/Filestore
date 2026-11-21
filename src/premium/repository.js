@@ -130,7 +130,9 @@ export async function removePremiumPlan(pool, id, ownerId = undefined) {
       `DELETE FROM premium_plans WHERE id = $1 AND ${scope.clause} RETURNING id, name, owner_telegram_id`,
       [planId, ...scope.params],
     );
-    return rows[0] ?? null;
+    const row = rows[0] ?? null;
+    if (row) invalidatePlanCache(ownerId);
+    return row;
   }
   const { rows } = await pool.query('DELETE FROM premium_plans WHERE id = $1 RETURNING id, name, owner_telegram_id', [planId]);
   const row = rows[0] ?? null;
