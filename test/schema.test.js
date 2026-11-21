@@ -21,6 +21,16 @@ const migration16 = await readFile(new URL('../src/database/migrations/016_auto_
 const migration17 = await readFile(new URL('../src/database/migrations/017_auto_delete_retry_backoff.sql', import.meta.url), 'utf8');
 const migration18 = await readFile(new URL('../src/database/migrations/018_payment_session_expiry.sql', import.meta.url), 'utf8');
 
+const migration27 = await readFile(new URL('../src/database/migrations/027_creator_broadcasts.sql', import.meta.url), 'utf8');
+
+test('creator broadcast schema is scoped to delivery bots with recipient snapshots and progress', () => {
+  assert.match(migration27, /CREATE TABLE IF NOT EXISTS creator_broadcasts/);
+  assert.match(migration27, /owner_telegram_id BIGINT NOT NULL/);
+  assert.match(migration27, /delivery_bot_id BIGINT NOT NULL REFERENCES delivery_bots/);
+  assert.match(migration27, /CREATE TABLE IF NOT EXISTS creator_broadcast_recipients/);
+  for (const status of ['pending', 'sent', 'failed', 'skipped']) assert.match(migration27, new RegExp(status));
+});
+
 test('initial schema defines core tables and constraints', () => {
   for (const table of ['users', 'app_settings', 'storage_channels', 'files', 'storage_messages', 'tags', 'file_tags', 'activity_logs']) {
     assert.match(migration1, new RegExp('CREATE TABLE IF NOT EXISTS ' + table));
