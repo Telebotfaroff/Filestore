@@ -34,7 +34,7 @@ export function createCreatorBroadcastWorker(telegram,pool,logger,deliveryBotId,
   }
   return {ok:false,error:'retry_exhausted'};
  }
- async processOne(){
+ async function processOne(){
   const job=await claimCreatorBroadcast(pool,botId);if(!job)return false;
   try{
    while(!stopped){
