@@ -1,9 +1,14 @@
+import { cached, cacheDeletePrefix } from '../utils/cache.js';
+const CREATOR_SETTINGS_TTL = 45_000;
+const invalidateCreatorSettings = (userId) => cacheDeletePrefix(`creator-settings:${Number(userId)}:`);
 import { normalizeUpiId } from '../payments/fampay.js';
 
 export const MIN_WITHDRAWAL_INR_MINOR = 100; // ₹1.00 minimum UPI payout
 
 export async function getCreatorSettings(pool, userId) {
   const uid = Number(userId);
+  if (!Number.isSafeInteger(uid) || uid <= 0) return { user_telegram_id: null, checkpoint_enabled: false, force_sub_enabled: false, payout_upi_id: null };
+  return cached(`creator-settings:${uid}:value`, CREATOR_SETTINGS_TTL, async () => {
   if (!Number.isSafeInteger(uid) || uid <= 0) {
     return {
       user_telegram_id: null,
@@ -25,6 +30,7 @@ export async function getCreatorSettings(pool, userId) {
     payout_upi_id: null,
     updated_at: null,
   };
+  });
 }
 
 async function ensureUserRow(db, userId) {
@@ -42,9 +48,9 @@ export async function setCreatorCheckpointEnabled(pool, userId, enabled) {
      RETURNING user_telegram_id, checkpoint_enabled, force_sub_enabled, payout_upi_id`,
     [uid, Boolean(enabled)],
   );
+  invalidateCreatorSettings(uid);
   return rows[0];
 }
-
 export async function setCreatorForceSubEnabled(pool, userId, enabled) {
   const uid = Number(userId);
   if (!Number.isSafeInteger(uid) || uid <= 0) throw new Error('Invalid user ID.');
@@ -71,6 +77,7 @@ export async function setCreatorPayoutUpi(pool, userId, rawUpiId) {
      RETURNING user_telegram_id, checkpoint_enabled, force_sub_enabled, payout_upi_id`,
     [uid, upiId],
   );
+  invalidateCreatorSettings(uid);
   return rows[0];
 }
 
