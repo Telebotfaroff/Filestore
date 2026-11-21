@@ -573,10 +573,6 @@ export function buildPublicMenuKeyboard() {
         { text: '📘 User Guide (/guide)', callback_data: 'cc:uguide:overview' },
       ],
       [
-        { text: '🌐 Web Panel Token', callback_data: 'cc:webtok' },
-        { text: '📢 Broadcast', callback_data: 'cc:broadcast' },
-      ],
-      [
         { text: '↻ Refresh', callback_data: 'cc:home' },
       ],
     ],
@@ -2942,7 +2938,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     const active = bots.filter(b => b.is_enabled && b.runtime_status === 'running');
     const history = await listCreatorBroadcasts(pool, ownerId, 5).catch(() => []);
     const audience = await pool.query('SELECT COUNT(*)::int AS count FROM delivery_bot_user_activity WHERE delivery_bot_id = ANY($1::bigint[])', [active.map(b=>Number(b.id))]);
-    const msg = '📢 <b>Creator Broadcast</b>\\n━━━━━━━━━━━━━━━━━━\\n🤖 Active delivery bots: <b>'+active.length+'</b>\\n👥 Tracked audience: <b>'+Number(audience.rows[0]?.count||0)+'</b>\\n\\nSend a text announcement to users tracked by your delivery bot. Each broadcast runs in the background.';
+    const msg = '📢 <b>Creator Broadcast</b>\n━━━━━━━━━━━━━━━━━━\n🤖 Active delivery bots: <b>'+active.length+'</b>\n👥 Tracked audience: <b>'+Number(audience.rows[0]?.count||0)+'</b>\n\nSend a text announcement to users tracked by your delivery bot. Each broadcast runs in the background.';
     const kb=[];
     if(active.length)kb.push([{text:'✉️ Compose Broadcast',callback_data:'cc:broadcast_compose'}]);
     if(history.length)kb.push([{text:'📋 Recent Broadcasts',callback_data:'cc:broadcast_history'}]);
@@ -2955,15 +2951,15 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     if(!bots.some(b=>b.is_enabled&&b.runtime_status==='running')){await safeAnswer(ctx,'No active delivery bot is running.',true);return;}
     const cfg=setPrompt(ctx.from.id,'creator_broadcast',{back:'cc:broadcast'});
     await safeAnswer(ctx);
-    return renderView(ctx,'✏️ <b>New Broadcast</b>\\n━━━━━━━━━━━━━━━━━━\\n'+cfg.prompt,{inline_keyboard:[[{text:'✖ Cancel',callback_data:'cc:cancel_prompt'}]]},true,true,{parse_mode:'HTML'});
+    return renderView(ctx,'✏️ <b>New Broadcast</b>\n━━━━━━━━━━━━━━━━━━\n'+cfg.prompt,{inline_keyboard:[[{text:'✖ Cancel',callback_data:'cc:cancel_prompt'}]]},true,true,{parse_mode:'HTML'});
   });
   bot.action('cc:broadcast_history',async(ctx)=>{
     if(isOwnerAdmin(ctx))return denyAdminOnly(ctx);
     await safeAnswer(ctx);
     const rows=await listCreatorBroadcasts(pool,Number(ctx.from.id),10);
     const statusIcon={pending:'⏳',processing:'🚀',paused:'⏸',completed:'✅',cancelled:'🛑',failed:'⚠️'};
-    const body=rows.length?rows.map(r=>statusIcon[r.status]+' #'+r.id+' · '+r.status+'\\n👥 '+r.total_recipients+' · 📤 '+r.sent_count+' · ⚠️ '+r.failed_count).join('\\n\\n'):'No broadcasts yet.';
-    return renderView(ctx,'📋 <b>Broadcast History</b>\\n━━━━━━━━━━━━━━━━━━\\n\\n'+body,{inline_keyboard:[[{text:'← Broadcast',callback_data:'cc:broadcast'},{text:'Creator Hub',callback_data:'cc:home'}]]},true,true,{parse_mode:'HTML'});
+    const body=rows.length?rows.map(r=>statusIcon[r.status]+' #'+r.id+' · '+r.status+'\n👥 '+r.total_recipients+' · 📤 '+r.sent_count+' · ⚠️ '+r.failed_count).join('\n\n'):'No broadcasts yet.';
+    return renderView(ctx,'📋 <b>Broadcast History</b>\n━━━━━━━━━━━━━━━━━━\n\n'+body,{inline_keyboard:[[{text:'← Broadcast',callback_data:'cc:broadcast'},{text:'Creator Hub',callback_data:'cc:home'}]]},true,true,{parse_mode:'HTML'});
   });
 
   // Prompt starters & cancel
