@@ -41,7 +41,9 @@ export async function getPremiumPlanById(pool, id, ownerId = undefined) {
       `SELECT id, name, price_minor, currency, duration_days, is_enabled, owner_telegram_id FROM premium_plans WHERE id = $1 AND ${scope.clause} LIMIT 1`,
       [planId, ...scope.params],
     );
-    return rows[0] ?? null;
+    const row = rows[0] ?? null;
+    if (row) invalidatePlanCache(ownerId);
+    return row;
   }
   const { rows } = await pool.query(
     'SELECT id, name, price_minor, currency, duration_days, is_enabled, owner_telegram_id FROM premium_plans WHERE id = $1 LIMIT 1',
@@ -79,7 +81,9 @@ export async function setPremiumPlanEnabled(pool, id, enabled, ownerId = undefin
        RETURNING id, name, is_enabled, owner_telegram_id`,
       [planId, Boolean(enabled), ...scope.params],
     );
-    return rows[0] ?? null;
+    const row = rows[0] ?? null;
+    if (row) invalidatePlanCache(ownerId);
+    return row;
   }
   const { rows } = await pool.query(
     `UPDATE premium_plans SET is_enabled = $2, updated_at = NOW()
@@ -87,7 +91,9 @@ export async function setPremiumPlanEnabled(pool, id, enabled, ownerId = undefin
      RETURNING id, name, is_enabled, owner_telegram_id`,
     [planId, Boolean(enabled)],
   );
-  return rows[0] ?? null;
+  const row = rows[0] ?? null;
+  if (row) invalidatePlanCache(ownerId);
+  return row;
 }
 
 export async function editPremiumPlan(pool, id, input, ownerId = undefined) {
@@ -102,13 +108,17 @@ export async function editPremiumPlan(pool, id, input, ownerId = undefined) {
        RETURNING id, name, owner_telegram_id`,
       [planId, input.name, input.priceMinor, input.currency, input.durationDays, input.enabled, ...scope.params],
     );
-    return rows[0] ?? null;
+    const row = rows[0] ?? null;
+    if (row) invalidatePlanCache(ownerId);
+    return row;
   }
   const { rows } = await pool.query(
     'UPDATE premium_plans SET name = $2, price_minor = $3, currency = $4, duration_days = $5, is_enabled = $6, updated_at = NOW() WHERE id = $1 RETURNING id, name, owner_telegram_id',
     [planId, input.name, input.priceMinor, input.currency, input.durationDays, input.enabled],
   );
-  return rows[0] ?? null;
+  const row = rows[0] ?? null;
+  if (row) invalidatePlanCache(ownerId);
+  return row;
 }
 
 export async function removePremiumPlan(pool, id, ownerId = undefined) {
@@ -123,7 +133,9 @@ export async function removePremiumPlan(pool, id, ownerId = undefined) {
     return rows[0] ?? null;
   }
   const { rows } = await pool.query('DELETE FROM premium_plans WHERE id = $1 RETURNING id, name, owner_telegram_id', [planId]);
-  return rows[0] ?? null;
+  const row = rows[0] ?? null;
+  if (row) invalidatePlanCache(ownerId);
+  return row;
 }
 
 export async function grantPremiumMembership(pool, userId, planId, daysOverride, adminId) {
