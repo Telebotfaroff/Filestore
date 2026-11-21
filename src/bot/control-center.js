@@ -133,6 +133,7 @@ const OWNER_ONLY_PROMPTS = new Set([
   'fampay_gmail',
   'fampay_upi',
   'auto_delete',
+  'owner_broadcast',
 ]);
 
 export const GUIDE_SECTIONS = {
@@ -368,6 +369,7 @@ export const CREATOR_GUIDE_SECTIONS = {
 };
 
 const PROMPT_CONFIGS = {
+  owner_broadcast: { back: 'cc:owner_broadcast:bot', prompt: '📢 Send the broadcast text (up to 4000 characters). This will be sent to the selected creator audience.' },
   creator_broadcast: {
     back: 'cc:broadcast',
     prompt: '📢 Send the broadcast text (up to 4000 characters). It will be delivered to users who have interacted with your delivery bot.',
@@ -2929,6 +2931,40 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     await showAutoDelete(ctx, true);
   });
 
+  // Platform owner broadcast: select creator, then their own delivery bot
+  bot.action('cc:owner_broadcast',async(ctx)=>{
+    if(!isOwnerAdmin(ctx))return denyAdminOnly(ctx);
+    await safeAnswer(ctx);
+    const creators=await pool.query("SELECT owner_telegram_id, COUNT(*)::int AS bots FROM delivery_bots WHERE owner_telegram_id IS NOT NULL AND is_enabled=TRUE GROUP BY owner_telegram_id ORDER BY owner_telegram_id");
+    const kb=creators.rows.map(c=>[{text:'👤 Creator '+c.owner_telegram_id+' · '+c.bots+' bot(s)',callback_data:'cc:owner_broadcast:creator:'+c.owner_telegram_id}]);
+    kb.push([{text:'← Main Menu',callback_data:'cc:home'}]);
+    return renderView(ctx,'👑 <b>Owner Broadcast</b>\\n━━━━━━━━━━━━━━━━━━\\nChoose a creator to broadcast on their behalf. The audience is restricted to their delivery bot.',{inline_keyboard:kb},true,true,{parse_mode:'HTML'});
+  });
+  bot.action(/^cc:owner_broadcast:creator:(\\d+)$/,async(ctx)=>{
+    if(!isOwnerAdmin(ctx))return denyAdminOnly(ctx);
+    const creatorId=Number(ctx.match[1]);
+    await safeAnswer(ctx);
+    const bots=await deliveryManager.list(creatorId);
+    const kb=[];
+    for(const b of bots.filter(b=>b.is_enabled&&b.runtime_status==='running')){
+      const count=await pool.query('SELECT COUNT(*)::int AS count FROM delivery_bot_user_activity WHERE delivery_bot_id=$1',[b.id]);
+      kb.push([{text:'🤖 @'+b.username+' · '+Number(count.rows[0]?.count||0)+' users',callback_data:'cc:owner_broadcast:bot:'+creatorId+':'+b.id}]);
+    }
+    kb.push([{text:'← Creators',callback_data:'cc:owner_broadcast'}]]);
+    return renderView(ctx,'👑 <b>Broadcast for Creator '+creatorId+'</b>\\nSelect their running delivery bot and audience.',{inline_keyboard:kb},true,true,{parse_mode:'HTML'});
+  });
+  bot.action(/^cc:owner_broadcast:bot:(\\d+):(\\d+)$/,async(ctx)=>{
+    if(!isOwnerAdmin(ctx))return denyAdminOnly(ctx);
+    const creatorId=Number(ctx.match[1]),botId=Number(ctx.match[2]);
+    const bots=await deliveryManager.list(creatorId);
+    const selected=bots.find(b=>Number(b.id)===botId&&b.is_enabled&&b.runtime_status==='running');
+    if(!selected){await safeAnswer(ctx,'Selected creator bot is no longer active.',true);return;}
+    const count=await pool.query('SELECT COUNT(*)::int AS count FROM delivery_bot_user_activity WHERE delivery_bot_id=$1',[botId]);
+    setPrompt(ctx.from.id,'owner_broadcast',{back:'cc:owner_broadcast:creator:'+creatorId,meta:{creatorId,botId}});
+    await safeAnswer(ctx);
+    return renderView(ctx,'✏️ <b>Broadcast on behalf of Creator '+creatorId+'</b>\\n━━━━━━━━━━━━━━━━━━\\n🤖 @'+selected.username+'\\n👥 Audience: '+Number(count.rows[0]?.count||0)+'\\n\nSend the announcement text (up to 4000 characters).',{inline_keyboard:[[{text:'✖ Cancel',callback_data:'cc:cancel_prompt'}]]},true,true,{parse_mode:'HTML'});
+  });
+
   // Creator broadcast menu and history (creator-owned audience only)
   bot.action('cc:broadcast', async (ctx) => {
     if (isOwnerAdmin(ctx)) return safeAnswer(ctx, 'Creator broadcast is available from a creator account.', true);
@@ -3040,6 +3076,15 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
 
     try {
       switch (active.action) {
+        case 'owner_broadcast': {
+          if (!isOwnerAdmin(ctx)) throw new Error('Owner permission required.');
+          const creatorId=Number(active.meta?.creatorId),botId=Number(active.meta?.botId);
+          if(!Number.isSafeInteger(creatorId)||!Number.isSafeInteger(botId))throw new Error('Missing creator or delivery bot selection.');
+          const bots=await deliveryManager.list(creatorId);
+          if(!bots.some(b=>Number(b.id)===botId&&b.is_enabled))throw new Error('Selected creator bot is disabled or no longer owned by them.');
+          const created=await createCreatorBroadcast(pool,{ownerTelegramId:creatorId,deliveryBotId:botId,createdBy:ctx.from.id,messageText:text});
+          return ctx.reply('✅ Owner broadcast queued on behalf of Creator '+creatorId+'\\n━━━━━━━━━━━━━━━━━━\\n📋 Broadcast #'+created.id+'\\n👥 Recipients: '+created.totalRecipients,{reply_markup:{inline_keyboard:[[{text:'👑 Owner Broadcast',callback_data:'cc:owner_broadcast'},{text:'📋 Creator Broadcast History',callback_data:'cc:broadcast_history'}]]}});
+        }
         case 'creator_broadcast': {
           if (isOwnerAdmin(ctx)) throw new Error('Creator broadcasts must be sent from a creator account.');
           const bots = await deliveryManager.list(Number(ctx.from.id));
