@@ -41,7 +41,8 @@ export async function listPaidFileLinks(pool, limit = 30, ownerId = null) {
   if (ownerId !== null && ownerId !== undefined) {
     const { rows } = await pool.query(
       `SELECT pfl.id, pfl.public_code, pfl.price_minor, pfl.currency, pfl.is_enabled, pfl.expires_at, pfl.created_by, pfl.created_at,
-         f.file_code, f.file_name, COUNT(p.id)::int AS purchase_count
+         f.file_code, f.file_name, COUNT(p.id)::int AS purchase_count,
+         (SELECT COUNT(*)::int FROM link_open_events e WHERE e.link_kind='paid_file' AND e.link_id=pfl.id) AS view_count
        FROM paid_file_links pfl JOIN files f ON f.id = pfl.file_id
        LEFT JOIN paid_file_purchases p ON p.paid_link_id = pfl.id
        WHERE pfl.created_by = $2
