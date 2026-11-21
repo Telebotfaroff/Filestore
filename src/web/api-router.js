@@ -800,7 +800,7 @@ export async function handlePanelApiRequest(req, res, state, logger) {
         userId: String(u.telegram_id), username: u.username ?? null, firstName: u.first_name ?? null,
         lastName: u.last_name ?? null, languageCode: u.language_code ?? null, isBlocked: Boolean(u.is_blocked),
         joinedAt: u.bot_first_seen ?? u.started_at, lastSeenAt: u.bot_last_seen ?? u.last_seen_at,
-        botsUsed: Number(u.bots_used ?? 0), interactions: Number(u.bot_interactions ?? 0), premiumActive: Boolean(u.premium_active),
+        botsUsed: Number(u.bots_used ?? 0), botNames: u.bot_names ?? [], interactions: Number(u.bot_interactions ?? 0), premiumActive: Boolean(u.premium_active),
       })) });
     }
     if (method === 'GET' && pathname === '/api/panel/premium-members') {
