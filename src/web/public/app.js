@@ -622,8 +622,8 @@ function renderLinks() {
   return `
     <div class="page-header">
       <div>
-        <h1>Share & Paid Links</h1>
-        <p class="page-sub">Copy URLs, rename free links, pause/resume access, or delete links permanently.</p>
+        <h1>My Links</h1>
+        <p class="page-sub">Manage your generated links. Free and paid links are organized separately.</p>
       </div>
     </div>
 
@@ -673,7 +673,7 @@ function renderLinks() {
                   <td data-label="Actions" class="col-right">
                     <div class="row-actions">
                       ${item.url ? `<button class="btn btn-sm" data-copy-url="${esc(item.url)}">Copy URL</button>` : ''}
-                      ${item.kind === 'share' ? `<button class="btn btn-sm" data-rename-link="${item.id}" data-link-title="${esc(item.title)}">Rename</button>` : ''}
+                      ${item.kind === 'share' ? `<button class="btn btn-sm" data-rename-link="${item.id}" data-link-title="${esc(item.title)}">Edit</button>` : `<button class="btn btn-sm" data-edit-paid-link="${item.kind}:${item.id}:${item.priceMinor}:${esc(item.currency)}:${esc(item.title)}">Edit</button>`}
                       <button class="btn btn-sm" data-toggle-link="${item.kind}:${item.id}:${item.isEnabled ? '0' : '1'}">${item.isEnabled ? 'Pause' : 'Enable'}</button>
                       <button class="btn btn-sm btn-danger" data-delete-link="${item.kind}:${item.id}">Delete</button>
                     </div>
@@ -1651,6 +1651,27 @@ function bindWorkspaceEvents() {
         onSubmit: async ({ title }) => {
           await api(`/api/panel/links/share/${id}`, { method: 'PATCH', body: { title } });
           toast('Link renamed.');
+          await loadViewData('links');
+        },
+      });
+    });
+  });
+  appEl.querySelectorAll('[data-edit-paid-link]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const [kind, id, minor, currency, ...titleParts] = el.dataset.editPaidLink.split(':');
+      const title = titleParts.join(':');
+      const currentPrice = (Number(minor || 0) / 100).toFixed(2);
+      const isBatch = kind === 'paid_batch';
+      openModal({
+        title: isBatch ? 'Edit Paid Batch Link' : 'Edit Paid File Link',
+        submitLabel: 'Save Changes',
+        bodyHtml: `${isBatch ? `<div class="field"><label class="field-label">Link title</label><input class="input" name="title" value="${esc(title)}" maxlength="160" required /></div>` : ''}
+          <div class="field"><label class="field-label">Price (${esc(currency || 'INR')})</label><input class="input" name="price" type="number" min="0.01" step="0.01" value="${currentPrice}" required /></div>`,
+        onSubmit: async ({ title: nextTitle, price }) => {
+          const priceMinor = Math.round(Number(price) * 100);
+          const body = isBatch ? { title: nextTitle, priceMinor } : { priceMinor };
+          await api(`/api/panel/links/${kind}/${id}`, { method: 'PATCH', body });
+          toast('Link updated.');
           await loadViewData('links');
         },
       });
