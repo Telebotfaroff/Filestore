@@ -1,3 +1,5 @@
+import { wakeDeliveryWorkers } from './wake.js';
+
 export async function createSingleDeliveryJob(pool, requesterTelegramId, fileId, requestedBy = requesterTelegramId, deliveryBotId = null) {
   const client = await pool.connect();
   try {
@@ -16,6 +18,7 @@ export async function createSingleDeliveryJob(pool, requesterTelegramId, fileId,
       [job.rows[0].id, fileId],
     );
     await client.query('COMMIT');
+    wakeDeliveryWorkers('single-job-created');
     return job.rows[0].id;
   } catch (error) {
     await client.query('ROLLBACK');
@@ -273,6 +276,7 @@ export async function retryFailedDeliveryJob(pool, jobId) {
       [jobId],
     );
     await client.query('COMMIT');
+    wakeDeliveryWorkers('failed-job-retried');
     return { ok: true, retriedItems: counts.failed };
   } catch (error) {
     await client.query('ROLLBACK');
@@ -300,6 +304,7 @@ export async function createBatchDeliveryJob(pool, requesterTelegramId, fileIds,
       await client.query('INSERT INTO delivery_items (job_id, file_id, position) VALUES ($1, $2, $3)', [job.rows[0].id, fileIds[i], i + 1]);
     }
     await client.query('COMMIT');
+    wakeDeliveryWorkers('batch-job-created');
     return job.rows[0].id;
   } catch (error) { try { await client.query('ROLLBACK'); } catch {} throw error; }
   finally { client.release(); }
