@@ -15,11 +15,13 @@ import {
 import {
   listPaidFileLinks,
   setPaidFileLinkEnabled,
+  updatePaidFileLinkPrice,
   deletePaidFileLink,
 } from '../paid-files/repository.js';
 import {
   listPaidBatchLinks,
   setPaidBatchLinkEnabled,
+  updatePaidBatchLink,
   deletePaidBatchLink,
 } from '../paid-files/batch-repository.js';
 import {
@@ -459,10 +461,13 @@ export async function handlePanelApiRequest(req, res, state, logger) {
           if (typeof body.isEnabled === 'boolean') {
             updated = await setShareLinkEnabled(pool, id, body.isEnabled, ownerScope);
           }
-        } else if (kind === 'paid_file' && typeof body.isEnabled === 'boolean') {
-          updated = await setPaidFileLinkEnabled(pool, id, body.isEnabled, ownerScope);
-        } else if (kind === 'paid_batch' && typeof body.isEnabled === 'boolean') {
-          updated = await setPaidBatchLinkEnabled(pool, id, body.isEnabled, ownerScope);
+        } else if (kind === 'paid_file') {
+          if (typeof body.isEnabled === 'boolean') updated = await setPaidFileLinkEnabled(pool, id, body.isEnabled, ownerScope);
+          else if (Number.isSafeInteger(Number(body.priceMinor)) && Number(body.priceMinor) > 0) updated = await updatePaidFileLinkPrice(pool, id, Number(body.priceMinor), body.currency || null, ownerScope);
+        } else if (kind === 'paid_batch') {
+          if (typeof body.isEnabled === 'boolean') updated = await setPaidBatchLinkEnabled(pool, id, body.isEnabled, ownerScope);
+          else if (typeof body.title === 'string' && Number.isSafeInteger(Number(body.priceMinor)) && Number(body.priceMinor) > 0) updated = await updatePaidBatchLink(pool, id, body.title, Number(body.priceMinor), body.currency || null, ownerScope);
+
         }
         if (!updated) return sendJson(res, 404, { error: 'Link not found or no valid change provided.' });
         return sendJson(res, 200, { ok: true, id: updated.id });
