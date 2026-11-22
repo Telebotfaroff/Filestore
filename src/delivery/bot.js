@@ -25,6 +25,13 @@ import { startFamPayVerificationWorker } from '../payments/fampay-worker.js';
 import { getShareLinkByCode } from '../storage/share-links-repository.js';
 import { escapeHtml, getCommandArgs, inspectBotChannelAccess, safeAnswer } from '../bot/telegram-utils.js';
 import { formatMoney } from '../utils/validation.js';
+import {
+  appendStartCloneNote,
+  buildDeliveryStartCloneMeta,
+  getCachedDeliveryBotStartConfig,
+  normalizeMainBotUsername,
+  sendCustomStartMessage,
+} from './start-message-repository.js';
 
 const HTML = { parse_mode: 'HTML' };
 
@@ -183,6 +190,19 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
     includeGlobal: botMeta.includeGlobal !== false,
   };
   const botOwnerScope = botMeta.ownerTelegramId ?? null;
+  let resolvedMainBotUsername = normalizeMainBotUsername(botMeta.mainBotUsername ?? config?.mainBotUsername);
+
+  async function resolveMainBotUsername() {
+    if (resolvedMainBotUsername) return resolvedMainBotUsername;
+    if (typeof config?.notifyTelegram?.getMe === 'function') {
+      try {
+        const info = await config.notifyTelegram.getMe();
+        resolvedMainBotUsername = normalizeMainBotUsername(info?.username);
+        if (resolvedMainBotUsername) return resolvedMainBotUsername;
+      } catch {}
+    }
+    return null;
+  }
 
   function resolveCreatorScope(creatorId) {
     const id = Number(creatorId);
@@ -659,8 +679,27 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
     await upsertTelegramUser(pool, ctx.from);
     const payload = (ctx.startPayload ?? getCommandArgs(ctx)[0] ?? '').trim();
     if (!payload) {
-      if (Array.isArray(config?.adminIds) && config.adminIds.length > 0 && isAdmin(ctx.from.id, config.adminIds)) {
-        await ctx.reply(
+      const adminCaller = Array.isArray(config?.adminIds) && config.adminIds.length > 0 && isAdmin(ctx.from.id, config.adminIds);
+      const mainBotUsername = await resolveMainBotUsername();
+      const customStart = workerScope.deliveryBotId
+        ? await getCachedDeliveryBotStartConfig(pool, workerScope.deliveryBotId)
+        : null;
+      const hasCustomStart = Boolean(
+        customStart && (customStart.start_message || customStart.start_image_url || customStart.start_image_data),
+      );
+      if (hasCustomStart && (!adminCaller || workerScope.ownerTelegramId !== null)) {
+        const sentCustom = await sendCustomStartMessage(
+          ctx,
+          customStart,
+          ctx.botInfo ?? bot.botInfo,
+          logger,
+          mainBotUsername,
+        );
+        if (sentCustom) return;
+      }
+      const { replyMarkup } = buildDeliveryStartCloneMeta(mainBotUsername);
+      if (adminCaller) {
+        const ownerWelcome = appendStartCloneNote(
           [
             '🤖 <b>FileStore Delivery Bot</b> <i>(Owner Mode)</i>',
             '━━━━━━━━━━━━━━━━━━',
@@ -674,10 +713,11 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
             '🔐 <code>/checkpoint_status</code> — Check verification state',
             '🔎 <code>/access_status</code> — Full access &amp; Premium status',
           ].join('\n'),
-          HTML,
+          mainBotUsername,
         );
+        await ctx.reply(ownerWelcome, { ...HTML, ...replyMarkup });
       } else {
-        await ctx.reply(
+        const defaultWelcome = appendStartCloneNote(
           [
             '✨ <b>Welcome to FileStore Delivery!</b>',
             '━━━━━━━━━━━━━━━━━━',
@@ -691,8 +731,9 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
             '• <code>/paid &lt;code&gt;</code> or <code>/batch &lt;code&gt;</code> — Unlock paid items',
             '• <code>/access_status</code> — Check your current access level',
           ].join('\n'),
-          HTML,
+          mainBotUsername,
         );
+        await ctx.reply(defaultWelcome, { ...HTML, ...replyMarkup });
       }
       return;
     }
@@ -1203,7 +1244,18 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
       worker = createDeliveryWorker(bot, pool, logger, identity, workerScope);
       worker.start();
       if (workerScope.deliveryBotId && workerScope.ownerTelegramId) {
-        broadcastWorker = createCreatorBroadcastWorker(bot.telegram, pool, logger, workerScope.deliveryBotId);
+        const resolveSourceTelegram = () => (
+          typeof botMeta.sourceTelegram === 'function'
+            ? botMeta.sourceTelegram()
+            : (botMeta.sourceTelegram ?? config.notifyTelegram ?? null)
+        );
+        broadcastWorker = createCreatorBroadcastWorker(
+          bot.telegram,
+          pool,
+          logger,
+          workerScope.deliveryBotId,
+          resolveSourceTelegram,
+        );
         broadcastWorker.start();
       }
       autoDeleteWorker = createAutoDeleteWorker(bot, pool, logger, identity);

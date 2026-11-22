@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { cleanupUnreferencedFiles } from './file-cleanup.js';
 
 export const MAX_SHARE_BATCH_ITEMS = 20;
 
@@ -227,6 +228,7 @@ export async function listShareLinks(pool, { limit = 6, offset = 0, ownerId = nu
   const { rows } = await pool.query(
     `SELECT sl.id, sl.link_code, sl.link_type, sl.title, sl.is_enabled, sl.created_by, sl.created_at, sl.updated_at,
        COUNT(sli.file_id)::int AS item_count,
+       (SELECT COUNT(*)::int FROM link_open_events e WHERE e.link_kind='share' AND e.link_id=sl.id) AS view_count,
        MIN(f.file_code) FILTER (WHERE sli.position = 1) AS first_file_code
      FROM share_links sl
      LEFT JOIN share_link_items sli ON sli.link_id = sl.id
@@ -412,16 +414,33 @@ export async function setShareLinkEnabled(pool, idOrCode, enabled, ownerId = nul
 
 export async function deleteShareLink(pool, idOrCode, ownerId = null) {
   const { column, value } = parseLinkIdentifier(idOrCode);
-  if (ownerId !== null && ownerId !== undefined) {
-    const { rows } = await pool.query(
-      `DELETE FROM share_links WHERE ${column} = $1 AND created_by = $2 RETURNING id, link_code, title`,
-      [value, Number(ownerId)],
-    );
-    return rows[0] ?? null;
+  const hasOwner = ownerId !== null && ownerId !== undefined;
+  const itemFilesRes = await pool.query(
+    `SELECT sli.file_id
+     FROM share_link_items sli
+     JOIN share_links sl ON sl.id = sli.share_link_id
+     WHERE sl.${column} = $1${hasOwner ? ' AND sl.created_by = $2' : ''}`,
+    hasOwner ? [value, Number(ownerId)] : [value],
+  ).catch(() => ({ rows: [] }));
+
+  const deleted = hasOwner
+    ? (await pool.query(
+        `DELETE FROM share_links WHERE ${column} = $1 AND created_by = $2 RETURNING id, link_code, title, file_id`,
+        [value, Number(ownerId)],
+      )).rows[0] ?? null
+    : (await pool.query(
+        `DELETE FROM share_links WHERE ${column} = $1 RETURNING id, link_code, title, file_id`,
+        [value],
+      )).rows[0] ?? null;
+
+  if (deleted) {
+    const candidateIds = [
+      deleted.file_id,
+      ...(itemFilesRes?.rows || []).map((r) => r.file_id),
+    ].filter(Boolean);
+    if (candidateIds.length) {
+      await cleanupUnreferencedFiles(pool, candidateIds, ownerId).catch(() => {});
+    }
   }
-  const { rows } = await pool.query(
-    `DELETE FROM share_links WHERE ${column} = $1 RETURNING id, link_code, title`,
-    [value],
-  );
-  return rows[0] ?? null;
+  return deleted;
 }

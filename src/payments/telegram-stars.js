@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createPaymentSession, recordProviderEvent, markProviderEvent, recordVerifiedPayment } from './verification-repository.js';
 import { applyVerifiedPayment } from './fulfillment-repository.js';
 import { markPaymentMethodTest } from './repository.js';
+import { getBotSlotSettings } from '../delivery/slot-repository.js';
 
 const METHOD = 'telegram_stars';
 const CURRENCY = 'XTR';
@@ -187,7 +188,13 @@ async function readMethodConfig(pool) {
 export async function sendStarsInvoice(bot, pool, ctx, purpose, target, label, description, token) {
   if (ctx.chat?.type !== 'private') throw new Error('Stars checkout is only available in private chats.');
   const publicConfig = await readMethodConfig(pool);
-  const stars = getTelegramStarsPrice(publicConfig, purpose, target);
+  let stars = null;
+  if (purpose === 'bot_slot') {
+    const slotSettings = await getBotSlotSettings(pool);
+    stars = slotSettings.starsPrice;
+  } else {
+    stars = getTelegramStarsPrice(publicConfig, purpose, target);
+  }
   if (!stars) throw new Error('No Telegram Stars price is configured for this purchase.');
   const session = await createPaymentSession(pool, {
     method: METHOD, purpose, userId: ctx.from.id, amountMinor: stars, currency: CURRENCY,
@@ -274,6 +281,8 @@ export async function handleStarsSuccessfulPayment(pool, ctx, token, logger, adm
       await ctx.reply(`✅ Telegram Stars payment successful!\nPlan: ${fulfilled.plan ?? 'Premium'}\nYour Premium access is now active. Check /access_status anytime.`);
     } else if (fulfilled.type === 'paid_batch') {
       await ctx.reply(`✅ Telegram Stars payment successful!\nAll ${fulfilled.fileCount ?? ''} files in the batch are unlocked. Open the batch again or use /batch_get <code> to receive them.`.trim());
+    } else if (fulfilled.type === 'bot_slot') {
+      await ctx.reply(`✅ Telegram Stars payment successful!\n🔓 +1 Extra Delivery Bot slot unlocked! Open the Web Control Panel (/token) -> Setup & Delivery Bots to connect your next bot.`);
     } else {
       await ctx.reply('✅ Telegram Stars payment successful! Your file is now unlocked. Use /get <file_code> or open your share link again to receive it.');
     }

@@ -1,5 +1,12 @@
 import { isAdmin } from './admin-guard.js';
-import { createCreatorBroadcast, listCreatorBroadcasts, listOwnerCreatedBroadcasts } from '../broadcast/repository.js';
+import {
+  createCreatorBroadcast,
+  getCreatorBroadcast,
+  listCreatorBroadcasts,
+  listOwnerCreatedBroadcasts,
+  retryCreatorBroadcast,
+  setCreatorBroadcastStatus,
+} from '../broadcast/repository.js';
 import { getAdminDashboardStats, formatAdminDashboard, getPaymentReconciliationStats, searchPaymentTransactions } from '../admin/dashboard-repository.js';
 import { getOperationalHealth, formatOperationalHealth } from '../admin/operational-health.js';
 import { formatPaymentReconciliation } from '../admin/dashboard-commands.js';
@@ -13,7 +20,13 @@ import {
   removeStorageChannel,
 } from '../storage/repository.js';
 import { searchIndexedFiles, getIndexedFile, formatFileSize } from '../storage/file-query.js';
+import { countUnusedFilesForOwner, disableFileByIdOrCode, disableUnusedFilesForOwner } from '../storage/file-cleanup.js';
 import { getRecentDeliveryJobs, retryFailedDeliveryJob } from '../delivery/repository.js';
+import {
+  listAllDeliveryBotsForOwner,
+  getDeliveryBotDetailsForOwner,
+  updateDeliveryBotForOwner,
+} from '../web/owner-bots-repository.js';
 import { getAutoDeleteMinutes, setAutoDeleteMinutes, listFailedScheduledDeletions } from '../delivery/auto-delete-repository.js';
 import {
   listForceSubChannels,
@@ -70,7 +83,9 @@ import {
   enableTelegramStars,
   testTelegramStars,
   getTelegramStarsPrice,
+  sendStarsInvoice,
 } from '../payments/telegram-stars.js';
+import { getBotSlotSettings } from '../delivery/slot-repository.js';
 import {
   listPaidFileLinks,
   disablePaidFileLink,
@@ -134,6 +149,7 @@ const OWNER_ONLY_PROMPTS = new Set([
   'fampay_upi',
   'auto_delete',
   'owner_broadcast',
+  'owner_bot_prio',
 ]);
 
 export const GUIDE_SECTIONS = {
@@ -236,29 +252,26 @@ export const GUIDE_SECTIONS = {
 export const CREATOR_GUIDE_SECTIONS = {
   overview: {
     label: '📘 Start',
-    title: '📘 FileStore User & Creator Guide',
+    title: '📘 FileStore Link Creator Guide',
     body: [
-      'Turn your Telegram media into shareable links, protected packs, or paid content — and withdraw your earnings directly to your UPI ID.',
+      'This Telegram bot is focused on <b>creating file links</b> fast — while all workspace settings live in your <b>Web Control Panel</b>.',
       '',
-      '<b>🚀 How It Works (4 Simple Steps)</b>',
-      '<blockquote><b>1. Upload Media</b> — Send or forward any video, file, photo, or audio directly to this chat (or start /link, /Batch, or /plink first).\n' +
-        '<b>2. Generate Links</b> — Create free single links (/link), multi-file bundles up to 20 items (/Batch), or monetized paid links (/plink).\n' +
-        '<b>3. Customize (Optional)</b> — Connect your own Storage Channel, Delivery Bot, URL Shorteners, and Force-Sub channels anytime.\n' +
-        '<b>4. Earn &amp; Withdraw</b> — Paid link sales credit your creator balance automatically. Use /me to add your UPI ID and request a payout.</blockquote>',
+      '<b>🚀 How It Works</b>',
+      '<blockquote><b>1. Set Up on Website (/token)</b> — Open the Web Control Panel to connect your Storage Channel, Delivery Bot, Force-Sub, URL Shorteners, Premium Plans, Broadcasts, and Payout UPI ID.\n' +
+        '<b>2. Upload Media Here</b> — Send or forward any video, file, photo, or audio directly to this chat.\n' +
+        '<b>3. Create Links in Telegram</b> — Generate free single links (/link), batches up to 20 files (/Batch), or monetized paid links (/plink).\n' +
+        '<b>4. Manage Everything Online</b> — Track opens, edit prices/shorteners, and withdraw INR earnings on the Web Control Panel.</blockquote>',
       '',
-      '<b>⚡ Essential Commands</b>',
-      '• /menu — Open Creator Hub',
+      '<b>⚡ Link &amp; Panel Commands</b>',
       '• /link — Share link for 1 media file',
       '• /Batch — Share link for up to 20 media files',
       '• /plink — Create paid link (Single or Batch)',
-      '• /my_plans — Create &amp; manage your own Premium membership plans',
       '• /links — View, rename, edit, or delete links',
-      '• /me — Balance, UPI ID &amp; withdrawals',
       '• /token — Get or regenerate your Web Control Panel token',
       '• /guide — Open this interactive guide anytime',
-      '• /cancel — Exit any active input step',
+      '• /cancel — Exit any active link step',
       '',
-      '<i>Tap any topic button below for detailed step-by-step instructions.</i>',
+      '<i>Tap any topic button below for step-by-step details.</i>',
     ].join('\n'),
   },
   links: {
@@ -278,18 +291,18 @@ export const CREATOR_GUIDE_SECTIONS = {
         '• Tap <b>✅ Finish &amp; Generate</b> or send /done when finished.</blockquote>',
       '',
       '<b>3️⃣ Manage, Edit &amp; Delete (/links)</b>',
-      '<blockquote>• Open /links to see every generated link.\n' +
-        '• Tap any link to copy the URL, <b>rename</b> the title/file, add or remove batch files, pause/resume, or <b>permanently delete</b> it.\n' +
+      '<blockquote>• Open /links or the Web Control Panel to see every generated link.\n' +
+        '• Copy URLs, <b>rename</b> titles, add/remove batch files, pause/resume, or <b>delete</b> links.\n' +
         '• Quick search: /files, /find &lt;keyword&gt;, /fileinfo &lt;code&gt;.</blockquote>',
     ].join('\n'),
   },
   paid: {
     label: '💎 Paid & Plans',
-    title: '💎 Paid Links & Your Own Premium Plans',
+    title: '💎 Paid Links (/plink) & Web Premium Plans',
     body: [
-      'Monetize your content in two ways — sell individual files/bundles with /plink, or offer your own ad-free <b>Creator Premium Membership Plans</b> with /my_plans!',
+      'Create paid links directly in Telegram with /plink, and configure your VIP Premium membership plans from the Web Control Panel (/token).',
       '',
-      '<b>✨ 1. Paid Links (/plink)</b>',
+      '<b>✨ 1. Paid Links in Telegram (/plink)</b>',
       '<blockquote><b>Step 1:</b> Run /plink and choose <b>Single Media</b> or <b>Batch (2–20 files)</b>.\n' +
         '<b>Step 2:</b> Send your media (for Batch, tap <b>Done</b> and enter a bundle title).\n' +
         '<b>Step 3:</b> Set your price in one message:\n' +
@@ -298,72 +311,62 @@ export const CREATOR_GUIDE_SECTIONS = {
         '  • Stars only: <code>50 stars</code>\n' +
         '  • Optional expiry: <code>99 INR | 7d</code></blockquote>',
       '',
-      '<b>👑 2. Your Own Premium Plans (/my_plans)</b>',
-      '<blockquote>• Tap <b>👑 My Premium Plans</b> (or /my_plans) to create custom VIP tiers (e.g. <code>VIP Monthly|99|30</code>).\n' +
-        '• Share your plan checkout link or let buyers tap <b>💎 Skip Ads — Creator Premium</b> right from your shortener checkpoints!\n' +
-        '• Buyers who purchase your Premium plan skip <b>your</b> URL shortener checkpoints automatically.\n' +
-        '• Payments are collected via the platform Owner’s UPI / Stars checkout and credited directly to your <b>/me</b> wallet balance!</blockquote>',
+      '<b>👑 2. Your Premium Plans (Configured on Website)</b>',
+      '<blockquote>• Open the <b>Web Control Panel (/token → My Premium Plans)</b> to create, edit, or set Telegram Stars prices on your VIP tiers.\n' +
+        '• Buyers who purchase your plan skip <b>your</b> URL shortener checkpoints automatically.\n' +
+        '• Payments credit directly to your Creator Wallet balance.</blockquote>',
       '',
       '<b>ℹ Important Note</b>',
       '• Premium memberships bypass free URL-shortener checkpoints only and never unlock paid links (/plink).',
     ].join('\n'),
   },
   setup: {
-    label: '🗄 Storage & Bot',
-    title: '🗄 Storage Channel & Delivery Bot Setup',
+    label: '🌐 Web Setup',
+    title: '🌐 Website Setup: Storage & Delivery Bot',
     body: [
-      'Works out of the box with shared platform defaults — or connect your own private channel and branded Delivery Bot.',
+      'All creator setup is handled in the <b>Web Control Panel (/token)</b> so this bot stays fast and clean for creating file links.',
       '',
-      '<b>🗄 Connect Your Own Storage Channel (Optional)</b>',
-      '<blockquote><b>1.</b> Create a private Telegram channel for your files.\n' +
-        '<b>2.</b> Add <b>this Main Bot</b> as an Administrator with <b>Post Messages</b> permission.\n' +
-        '<b>3.</b> Also add the Delivery Bot (shared or your own) as Admin/Member so it can forward files to users.\n' +
-        '<b>4.</b> Tap <b>🗄 Storage Channel → ➕ Add Channel</b> (or run <code>/storage_add -100xxxxxxxxxx</code>).</blockquote>',
+      '<b>🗄 Add Storage Channel on Website</b>',
+      '<blockquote><b>1.</b> Create a private Telegram channel and add <b>this Main Bot</b> as Administrator (with <b>Post Messages</b> permission).\n' +
+        '<b>2.</b> Also add your Delivery Bot (if using your own) as Administrator.\n' +
+        '<b>3.</b> Open <b>Web Control Panel → Channels → Add Storage Channel</b>, enter <code>-100...</code> or <code>@username</code>, and verify access live.</blockquote>',
       '',
-      '<b>🤖 Connect Your Own Delivery Bot (Optional)</b>',
-      '<blockquote><b>1.</b> Open @BotFather and create a new bot to get a Bot Token.\n' +
-        '<b>2.</b> Tap <b>🤖 Delivery Bot → ➕ Add Delivery Bot</b> and send the token (your token message is deleted immediately and encrypted).\n' +
-        '<b>3.</b> Make your new Delivery Bot an Admin in your storage &amp; force-sub channels.\n' +
-        '<b>4.</b> All new links you create will automatically use your custom bot username!</blockquote>',
-      '',
-      '<i>Tip: You can pause, test, switch primary, or remove your custom bot anytime.</i>',
+      '<b>🤖 Connect Custom Delivery Bot on Website</b>',
+      '<blockquote><b>1.</b> Create a bot in @BotFather and copy its token.\n' +
+        '<b>2.</b> <b>Required:</b> Add your own Storage Channel and make both bots Administrators — <b>otherwise delivery will not work!</b>\n' +
+        '<b>3.</b> Open <b>Web Control Panel → Setup &amp; Delivery Bots → Connect Delivery Bot</b> and paste the token.</blockquote>',
+      '<b>🌐 Opening the Panel</b>',
+      '<blockquote>Tap <b>Web Control Panel</b> in the menu (or send /token) to open your dashboard.</blockquote>',
     ].join('\n'),
   },
   short: {
-    label: '⚡ Shorteners & F-Sub',
-    title: '⚡ URL Shorteners & Force-Sub Guide',
+    label: '⚡ Shorteners',
+    title: '⚡ Shorteners, Force-Sub & Broadcasts on Website',
     body: [
-      'Grow your Telegram channels and earn extra ad revenue on free links using your own shorteners and Force-Sub rules.',
+      'Configure your monetization, channel gates, and subscriber broadcasts from the <b>Web Control Panel</b>.',
       '',
-      '<b>🔗 URL Shorteners (Multiple Rotation Supported)</b>',
-      '<blockquote><b>1.</b> Open <b>🔗 Shorteners → ➕ Add Shortener</b>.\n' +
-        '<b>2.</b> Follow the 3-step button wizard (Base URL → API Key → Unlock Duration) or paste <code>https://domain.com|API_KEY</code>.\n' +
-        '<b>3.</b> Add multiple shorteners to rotate automatically by priority.\n' +
-        '<b>4.</b> Tap <b>🧪 Test API</b>, then toggle <b>Checkpoints: ON</b>.\n' +
-        '• Your checkpoints are isolated — unlocking another creator\'s shortener never bypasses yours.</blockquote>',
+      '<b>🔗 URL Shorteners (Web Panel → Shorteners)</b>',
+      '<blockquote>• Add one or multiple shortener providers with Base URL, API key, unlock duration, and priority.\n' +
+        '• Edit credentials, run <b>Test API</b> live, and toggle Checkpoints ON/OFF in one click.</blockquote>',
       '',
-      '<b>🔒 Force-Subscription Channels</b>',
-      '<blockquote><b>1.</b> Add this bot (and your Delivery Bot) as Administrator in your Telegram channel.\n' +
-        '<b>2.</b> Open <b>🔒 Force-Sub → ➕ Add Channel</b> and send <code>@channel https://t.me/joinlink</code> (or numeric <code>-100...</code> ID).\n' +
-        '<b>3.</b> Toggle <b>Force-Sub: ON</b> so users must join before receiving your files.</blockquote>',
+      '<b>🔒 Force-Sub Channels (Web Panel → Channels)</b>',
+      '<blockquote>• Add channels where the bot is Administrator, test permissions, and toggle Force-Sub ON/OFF globally.</blockquote>',
+      '',
+      '<b>📢 Broadcasts (Web Panel → Broadcasts)</b>',
+      '<blockquote>• Send text announcements with optional HTTPS action buttons to all users of your Delivery Bot.</blockquote>',
     ].join('\n'),
   },
   earn: {
-    label: '💰 Balance & UPI',
-    title: '💰 Creator Balance & Manual UPI Withdrawals',
+    label: '💰 Wallet & UPI',
+    title: '💰 Wallet & Payouts on Web Control Panel',
     body: [
-      'Track all earnings from your paid links and Creator Premium membership plans, and withdraw your INR balance straight to your UPI ID.',
+      'Track all earnings from your paid links and Creator Premium plans, and withdraw INR directly to your UPI ID from the <b>Web Control Panel → Wallet &amp; Payouts</b>.',
       '',
-      '<b>📊 Checking Your Balance (/me)</b>',
-      '<blockquote>• Run /me or tap <b>💰 Balance &amp; Withdraw</b>.\n' +
-        '• View <b>Available Balance</b>, <b>Pending Withdrawal Lock</b>, <b>Total Earned</b>, <b>Total Withdrawn</b>, and full ledger history.</blockquote>',
-      '',
-      '<b>💸 How to Withdraw to Your UPI ID</b>',
-      '<blockquote><b>1.</b> Tap <b>📲 Set Payout UPI ID</b> and enter your UPI handle (e.g. <code>yourname@fam</code>, <code>name@okaxis</code>, <code>9876543210@ybl</code>).\n' +
-        '<b>2.</b> Tap <b>💸 Withdraw Funds</b> (or run /withdraw) when you have at least <b>₹1.00 INR</b> available.\n' +
-        '<b>3.</b> Choose full balance or a custom amount and confirm.\n' +
-        '<b>4.</b> Your requested amount is safely locked while the platform owner transfers funds manually to your UPI ID.\n' +
-        '<b>5.</b> You receive an automatic DM as soon as the transfer is marked <b>Paid</b> (with UTR reference) — or refunded instantly if rejected.</blockquote>',
+      '<b>💸 Web Payout Flow</b>',
+      '<blockquote><b>1.</b> Open <b>Web Control Panel → Wallet &amp; Payouts</b>.\n' +
+        '<b>2.</b> Save your UPI ID (e.g. <code>yourname@fam</code> or <code>name@okaxis</code>).\n' +
+        '<b>3.</b> Request a withdrawal anytime your balance reaches <b>₹1.00 INR</b>.\n' +
+        '<b>4.</b> You receive an instant Telegram notification as soon as the transfer is marked <b>Paid</b> with UTR reference.</blockquote>',
     ].join('\n'),
   },
 };
@@ -376,7 +379,7 @@ const PROMPT_CONFIGS = {
   },
   storage_add: {
     back: 'cc:storage',
-    prompt: '🗄 Send the Telegram channel ID (e.g. -1001234567890) or @username to add as a storage channel.\n\n⚠️ Make sure this bot is an administrator with permission to post messages.',
+    prompt: '🗄 Send the Telegram channel ID (e.g. -1001234567890), @username, t.me link — OR forward any post from your channel.\n\n⚠️ Make sure this Main Bot is added as an Administrator (with Post Messages permission) in that channel first.',
   },
   find: {
     back: 'cc:files:0',
@@ -499,6 +502,10 @@ const PROMPT_CONFIGS = {
     back: 'cc:short',
     prompt: '🔢 Send priority number (1–100000, lower number runs first):',
   },
+  owner_bot_prio: {
+    back: 'cc:all_bots:0',
+    prompt: '🔢 Send new priority number for this delivery bot (0–100000, lower runs first):',
+  },
 };
 
 export function buildMainMenuKeyboard() {
@@ -542,6 +549,7 @@ export function buildMainMenuKeyboard() {
       ],
       [
         { text: '👑 Broadcast for Creator', callback_data: 'cc:owner_broadcast' },
+        { text: '🌐 All Delivery Bots', callback_data: 'cc:all_bots:0' },
       ],
       [
         { text: '↻ Refresh Overview', callback_data: 'cc:home' },
@@ -554,30 +562,18 @@ export function buildPublicMenuKeyboard() {
   return {
     inline_keyboard: [
       [
-        { text: '🔗 Single Link (/link)', callback_data: 'cc:cmd_link' },
-        { text: '📦 Batch Link (/Batch)', callback_data: 'cc:cmd_batch' },
+        { text: '🔗 Single Link', callback_data: 'cc:cmd_link' },
+        { text: '📦 Batch Link', callback_data: 'cc:cmd_batch' },
       ],
       [
-        { text: '💎 Paid Link (/plink)', callback_data: 'cc:plink' },
-        { text: '📋 My Links (/links)', callback_data: 'cc:links:0' },
+        { text: '💎 Paid Link', callback_data: 'cc:plink' },
+        { text: '📋 My Links', callback_data: 'cc:links:0' },
       ],
       [
-        { text: '🗄 Storage Channel', callback_data: 'cc:storage' },
-        { text: '🤖 Delivery Bot', callback_data: 'cc:bots' },
+        { text: '🌐 Web Control Panel', callback_data: 'cc:webtok' },
       ],
       [
-        { text: '⚡ Shorteners', callback_data: 'cc:short' },
-        { text: '🔒 Force-Sub', callback_data: 'cc:fsub' },
-      ],
-      [
-        { text: '👑 My Premium Plans', callback_data: 'cc:cplans' },
-        { text: '💰 Balance & Withdraw (/me)', callback_data: 'cc:me' },
-      ],
-      [
-        { text: '📢 Broadcast to Users', callback_data: 'cc:broadcast' },
-        { text: '📘 User Guide (/guide)', callback_data: 'cc:uguide:overview' },
-      ],
-      [
+        { text: '📘 Link Guide', callback_data: 'cc:uguide:overview' },
         { text: '↻ Refresh', callback_data: 'cc:home' },
       ],
     ],
@@ -600,6 +596,30 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
 
   function denyAdminOnly(ctx) {
     return safeAnswer(ctx, 'Restricted to platform owner/admin.', true);
+  }
+
+  function setBroadcastDraft(userId, draft) {
+    broadcastDrafts.set(String(userId), { ...draft, expiresAt: Date.now() + 15 * 60 * 1000 });
+  }
+
+  function getBroadcastDraft(userId) {
+    const key = String(userId);
+    const entry = broadcastDrafts.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+      broadcastDrafts.delete(key);
+      return null;
+    }
+    return entry;
+  }
+
+  function clearBroadcastDraft(userId) {
+    broadcastDrafts.delete(String(userId));
+  }
+
+  function pickCreatorBroadcastBot(bots = []) {
+    const active = bots.filter((b) => b.is_enabled && b.runtime_status === 'running');
+    return active.find((b) => b.role === 'primary') ?? active[0] ?? null;
   }
 
   function setShortenerDraft(userId, draft) {
@@ -693,7 +713,8 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
       const displayName = escapeHtml(ctx.from?.first_name || ctx.from?.username || 'Creator');
       let lines = [
         '✨ <b>FileStore Creator Hub</b>',
-        `Welcome, <b>${displayName}</b>!`,
+        '━━━━━━━━━━━━━━━━━━',
+        `👋 Welcome, <b>${displayName}</b>!`,
         '',
       ];
       try {
@@ -704,7 +725,14 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
           listShortenerProviders(pool, creatorId),
           listPremiumPlans(pool, creatorId).catch(() => []),
           pool.query("SELECT COUNT(*)::int AS total FROM files WHERE status = 'active' AND uploaded_by = $1", [creatorId]),
-          pool.query('SELECT COUNT(*)::int AS total FROM share_links WHERE created_by = $1', [creatorId]),
+          pool.query(
+            `SELECT (
+               (SELECT COUNT(*)::int FROM share_links WHERE created_by = $1) +
+               (SELECT COUNT(*)::int FROM paid_file_links WHERE created_by = $1) +
+               (SELECT COUNT(*)::int FROM paid_batch_links WHERE created_by = $1)
+             ) AS total`,
+            [creatorId],
+          ).catch(() => ({ rows: [{ total: 0 }] })),
           listStorageChannels(pool, null).catch(() => []),
           getShareableBotUsername(pool, null).catch(() => null),
         ]);
@@ -713,15 +741,15 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
         const enabledShorts = shorteners.filter((s) => s.is_enabled).length;
         const activePlans = ownPlans.filter((p) => p.is_enabled).length;
         const storageStatus = activeOwnStorage
-          ? `✅ <code>${activeOwnStorage}</code> custom channel(s)`
+          ? `✅ ${activeOwnStorage} Custom`
           : sharedStorage.some((c) => c.is_enabled)
-            ? '☁️ Shared platform storage <i>(auto)</i>'
-            : '⚠️ Not configured — tap <b>Storage Channel</b>';
+            ? '☁️ Shared (Auto)'
+            : '⚠️ Set up in Web Panel';
         const botStatus = activeOwnBot
-          ? `✅ @${escapeHtml(activeOwnBot.username)} <i>(custom)</i>`
+          ? `✅ @${escapeHtml(activeOwnBot.username)}`
           : sharedBotUsername
-            ? `☁️ @${escapeHtml(sharedBotUsername)} <i>(shared)</i>`
-            : '⚠️ None active';
+            ? `☁️ @${escapeHtml(sharedBotUsername)} (Shared)`
+            : '⚠️ Not connected';
         const chkBadge = wallet.settings.checkpoint_enabled ? '🟢 ON' : '⚪ OFF';
         const fsubBadge = wallet.settings.force_sub_enabled ? '🟢 ON' : '⚪ OFF';
         const availableText = escapeHtml(formatMoney(wallet.inrWallet.available_minor, 'INR'));
@@ -732,33 +760,41 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
           : '';
         const upiStatus = wallet.settings.payout_upi_id
           ? `<code>${escapeHtml(wallet.settings.payout_upi_id)}</code>`
-          : '<i>Not set (tap /me)</i>';
+          : '<i>Not set</i>';
 
         lines = [
           '✨ <b>FileStore Creator Hub</b>',
-          `👋 Welcome, <b>${displayName}</b>! Share files, monetize links &amp; sell your own Premium plans.`,
+          '━━━━━━━━━━━━━━━━━━',
+          `👋 Welcome, <b>${displayName}</b>!`,
+          '<i>Create file links here · Manage settings on the Web Panel.</i>',
           '',
           '📊 <b>Workspace Overview</b>',
-          `<blockquote>📁 <b>Files:</b> <code>${fileCountRes.rows[0]?.total ?? 0}</code>  •  🔗 <b>Links:</b> <code>${linkCountRes.rows[0]?.total ?? 0}</code>\n` +
+          `<blockquote>📁 <b>Files:</b> <code>${fileCountRes.rows[0]?.total ?? 0}</code>  |  🔗 <b>Links:</b> <code>${linkCountRes.rows[0]?.total ?? 0}</code>\n` +
             `🗄 <b>Storage:</b> ${storageStatus}\n` +
             `🤖 <b>Delivery Bot:</b> ${botStatus}\n` +
             `⚡ <b>Shorteners:</b> <code>${enabledShorts}</code> active (${chkBadge})\n` +
-            `🔒 <b>Force-Sub:</b> ${fsubBadge}  •  👑 <b>My Plans:</b> <code>${activePlans}</code></blockquote>`,
+            `🔒 <b>Force-Sub:</b> ${fsubBadge}  |  👑 <b>Plans:</b> <code>${activePlans}</code></blockquote>`,
           '',
           '💰 <b>Creator Wallet</b>',
-          `<blockquote>💵 <b>Available:</b> <code>${availableText}</code>  •  ⏳ <b>Locked:</b> <code>${lockedText}</code>\n` +
+          `<blockquote>💵 <b>Available:</b> <code>${availableText}</code>\n` +
+            `⏳ <b>Locked:</b> <code>${lockedText}</code>\n` +
             `📈 <b>Total Earned:</b> <code>${earnedText}</code>${xtrLine}\n` +
             `📲 <b>Payout UPI:</b> ${upiStatus}</blockquote>`,
           '',
-          '🚀 <b>Quick Actions</b>',
-          '• Send/forward media here to upload &amp; index',
-          '• /link (1 file)  •  /Batch (up to 20)  •  /plink (paid)',
-          '• /my_plans (your Premium plans)  •  /me (withdraw)  •  /guide',
+          '⚡ <b>Create File Links</b>',
+          '<blockquote>• Send or forward media here to upload\n' +
+            '• /link — Single file link\n' +
+            '• /Batch — Bundle up to 20 files\n' +
+            '• /plink — Monetized paid link\n' +
+            '• /links — Manage &amp; edit links</blockquote>',
+          '',
+          '🌐 <b>Web Setup &amp; Analytics</b>',
+          '<i>Tap <b>Web Control Panel</b> below (or /token) to manage bots, channels, shorteners, plans, broadcasts &amp; payouts.</i>',
         ];
       } catch (error) {
         logger.warn({ creatorId, error: error.message }, 'Creator hub summary fallback');
         lines.push(
-          '🚀 Send media here to index, use /link, /Batch, /plink, /me, or tap <b>📘 User Guide (/guide)</b> below:',
+          '<i>Send media here or choose an option below to create links or open the Web Control Panel.</i>',
         );
       }
       return renderView(ctx, lines.join('\n'), buildPublicMenuKeyboard(), edit, true, { parse_mode: 'HTML' });
@@ -940,9 +976,11 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
            ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
           [FILES_PAGE_SIZE, activePage * FILES_PAGE_SIZE, ownerId],
         );
+    const unusedFilesCount = await countUnusedFilesForOwner(pool, ownerId).catch(() => 0);
     const text = [
       `📁 Indexed Files · Page ${activePage + 1} / ${pages} (${total} total)`,
       '━━━━━━━━━━━━━━━━━━',
+      ...(unusedFilesCount > 0 ? [`<i>🧹 ${unusedFilesCount} file(s) are not attached to any active link.</i>`] : []),
       '',
       rows.length
         ? rows.map((f, i) => `${activePage * FILES_PAGE_SIZE + i + 1}. 📄 ${String(f.file_name).slice(0, 120)}\n🏷 Code: ${f.file_code} · 📦 ${f.file_type} · ${formatFileSize(f.file_size)}`).join('\n\n')
@@ -951,17 +989,21 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     const keyboard = rows.map((f) => [
       { text: `📄 ${f.file_code} · ${String(f.file_name).slice(0, 26)}`, callback_data: `cc:file:${f.file_code}` },
     ]);
-    keyboard.push([{ text: '🔎 Search Files', callback_data: 'cc:prompt:find' }]);
+    const utilRow = [{ text: '🔎 Search Files', callback_data: 'cc:prompt:find' }];
+    if (unusedFilesCount > 0) {
+      utilRow.push({ text: `🧹 Clean Unused (${unusedFilesCount})`, callback_data: 'cc:files_clean' });
+    }
+    keyboard.push(utilRow);
     const nav = [];
     if (activePage > 0) nav.push({ text: '← Prev', callback_data: `cc:files:${activePage - 1}` });
     nav.push({ text: '↻ Refresh', callback_data: `cc:files:${activePage}` });
     if (activePage < pages - 1) nav.push({ text: 'Next →', callback_data: `cc:files:${activePage + 1}` });
     keyboard.push(nav);
     keyboard.push([{ text: '← Main Menu', callback_data: 'cc:home' }]);
-    return renderView(ctx, text, { inline_keyboard: keyboard }, edit);
+    return renderView(ctx, text, { inline_keyboard: keyboard }, edit, true, { parse_mode: 'HTML' });
   }
 
-  async function showFileDetail(ctx, code, edit = true) {
+  async function showFileDetail(ctx, code, edit = true, confirmDelete = false) {
     const file = await getIndexedFile(pool, code, getOwnerScope(ctx));
     if (!file) return showFiles(ctx, 0, edit);
     const text = [
@@ -977,13 +1019,21 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
       `🆔 Storage msg ID: ${file.telegram_message_id ?? 'unknown'}`,
       '',
       `⚡ User get command: /get ${file.file_code}`,
+      ...(confirmDelete ? ['', '⚠️ Are you sure you want to remove this file?'] : []),
     ].join('\n');
+    const deleteRow = confirmDelete
+      ? [
+          { text: '⚠ Confirm Delete File', callback_data: `cc:fdel_ok:${file.file_code}` },
+          { text: 'Cancel', callback_data: `cc:file:${file.file_code}` },
+        ]
+      : [{ text: '🗑 Delete File', callback_data: `cc:fdel:${file.file_code}` }];
     const keyboard = {
       inline_keyboard: [
         [
           { text: '🔗 Generate Share Link', callback_data: `cc:mklink:${file.file_code}` },
           { text: '✏ Rename File', callback_data: `cc:frename:${file.file_code}` },
         ],
+        deleteRow,
         [
           { text: '← Files List', callback_data: 'cc:files:0' },
           { text: '← Main Menu', callback_data: 'cc:home' },
@@ -995,17 +1045,25 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
 
   async function showBots(ctx, edit = false) {
     const ownerId = getOwnerScope(ctx);
-    const rows = await deliveryManager.list(ownerId);
+    const [rows, storageRows] = await Promise.all([
+      deliveryManager.list(ownerId),
+      ownerId !== null ? listStorageChannels(pool, ownerId).catch(() => []) : Promise.resolve([]),
+    ]);
+    const hasOwnStorage = ownerId === null || storageRows.some((c) => c.is_enabled);
     let fallbackNote = '';
     if (!rows.length && ownerId !== null) {
       const sharedUsername = await getShareableBotUsername(pool, null).catch(() => null);
       if (sharedUsername) {
-        fallbackNote = `\n\n☁️ Currently using shared platform Delivery Bot @${sharedUsername}. Adding your own Delivery Bot is completely optional.`;
+        fallbackNote = `\n\n☁️ Currently using shared platform Delivery Bot @${sharedUsername}. Adding your own Delivery Bot is optional.`;
       }
     }
+    const storageRequirementNote = ownerId !== null && !hasOwnStorage
+      ? '\n\n⚠️ IMPORTANT REQUIREMENT:\nIf you add your own Delivery Bot, you MUST also add your own Storage Channel (and make both the Main Bot and your Delivery Bot Administrators in it) — otherwise your Delivery Bot will NOT work!'
+      : '';
     const lines = rows.length
       ? rows.map((row) => `#${row.id} · 🤖 @${row.username} (${row.role === 'primary' ? '⭐ PRIMARY' : row.role.toUpperCase()})\n⚡ Runtime: ${row.runtime_status === 'running' ? '🟢 running' : '🟡 ' + row.runtime_status} · Enabled: ${row.is_enabled ? '✅' : '⏸'} · Priority: ${row.priority}${row.last_error ? '\n⚠️ Error: ' + String(row.last_error).slice(0, 120) : ''}`)
       : [`🤖 No custom Delivery Bots registered yet. Add one with the button below.${fallbackNote}`];
+    if (storageRequirementNote) lines.push(storageRequirementNote.trim());
     const keyboard = rows.slice(0, 8).map((row) => [
       {
         text: `${row.role === 'primary' ? '⭐ ' : ''}${row.runtime_status === 'running' ? '🟢' : '🟡'} @${row.username} (#${row.id})`,
@@ -1013,6 +1071,12 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
       },
     ]);
     keyboard.push([{ text: '➕ Add Delivery Bot', callback_data: 'cc:prompt:delivery_bot_add' }]);
+    if (isOwnerAdmin(ctx)) {
+      keyboard.push([{ text: '🌐 All Delivery Bots (Owner)', callback_data: 'cc:all_bots:0' }]);
+    }
+    if (ownerId !== null && !hasOwnStorage) {
+      keyboard.push([{ text: '🗄 Add Storage Channel (Required)', callback_data: 'cc:prompt:storage_add' }]);
+    }
     keyboard.push([
       { text: '↻ Refresh', callback_data: 'cc:bots' },
       { text: '← Main Menu', callback_data: 'cc:home' },
@@ -1077,6 +1141,159 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
       { text: '← Main Menu', callback_data: 'cc:home' },
     ]);
     return renderView(ctx, text, { inline_keyboard: rows }, edit);
+  }
+
+  async function showAllBotsForOwner(ctx, page = 0, edit = true) {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    const { rows, uniqueBotUsers } = await listAllDeliveryBotsForOwner(pool, { q: '', scope: 'all', status: 'all' });
+    const PAGE_SIZE = 6;
+    const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+    const safePage = Math.max(0, Math.min(page, totalPages - 1));
+    const slice = rows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+    const runningCount = rows.filter((b) => b.is_enabled && b.runtime_status === 'running').length;
+    const platformCount = rows.filter((b) => b.owner_telegram_id === null || b.owner_telegram_id === undefined).length;
+    const creatorCount = rows.length - platformCount;
+
+    const header = [
+      '🌐 <b>All Delivery Bots (Owner)</b>',
+      '━━━━━━━━━━━━━━━━━━',
+      '',
+      '<blockquote>📊 <b>Fleet Overview</b>\n' +
+        `🤖 <b>Bots:</b> <code>${rows.length}</code> total  ·  🟢 <code>${runningCount}</code> running\n` +
+        `👑 <b>Platform:</b> <code>${platformCount}</code>  ·  👤 <b>Creator:</b> <code>${creatorCount}</code>\n` +
+        `👥 <b>Unique Bot Users:</b> <code>${uniqueBotUsers}</code></blockquote>`,
+    ];
+
+    const bodyLines = slice.length
+      ? slice.map((b) => {
+          const isPlatform = b.owner_telegram_id === null || b.owner_telegram_id === undefined;
+          const scopeLabel = isPlatform
+            ? '👑 <b>Owner:</b> Platform'
+            : `👤 <b>Owner:</b> Creator <code>${escapeHtml(b.owner_telegram_id)}</code>${b.owner_username ? ` (@${escapeHtml(b.owner_username)})` : ''}`;
+          const statusLabel = !b.is_enabled
+            ? '⏸ Disabled'
+            : b.runtime_status === 'running'
+              ? '🟢 Running'
+              : `🟡 ${escapeHtml(b.runtime_status)}`;
+          const roleBadge = String(b.role).toUpperCase() === 'PRIMARY'
+            ? '⭐ <b>PRIMARY</b>'
+            : `🔁 <b>${escapeHtml(String(b.role).toUpperCase())}</b>`;
+          return [
+            `🤖 <b>#${b.id} · @${escapeHtml(b.username)}</b>`,
+            `<blockquote>${scopeLabel}\n` +
+              `${roleBadge}  ·  ${statusLabel}  ·  🔢 <b>Prio:</b> <code>${Number(b.priority || 0)}</code>\n` +
+              `👥 <b>Total Users: ${Number(b.total_users || 0)}</b> <i>(${Number(b.active_users_7d || 0)} 7d · ${Number(b.total_interactions || 0)} hits)</i>  ·  🗄 <b>Storage:</b> <code>${Number(b.storage_channels_count || 0)}</code></blockquote>`,
+          ].join('\n');
+        })
+      : ['📭 <i>No delivery bots registered on the platform yet.</i>'];
+
+    const keyboard = slice.map((b) => [
+      {
+        text: `${b.is_enabled && b.runtime_status === 'running' ? '🟢' : !b.is_enabled ? '⏸' : '🟡'} #${b.id} @${String(b.username).slice(0, 18)} · 👥 ${Number(b.total_users || 0)}`,
+        callback_data: `cc:all_bot:${b.id}`,
+      },
+    ]);
+
+    if (totalPages > 1) {
+      const navRow = [];
+      if (safePage > 0) navRow.push({ text: '◀ Prev', callback_data: `cc:all_bots:${safePage - 1}` });
+      navRow.push({ text: `Page ${safePage + 1}/${totalPages}`, callback_data: `cc:all_bots:${safePage}` });
+      if (safePage < totalPages - 1) navRow.push({ text: 'Next ▶', callback_data: `cc:all_bots:${safePage + 1}` });
+      keyboard.push(navRow);
+    }
+
+    keyboard.push([
+      { text: '↻ Refresh', callback_data: `cc:all_bots:${safePage}` },
+      { text: '← My Bots', callback_data: 'cc:bots' },
+    ]);
+    keyboard.push([{ text: '← Main Menu', callback_data: 'cc:home' }]);
+
+    const footer = slice.length ? ['', '👇 <i>Tap a bot below to inspect details, users, or edit settings.</i>'] : [];
+    const messageText = [...header, '', bodyLines.join('\n\n'), ...footer].join('\n');
+    return renderView(ctx, messageText, { inline_keyboard: keyboard }, edit, true, { parse_mode: 'HTML' });
+  }
+
+  async function showOwnerBotDetail(ctx, id, edit = true, confirmDelete = false) {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    const details = await getDeliveryBotDetailsForOwner(pool, id);
+    if (!details) return showAllBotsForOwner(ctx, 0, edit);
+    const { bot: b, recentUsers, storageChannels, forceSubChannels } = details;
+    const isPlatform = b.owner_telegram_id === null || b.owner_telegram_id === undefined;
+    const ownerLabel = isPlatform
+      ? '👑 Platform Default'
+      : `👤 Creator <code>${escapeHtml(b.owner_telegram_id)}</code>${b.owner_username ? ` (@${escapeHtml(b.owner_username)})` : b.owner_first_name ? ` (${escapeHtml(b.owner_first_name)})` : ''}`;
+    const runtimeLabel = !b.is_enabled
+      ? '⏸ Disabled'
+      : b.runtime_status === 'running'
+        ? '🟢 Running'
+        : `🟡 ${escapeHtml(b.runtime_status)}`;
+    const roleBadge = String(b.role).toUpperCase() === 'PRIMARY'
+      ? '⭐ <b>PRIMARY</b>'
+      : `🔁 <b>${escapeHtml(String(b.role).toUpperCase())}</b>`;
+    const healthAt = b.last_health_at ? `${new Date(b.last_health_at).toISOString().replace('T', ' ').slice(0, 19)} UTC` : '—';
+    const lastErr = b.last_error ? escapeHtml(String(b.last_error).slice(0, 180)) : '';
+
+    const lines = [
+      `🤖 <b>Delivery Bot #${b.id} (Owner View)</b>`,
+      '━━━━━━━━━━━━━━━━━━',
+      '',
+      '<blockquote>🪪 <b>Identity &amp; Runtime</b>\n' +
+        `🏷 <b>Username:</b> @${escapeHtml(b.username)}\n` +
+        `🆔 <b>Bot ID:</b> <code>${escapeHtml(b.telegram_bot_id)}</code>\n` +
+        `👤 <b>Owner:</b> ${ownerLabel}\n` +
+        `${roleBadge}  ·  🔢 <b>Priority:</b> <code>${Number(b.priority || 0)}</code>\n` +
+        `📌 <b>Enabled:</b> ${b.is_enabled ? '✅ Yes' : '⏸ No'}  ·  ⚡ ${runtimeLabel}</blockquote>`,
+      '',
+      '<blockquote>📊 <b>Audience &amp; Delivery</b>\n' +
+        `👥 <b>Total Users: ${Number(b.total_users || 0)}</b> <i>(7d: ${Number(b.active_users_7d || 0)} · Hits: ${Number(b.total_interactions || 0)})</i>\n` +
+        `📦 <b>Jobs:</b> <code>${Number(b.jobs_total || 0)}</code> total <i>(${Number(b.jobs_completed || 0)} ok · ${Number(b.jobs_failed || 0)} failed · ${Number(b.jobs_pending || 0)} pending)</i>\n` +
+        `🗄 <b>Storage Channels:</b> <code>${storageChannels.length}</code>  ·  🔒 <b>Force-Sub:</b> <code>${forceSubChannels.length}</code></blockquote>`,
+      '',
+      '<blockquote>🩺 <b>Health &amp; Diagnostics</b>\n' +
+        `🕒 <b>Last Check:</b> <code>${escapeHtml(healthAt)}</code>\n` +
+        `⚠️ <b>Last Error:</b> ${lastErr ? `<code>${lastErr}</code>` : '<i>None</i>'}</blockquote>`,
+    ];
+
+    if (recentUsers.length) {
+      const userLines = recentUsers.slice(0, 5).map((u) => {
+        const uname = u.username ? `@${escapeHtml(u.username)}` : escapeHtml(u.first_name || 'User');
+        return `• ${uname} (<code>${escapeHtml(u.telegram_user_id)}</code>) — <b>${Number(u.interaction_count || 0)}</b> hits`;
+      });
+      lines.push('');
+      lines.push(`<blockquote>🕒 <b>Recent Users</b>\n${userLines.join('\n')}</blockquote>`);
+    }
+
+    const rows = [
+      [
+        { text: '🧪 Test Access', callback_data: `cc:all_bot_test:${b.id}` },
+        b.runtime_status === 'paused' || !b.is_enabled
+          ? { text: '▶ Resume', callback_data: `cc:all_bot_res:${b.id}` }
+          : { text: '⏸ Pause', callback_data: `cc:all_bot_pause:${b.id}` },
+      ],
+      [
+        { text: '🔄 Restart', callback_data: `cc:all_bot_rst:${b.id}` },
+        b.is_enabled
+          ? { text: '⏸ Disable', callback_data: `cc:all_bot_dis:${b.id}` }
+          : { text: '✅ Enable', callback_data: `cc:all_bot_en:${b.id}` },
+      ],
+      [
+        { text: '🔢 Edit Priority', callback_data: `cc:all_bot_prio:${b.id}` },
+        ...(b.role !== 'primary' && b.is_enabled ? [{ text: '⭐ Set Primary', callback_data: `cc:all_bot_pri:${b.id}` }] : []),
+      ],
+    ];
+    if (confirmDelete) {
+      rows.push([
+        { text: '⚠ Confirm Remove', callback_data: `cc:all_bot_rm_ok:${b.id}` },
+        { text: 'Cancel', callback_data: `cc:all_bot:${b.id}` },
+      ]);
+    } else {
+      rows.push([{ text: '🗑 Remove Bot', callback_data: `cc:all_bot_rm:${b.id}` }]);
+    }
+    rows.push([
+      { text: '← All Delivery Bots', callback_data: 'cc:all_bots:0' },
+      { text: '← Main Menu', callback_data: 'cc:home' },
+    ]);
+    return renderView(ctx, lines.join('\n'), { inline_keyboard: rows }, edit, true, { parse_mode: 'HTML' });
   }
 
   async function showJobs(ctx, edit = false) {
@@ -1422,7 +1639,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
       }),
       [
         { text: '➕ Create Plan', callback_data: 'cc:prompt:cplan_add' },
-        { text: '💰 Wallet (/me)', callback_data: 'cc:me' },
+        { text: '💰 Wallet', callback_data: 'cc:me' },
       ],
       [
         { text: '↻ Refresh', callback_data: 'cc:cplans' },
@@ -1704,7 +1921,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
       : ['📭 No paid file links created yet. Use /plink to create one!'];
     const keyboard = [
       [
-        { text: '➕ Create Paid Link (/plink)', callback_data: 'cc:plink_single' },
+        { text: '➕ Create Paid Link', callback_data: 'cc:plink_single' },
         ...(isOwner ? [{ text: '⭐ Set Stars Price', callback_data: 'cc:prompt:stars_paid' }] : []),
       ],
       ...(isOwner ? [[{ text: '📥 Pending Requests', callback_data: 'cc:paid_reqs' }]] : []),
@@ -1801,7 +2018,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
       : ['📭 No paid batch links created yet. Use /plink to create one!'];
     const keyboard = [
       [
-        { text: '➕ Create Batch Link (/plink)', callback_data: 'cc:plink_batch' },
+        { text: '➕ Create Batch Link', callback_data: 'cc:plink_batch' },
         ...(isOwner ? [{ text: '⭐ Set Stars Price', callback_data: 'cc:prompt:stars_batch' }] : []),
       ],
       ...(isOwner ? [[{ text: '📥 Pending Requests', callback_data: 'cc:batch_reqs' }]] : []),
@@ -1945,30 +2162,19 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     });
 
     const contextualRow = [];
-    if (key === 'links') {
+    if (key === 'overview' || key === 'links') {
       contextualRow.push(
-        { text: '🔗 Create /link', callback_data: 'cc:cmd_link' },
-        { text: '📦 Create /Batch', callback_data: 'cc:cmd_batch' },
+        { text: '🔗 Single Link', callback_data: 'cc:cmd_link' },
+        { text: '📦 Batch Link', callback_data: 'cc:cmd_batch' },
       );
     } else if (key === 'paid') {
       contextualRow.push(
-        { text: '💎 Create /plink', callback_data: 'cc:plink' },
-        { text: '👑 My Plans', callback_data: 'cc:cplans' },
+        { text: '💎 Paid Link', callback_data: 'cc:plink' },
+        { text: '🌐 Web Control Panel', callback_data: 'cc:webtok' },
       );
-    } else if (key === 'setup') {
+    } else if (key === 'setup' || key === 'short' || key === 'earn') {
       contextualRow.push(
-        { text: '🗄 Storage Channel', callback_data: 'cc:storage' },
-        { text: '🤖 Delivery Bot', callback_data: 'cc:bots' },
-      );
-    } else if (key === 'short') {
-      contextualRow.push(
-        { text: '⚡ Shorteners', callback_data: 'cc:short' },
-        { text: '🔒 Force-Sub', callback_data: 'cc:fsub' },
-      );
-    } else if (key === 'earn') {
-      contextualRow.push(
-        { text: '💰 Open /me Wallet', callback_data: 'cc:me' },
-        { text: '👑 My Plans', callback_data: 'cc:cplans' },
+        { text: '🌐 Web Control Panel', callback_data: 'cc:webtok' },
       );
     }
 
@@ -2010,7 +2216,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
         ],
         [
           { text: '🏷 Paid & Batch Links', callback_data: 'cc:guide:paid' },
-          { text: '📘 User Guide (/guide)', callback_data: 'cc:uguide:overview' },
+          { text: '📘 User Guide', callback_data: 'cc:uguide:overview' },
         ],
         [
           { text: '🎛 Open Control Center', callback_data: 'cc:home' },
@@ -2027,6 +2233,30 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     shareLinksUi.clearSession(ctx.from.id);
     paidLinksUi.clearSession(ctx.from.id);
     walletUi.clearSession(ctx.from.id);
+    const startPayload = String(ctx.startPayload ?? (ctx.message?.text || '').split(/\s+/)[1] ?? '').trim();
+    if (/^botslot$/i.test(startPayload) && !isOwnerAdmin(ctx)) {
+      try {
+        const slotSettings = await getBotSlotSettings(pool);
+        if (slotSettings.starsPrice) {
+          await sendStarsInvoice(
+            bot,
+            pool,
+            ctx,
+            'bot_slot',
+            {},
+            'Extra Delivery Bot Slot',
+            'Unlock +1 additional custom Delivery Bot slot in FileStore',
+            config.mainBotToken,
+          );
+          return;
+        }
+      } catch (error) {
+        await ctx.reply('❌ Telegram Stars slot checkout is unavailable right now: ' + error.message);
+        return;
+      }
+      await ctx.reply('🔓 To unlock an extra Delivery Bot slot using UPI or Wallet balance, open your Web Control Panel with /token -> Setup & Delivery Bots.');
+      return;
+    }
     await showHome(ctx, false);
   });
 
@@ -2096,7 +2326,43 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
   bot.action('cc:health', async (ctx) => { if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx); await safeAnswer(ctx); await showHealth(ctx, true); });
   bot.action('cc:storage', async (ctx) => { await safeAnswer(ctx); await showStorage(ctx, true); });
   bot.action(/^cc:files:(\d+)$/, async (ctx) => { await safeAnswer(ctx); await showFiles(ctx, Number(ctx.match[1]), true); });
+  bot.action('cc:files_clean', async (ctx) => {
+    const ownerId = getOwnerScope(ctx);
+    const count = await countUnusedFilesForOwner(pool, ownerId).catch(() => 0);
+    await safeAnswer(ctx);
+    if (!count) return showFiles(ctx, 0, true);
+    return renderView(
+      ctx,
+      `🧹 <b>Clean Unused Files</b>\n━━━━━━━━━━━━━━━━━━\n\nFound <b>${count}</b> file(s) not attached to any active free or paid link.\n\nConfirm cleanup to remove them from your workspace count?`,
+      {
+        inline_keyboard: [
+          [
+            { text: `⚠ Clean ${count} File(s)`, callback_data: 'cc:files_clean_ok' },
+            { text: 'Cancel', callback_data: 'cc:files:0' },
+          ],
+        ],
+      },
+      true,
+      true,
+      { parse_mode: 'HTML' },
+    );
+  });
+  bot.action('cc:files_clean_ok', async (ctx) => {
+    const removed = await disableUnusedFilesForOwner(pool, getOwnerScope(ctx)).catch(() => 0);
+    await safeAnswer(ctx, removed ? `Cleaned ${removed} unused file(s).` : 'No unused files found.');
+    await showFiles(ctx, 0, true);
+  });
   bot.action(/^cc:file:([A-Za-z0-9_-]{2,32})$/, async (ctx) => { await safeAnswer(ctx); await showFileDetail(ctx, ctx.match[1], true); });
+  bot.action(/^cc:fdel:([A-Za-z0-9_-]{2,32})$/, async (ctx) => { await safeAnswer(ctx); await showFileDetail(ctx, ctx.match[1], true, true); });
+  bot.action(/^cc:fdel_ok:([A-Za-z0-9_-]{2,32})$/, async (ctx) => {
+    try {
+      const result = await disableFileByIdOrCode(pool, ctx.match[1], getOwnerScope(ctx));
+      await safeAnswer(ctx, result.deleted ? 'File removed from workspace. 🗑' : 'File not found.', !result.deleted);
+      await showFiles(ctx, 0, true);
+    } catch (error) {
+      await safeAnswer(ctx, error.message, true);
+    }
+  });
   bot.action('cc:bots', async (ctx) => { await safeAnswer(ctx); await showBots(ctx, true); });
   bot.action('cc:jobs', async (ctx) => { if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx); await safeAnswer(ctx); await showJobs(ctx, true); });
   bot.action('cc:fsub', async (ctx) => { await safeAnswer(ctx); await showForceSub(ctx, true); });
@@ -2207,6 +2473,90 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     await deliveryManager.remove(id, getOwnerScope(ctx));
     await safeAnswer(ctx, 'Delivery Bot removed.');
     await showBots(ctx, true);
+  });
+
+  // Owner All Delivery Bots directory actions
+  bot.action(/^cc:all_bots:(\d+)$/, async (ctx) => {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    await safeAnswer(ctx);
+    await showAllBotsForOwner(ctx, Number(ctx.match[1]), true);
+  });
+
+  bot.action(/^cc:all_bot:(\d+)$/, async (ctx) => {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    await safeAnswer(ctx);
+    await showOwnerBotDetail(ctx, Number(ctx.match[1]), true, false);
+  });
+
+  bot.action(/^cc:all_bot_rm:(\d+)$/, async (ctx) => {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    await safeAnswer(ctx);
+    await showOwnerBotDetail(ctx, Number(ctx.match[1]), true, true);
+  });
+
+  bot.action(/^cc:all_bot_test:(\d+)$/, async (ctx) => {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    const id = Number(ctx.match[1]);
+    try {
+      const result = await deliveryManager.test(id);
+      const okCount = result.checks.filter((c) => c.status === 'ok' || c.status === 'force_sub_admin_ok').length;
+      await safeAnswer(ctx, `@${result.bot.username} OK · ${okCount}/${result.checks.length} channel checks passed`, true);
+    } catch (error) {
+      await safeAnswer(ctx, 'Test failed: ' + error.message, true);
+    }
+    await showOwnerBotDetail(ctx, id, true);
+  });
+
+  bot.action(/^cc:all_bot_(pause|res|rst|pri|en|dis):(\d+)$/, async (ctx) => {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    const action = ctx.match[1];
+    const id = Number(ctx.match[2]);
+    const patch = action === 'pause'
+      ? { action: 'pause' }
+      : action === 'res'
+        ? { action: 'resume' }
+        : action === 'rst'
+          ? { action: 'restart' }
+          : action === 'pri'
+            ? { role: 'primary' }
+            : action === 'en'
+              ? { isEnabled: true }
+              : { isEnabled: false };
+    try {
+      const updated = await updateDeliveryBotForOwner(pool, id, patch, deliveryManager);
+      if (!updated) return safeAnswer(ctx, 'Delivery bot not found.', true);
+      await safeAnswer(ctx, 'Delivery bot updated.');
+    } catch (error) {
+      await safeAnswer(ctx, error.message || 'Bot action failed.', true);
+    }
+    await showOwnerBotDetail(ctx, id, true);
+  });
+
+  bot.action(/^cc:all_bot_prio:(\d+)$/, async (ctx) => {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    const id = Number(ctx.match[1]);
+    const details = await getDeliveryBotDetailsForOwner(pool, id);
+    if (!details) return safeAnswer(ctx, 'Delivery bot not found.', true);
+    setPrompt(ctx.from.id, 'owner_bot_prio', { back: `cc:all_bot:${id}`, meta: { botId: id } });
+    await safeAnswer(ctx);
+    await renderView(
+      ctx,
+      `🔢 Edit Delivery Bot Priority · #${details.bot.id}\n━━━━━━━━━━━━━━━━━━\n🤖 @${details.bot.username}\n📌 Current priority: ${details.bot.priority}\n\n✏️ Send new priority number (0–100000):`,
+      { inline_keyboard: [[{ text: '✖ Cancel', callback_data: 'cc:cancel_prompt' }]] },
+      true,
+    );
+  });
+
+  bot.action(/^cc:all_bot_rm_ok:(\d+)$/, async (ctx) => {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    const id = Number(ctx.match[1]);
+    if (deliveryManager?.remove) {
+      await deliveryManager.remove(id);
+    } else {
+      await pool.query('DELETE FROM delivery_bots WHERE id = $1', [id]);
+    }
+    await safeAnswer(ctx, 'Delivery Bot removed.');
+    await showAllBotsForOwner(ctx, 0, true);
   });
 
   // Delivery job retry
@@ -2936,89 +3286,121 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
   });
 
   function parseBroadcastContent(raw) {
-    const lines=String(raw??'').split(/\r?\n/),buttons=[],body=[];
-    for(const line of lines){
-      const m=line.match(/^Button:\s*(.{1,40}?)\s*\|\s*(https:\/\/\S+)\s*$/i);
-      if(m){if(buttons.length>=8)throw new Error('Maximum 8 URL buttons allowed.');buttons.push([{text:m[1].trim(),url:m[2].trim()}]);}
-      else body.push(line);
+    const lines = String(raw ?? '').split(/\r?\n/), buttons = [], body = [];
+    for (const line of lines) {
+      const m = line.match(/^Button:\s*(.{1,40}?)\s*\|\s*(https:\/\/\S+)\s*$/i);
+      if (m) {
+        if (buttons.length >= 8) throw new Error('Maximum 8 URL buttons allowed.');
+        buttons.push([{ text: m[1].trim(), url: m[2].trim() }]);
+      } else {
+        body.push(line);
+      }
     }
-    return {body:body.join('\n').trim(),buttons};
+    return { body: body.join('\n').trim(), buttons };
   }
   async function confirmBroadcastDraft(ctx) {
-    const draft=broadcastDrafts.get(String(ctx.from.id));
-    if(!draft)return safeAnswer(ctx,'Broadcast preview expired. Please compose again.',true);
+    const draft = getBroadcastDraft(ctx.from.id);
+    if (!draft) return safeAnswer(ctx, 'Broadcast preview expired. Please compose again.', true);
     try {
-      if(draft.kind==='owner'){
-        if(!isOwnerAdmin(ctx))throw new Error('Owner permission required.');
-        const bots=await deliveryManager.list(draft.ownerTelegramId);
-        if(!bots.some(b=>Number(b.id)===draft.deliveryBotId&&b.is_enabled))throw new Error('Selected creator bot is no longer enabled.');
+      if (draft.kind === 'owner') {
+        if (!isOwnerAdmin(ctx)) throw new Error('Owner permission required.');
+        const bots = await deliveryManager.list(draft.ownerTelegramId);
+        if (!bots.some((b) => Number(b.id) === draft.deliveryBotId && b.is_enabled)) throw new Error('Selected creator bot is no longer enabled.');
       } else {
-        if(isOwnerAdmin(ctx))throw new Error('Creator permission required.');
-        const bots=await deliveryManager.list(Number(ctx.from.id));
-        if(!bots.some(b=>Number(b.id)===draft.deliveryBotId&&b.is_enabled))throw new Error('Your delivery bot is no longer enabled.');
+        if (isOwnerAdmin(ctx)) throw new Error('Creator permission required.');
+        const bots = await deliveryManager.list(Number(ctx.from.id));
+        if (!bots.some((b) => Number(b.id) === draft.deliveryBotId && b.is_enabled)) throw new Error('Your delivery bot is no longer enabled.');
       }
-      const created=await createCreatorBroadcast(pool,{...draft,createdBy:ctx.from.id});
-      broadcastDrafts.delete(String(ctx.from.id));
-      await safeAnswer(ctx,'Broadcast queued!');
-      const history=draft.kind==='owner'?'cc:owner_broadcast':'cc:broadcast_history';
-      return renderView(ctx,'✅ <b>Broadcast queued</b>\n━━━━━━━━━━━━━━━━━━\n📋 Campaign #'+created.id+'\n👥 Recipients: '+created.totalRecipients,{inline_keyboard:[[{text:'📋 Campaigns',callback_data:history}]]},true,true,{parse_mode:'HTML'});
-    } catch(e) { await safeAnswer(ctx,e.message,true); }
-  }
-  bot.action('cc:broadcast_confirm',confirmBroadcastDraft);
-  bot.action('cc:broadcast_cancel_draft',async(ctx)=>{broadcastDrafts.delete(String(ctx.from.id));await safeAnswer(ctx,'Draft cancelled.');return renderView(ctx,'🛑 Broadcast draft cancelled.',{inline_keyboard:[[{text:'📢 Broadcast Menu',callback_data:'cc:broadcast'}]]},true,true);});
-  async function showBroadcastPreview(ctx,draft){
-    broadcastDrafts.set(String(ctx.from.id),draft);
-    const content=draft.caption||draft.messageText||'(media attachment)';
-    const keyboard=[...(draft.buttons||[]),[{text:'✅ Confirm & Queue',callback_data:'cc:broadcast_confirm'}],[{text:'✖ Cancel',callback_data:'cc:broadcast_cancel_draft'}]];
-    if(draft.mediaType){
-      const method={photo:'replyWithPhoto',video:'replyWithVideo',document:'replyWithDocument',animation:'replyWithAnimation'}[draft.mediaType];
-      if(!method)throw new Error('Unsupported media preview type.');
-      return ctx[method](draft.mediaFileId,{...(content?{caption:content.slice(0,1024)}:{}),reply_markup:{inline_keyboard:keyboard}});
+      const created = await createCreatorBroadcast(pool, { ...draft, createdBy: ctx.from.id });
+      clearBroadcastDraft(ctx.from.id);
+      await safeAnswer(ctx, 'Broadcast queued!');
+      const history = draft.kind === 'owner' ? 'cc:owner_broadcast' : 'cc:broadcast_history';
+      const canEditText = Boolean(ctx.callbackQuery?.message?.text);
+      if (!canEditText) await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+      return renderView(
+        ctx,
+        '✅ <b>Broadcast queued</b>\n━━━━━━━━━━━━━━━━━━\n📋 Campaign #' + created.id + '\n👥 Recipients: ' + created.totalRecipients,
+        { inline_keyboard: [[{ text: '📋 Campaigns', callback_data: history }]] },
+        canEditText,
+        true,
+        { parse_mode: 'HTML' },
+      );
+    } catch (e) {
+      await safeAnswer(ctx, e.message, true);
     }
-    return renderView(ctx,'👀 <b>Broadcast Preview</b>\n━━━━━━━━━━━━━━━━━━\nText message\n\n'+escapeHtml(content.slice(0,1800))+'\n\n👥 Audience snapshot will be taken when you confirm.\n\nConfirm to queue this campaign?',{inline_keyboard:keyboard},false,true,{parse_mode:'HTML'});
+  }
+  bot.action('cc:broadcast_confirm', confirmBroadcastDraft);
+  bot.action('cc:broadcast_cancel_draft', async (ctx) => {
+    const draft = getBroadcastDraft(ctx.from.id);
+    clearBroadcastDraft(ctx.from.id);
+    await safeAnswer(ctx, 'Draft cancelled.');
+    const backCb = isOwnerAdmin(ctx) || draft?.kind === 'owner' ? 'cc:owner_broadcast' : 'cc:broadcast';
+    const canEditText = Boolean(ctx.callbackQuery?.message?.text);
+    if (!canEditText) await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+    return renderView(ctx, '🛑 Broadcast draft cancelled.', { inline_keyboard: [[{ text: '📢 Broadcast Menu', callback_data: backCb }]] }, canEditText, true);
+  });
+  async function showBroadcastPreview(ctx, draft) {
+    setBroadcastDraft(ctx.from.id, draft);
+    const content = draft.caption || draft.messageText || '(media attachment)';
+    const keyboard = [...(draft.buttons || []), [{ text: '✅ Confirm & Queue', callback_data: 'cc:broadcast_confirm' }], [{ text: '✖ Cancel', callback_data: 'cc:broadcast_cancel_draft' }]];
+    if (draft.mediaType) {
+      const method = { photo: 'replyWithPhoto', video: 'replyWithVideo', document: 'replyWithDocument', animation: 'replyWithAnimation' }[draft.mediaType];
+      if (!method) throw new Error('Unsupported media preview type.');
+      return ctx[method](draft.mediaFileId, { ...(content ? { caption: content.slice(0, 1024) } : {}), reply_markup: { inline_keyboard: keyboard } });
+    }
+    return renderView(ctx, '👀 <b>Broadcast Preview</b>\n━━━━━━━━━━━━━━━━━━\nText message\n\n' + escapeHtml(content.slice(0, 1800)) + '\n\n👥 Audience snapshot will be taken when you confirm.\n\nConfirm to queue this campaign?', { inline_keyboard: keyboard }, false, true, { parse_mode: 'HTML' });
   }
 
   // Platform owner broadcast: select creator, then their own delivery bot
-  bot.action('cc:owner_broadcast',async(ctx)=>{
-    if(!isOwnerAdmin(ctx))return denyAdminOnly(ctx);
+  bot.action('cc:owner_broadcast', async (ctx) => {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
     await safeAnswer(ctx);
-    const creators=await pool.query("SELECT owner_telegram_id, COUNT(*)::int AS bots FROM delivery_bots WHERE owner_telegram_id IS NOT NULL AND is_enabled=TRUE GROUP BY owner_telegram_id ORDER BY owner_telegram_id");
-    const kb=creators.rows.map(c=>[{text:'👤 Creator '+c.owner_telegram_id+' · '+c.bots+' bot(s)',callback_data:'cc:owner_broadcast:creator:'+c.owner_telegram_id}]);
-    kb.push([{text:'📋 My Campaign History',callback_data:'cc:owner_broadcast_history'}]);
-    kb.push([{text:'← Main Menu',callback_data:'cc:home'}]);
-    return renderView(ctx,'👑 <b>Owner Broadcast</b>\\n━━━━━━━━━━━━━━━━━━\\nChoose a creator to broadcast on their behalf. The audience is restricted to their delivery bot.',{inline_keyboard:kb},true,true,{parse_mode:'HTML'});
+    const creators = await pool.query('SELECT owner_telegram_id, COUNT(*)::int AS bots FROM delivery_bots WHERE owner_telegram_id IS NOT NULL AND is_enabled=TRUE GROUP BY owner_telegram_id ORDER BY owner_telegram_id');
+    const kb = creators.rows.map((c) => [{ text: '👤 Creator ' + c.owner_telegram_id + ' · ' + c.bots + ' bot(s)', callback_data: 'cc:owner_broadcast:creator:' + c.owner_telegram_id }]);
+    kb.push([{ text: '📋 My Campaign History', callback_data: 'cc:owner_broadcast_history' }]);
+    kb.push([{ text: '← Main Menu', callback_data: 'cc:home' }]);
+    return renderView(ctx, '👑 <b>Owner Broadcast</b>\n━━━━━━━━━━━━━━━━━━\nChoose a creator to broadcast on their behalf. The audience is restricted to their delivery bot.', { inline_keyboard: kb }, true, true, { parse_mode: 'HTML' });
   });
-  bot.action('cc:owner_broadcast_history',async(ctx)=>{
-    if(!isOwnerAdmin(ctx))return denyAdminOnly(ctx);
+  bot.action('cc:owner_broadcast_history', async (ctx) => {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
     await safeAnswer(ctx);
-    const rows=await listOwnerCreatedBroadcasts(pool,ctx.from.id,20);
-    const icons={pending:'⏳',processing:'🚀',paused:'⏸',completed:'✅',cancelled:'🛑',failed:'⚠️'};
-    const body=rows.length?rows.map(r=>icons[r.status]+' #'+r.id+' · Creator '+r.owner_telegram_id+' · '+r.status+'\n👥 '+r.total_recipients+' · 📤 '+r.sent_count+' · ⚠️ '+r.failed_count).join('\n\n'):'No owner-created campaigns yet.';
-    return renderView(ctx,'📋 <b>Owner Campaign History</b>\n━━━━━━━━━━━━━━━━━━\n\n'+body,{inline_keyboard:[[{text:'← Owner Broadcast',callback_data:'cc:owner_broadcast'},{text:'Main Menu',callback_data:'cc:home'}]]},true,true,{parse_mode:'HTML'});
+    const rows = await listOwnerCreatedBroadcasts(pool, ctx.from.id, 20);
+    const icons = { pending: '⏳', processing: '🚀', paused: '⏸', completed: '✅', cancelled: '🛑', failed: '⚠️' };
+    const body = rows.length
+      ? rows.map((r) => `${icons[r.status] ?? '📋'} #${r.id} · Creator ${r.owner_telegram_id} · ${escapeHtml(r.status)}\n👥 ${r.total_recipients} · 📤 ${r.sent_count} · ⚠️ ${r.failed_count}`).join('\n\n')
+      : 'No owner-created campaigns yet.';
+    return renderView(ctx, '📋 <b>Owner Campaign History</b>\n━━━━━━━━━━━━━━━━━━\n\n' + body, { inline_keyboard: [[{ text: '← Owner Broadcast', callback_data: 'cc:owner_broadcast' }, { text: 'Main Menu', callback_data: 'cc:home' }]] }, true, true, { parse_mode: 'HTML' });
   });
-  bot.action(/^cc:owner_broadcast:creator:(\d+)$/,async(ctx)=>{
-    if(!isOwnerAdmin(ctx))return denyAdminOnly(ctx);
-    const creatorId=Number(ctx.match[1]);
+  bot.action(/^cc:owner_broadcast:creator:(\d+)$/, async (ctx) => {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    const creatorId = Number(ctx.match[1]);
     await safeAnswer(ctx);
-    const bots=await deliveryManager.list(creatorId);
-    const kb=[];
-    for(const b of bots.filter(b=>b.is_enabled&&b.runtime_status==='running')){
-      const count=await pool.query('SELECT COUNT(*)::int AS count FROM delivery_bot_user_activity WHERE delivery_bot_id=$1',[b.id]);
-      kb.push([{text:'🤖 @'+b.username+' · '+Number(count.rows[0]?.count||0)+' users',callback_data:'cc:owner_broadcast:bot:'+creatorId+':'+b.id}]);
+    const bots = await deliveryManager.list(creatorId);
+    const kb = [];
+    for (const b of bots.filter((b) => b.is_enabled && b.runtime_status === 'running')) {
+      const count = await pool.query('SELECT COUNT(*)::int AS count FROM delivery_bot_user_activity WHERE delivery_bot_id=$1', [b.id]);
+      kb.push([{ text: '🤖 @' + b.username + ' · ' + Number(count.rows[0]?.count || 0) + ' users', callback_data: 'cc:owner_broadcast:bot:' + creatorId + ':' + b.id }]);
     }
-    kb.push([{text:'← Creators',callback_data:'cc:owner_broadcast'}]);
-    return renderView(ctx,'👑 <b>Broadcast for Creator '+creatorId+'</b>\\nSelect their running delivery bot and audience.',{inline_keyboard:kb},true,true,{parse_mode:'HTML'});
+    kb.push([{ text: '← Creators', callback_data: 'cc:owner_broadcast' }]);
+    return renderView(ctx, '👑 <b>Broadcast for Creator ' + creatorId + '</b>\nSelect their running delivery bot and audience.', { inline_keyboard: kb }, true, true, { parse_mode: 'HTML' });
   });
-  bot.action(/^cc:owner_broadcast:bot:(\d+):(\d+)$/,async(ctx)=>{
-    if(!isOwnerAdmin(ctx))return denyAdminOnly(ctx);
-    const creatorId=Number(ctx.match[1]),botId=Number(ctx.match[2]);
-    const bots=await deliveryManager.list(creatorId);
-    const selected=bots.find(b=>Number(b.id)===botId&&b.is_enabled&&b.runtime_status==='running');
-    if(!selected){await safeAnswer(ctx,'Selected creator bot is no longer active.',true);return;}
-    const count=await pool.query('SELECT COUNT(*)::int AS count FROM delivery_bot_user_activity WHERE delivery_bot_id=$1',[botId]);
-    setPrompt(ctx.from.id,'owner_broadcast',{back:'cc:owner_broadcast:creator:'+creatorId,meta:{creatorId,botId}});
+  bot.action(/^cc:owner_broadcast:bot:(\d+):(\d+)$/, async (ctx) => {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    const creatorId = Number(ctx.match[1]), botId = Number(ctx.match[2]);
+    const bots = await deliveryManager.list(creatorId);
+    const selected = bots.find((b) => Number(b.id) === botId && b.is_enabled && b.runtime_status === 'running');
+    if (!selected) { await safeAnswer(ctx, 'Selected creator bot is no longer active.', true); return; }
+    const count = await pool.query('SELECT COUNT(*)::int AS count FROM delivery_bot_user_activity WHERE delivery_bot_id=$1', [botId]);
+    setPrompt(ctx.from.id, 'owner_broadcast', { back: 'cc:owner_broadcast:creator:' + creatorId, meta: { creatorId, botId } });
     await safeAnswer(ctx);
-    return renderView(ctx,'✏️ <b>Broadcast on behalf of Creator '+creatorId+'</b>\\n━━━━━━━━━━━━━━━━━━\\n🤖 @'+selected.username+'\\n👥 Audience: '+Number(count.rows[0]?.count||0)+'\\n\nSend text, or attach a photo, video, document, or GIF with an optional caption. Add URL buttons on separate lines: Button: Label | https://example.com',{inline_keyboard:[[{text:'✖ Cancel',callback_data:'cc:cancel_prompt'}]]},true,true,{parse_mode:'HTML'});
+    return renderView(
+      ctx,
+      '✏️ <b>Broadcast on behalf of Creator ' + creatorId + '</b>\n━━━━━━━━━━━━━━━━━━\n🤖 @' + escapeHtml(selected.username) + '\n👥 Audience: ' + Number(count.rows[0]?.count || 0) + '\n\nSend text, or attach a photo, video, document, or GIF with an optional caption. Add URL buttons on separate lines: Button: Label | https://example.com',
+      { inline_keyboard: [[{ text: '✖ Cancel', callback_data: 'cc:cancel_prompt' }]] },
+      true,
+      true,
+      { parse_mode: 'HTML' },
+    );
   });
 
   // Creator broadcast menu and history (creator-owned audience only)
@@ -3027,63 +3409,73 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     await safeAnswer(ctx);
     const ownerId = Number(ctx.from.id);
     const bots = await deliveryManager.list(ownerId);
-    const active = bots.filter(b => b.is_enabled && b.runtime_status === 'running');
+    const active = bots.filter((b) => b.is_enabled && b.runtime_status === 'running');
+    const selectedBot = pickCreatorBroadcastBot(bots);
     const history = await listCreatorBroadcasts(pool, ownerId, 5).catch(() => []);
-    const audience = await pool.query('SELECT COUNT(*)::int AS count FROM delivery_bot_user_activity WHERE delivery_bot_id = ANY($1::bigint[])', [active.map(b=>Number(b.id))]);
-    const msg = '📢 <b>Creator Broadcast</b>\n━━━━━━━━━━━━━━━━━━\n🤖 Active delivery bots: <b>'+active.length+'</b>\n👥 Tracked audience: <b>'+Number(audience.rows[0]?.count||0)+'</b>\n\nSend a text announcement to users tracked by your delivery bot. Each broadcast runs in the background.';
-    const kb=[];
-    if(active.length)kb.push([{text:'✉️ Compose Broadcast',callback_data:'cc:broadcast_compose'}]);
-    if(history.length)kb.push([{text:'📋 Recent Broadcasts',callback_data:'cc:broadcast_history'}]);
-    kb.push([{text:'↻ Refresh',callback_data:'cc:broadcast'},{text:'← Creator Hub',callback_data:'cc:home'}]);
-    return renderView(ctx,msg,{inline_keyboard:kb},true,true,{parse_mode:'HTML'});
+    const audience = selectedBot
+      ? await pool.query('SELECT COUNT(*)::int AS count FROM delivery_bot_user_activity WHERE delivery_bot_id = $1', [Number(selectedBot.id)])
+      : { rows: [{ count: 0 }] };
+    const botLine = selectedBot ? '🤖 Sending via: <b>@' + escapeHtml(selectedBot.username) + '</b> (' + active.length + ' active)' : '🤖 Active delivery bots: <b>0</b>';
+    const msg = '📢 <b>Creator Broadcast</b>\n━━━━━━━━━━━━━━━━━━\n' + botLine + '\n👥 Tracked audience: <b>' + Number(audience.rows[0]?.count || 0) + '</b>\n\nSend a text or media announcement to users tracked by your delivery bot. Each broadcast runs in the background.';
+    const kb = [];
+    if (selectedBot) kb.push([{ text: '✉️ Compose Broadcast', callback_data: 'cc:broadcast_compose' }]);
+    if (history.length) kb.push([{ text: '📋 Recent Broadcasts', callback_data: 'cc:broadcast_history' }]);
+    kb.push([{ text: '↻ Refresh', callback_data: 'cc:broadcast' }, { text: '← Creator Hub', callback_data: 'cc:home' }]);
+    return renderView(ctx, msg, { inline_keyboard: kb }, true, true, { parse_mode: 'HTML' });
   });
-  bot.action('cc:broadcast_compose', async(ctx)=>{
-    if(isOwnerAdmin(ctx))return denyAdminOnly(ctx);
-    const bots=await deliveryManager.list(Number(ctx.from.id));
-    if(!bots.some(b=>b.is_enabled&&b.runtime_status==='running')){await safeAnswer(ctx,'No active delivery bot is running.',true);return;}
-    const cfg=setPrompt(ctx.from.id,'creator_broadcast',{back:'cc:broadcast'});
+  bot.action('cc:broadcast_compose', async (ctx) => {
+    if (isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    const bots = await deliveryManager.list(Number(ctx.from.id));
+    if (!pickCreatorBroadcastBot(bots)) { await safeAnswer(ctx, 'No active delivery bot is running.', true); return; }
+    const cfg = setPrompt(ctx.from.id, 'creator_broadcast', { back: 'cc:broadcast' });
     await safeAnswer(ctx);
-    return renderView(ctx,'✏️ <b>New Broadcast</b>\n━━━━━━━━━━━━━━━━━━\n'+cfg.prompt,{inline_keyboard:[[{text:'✖ Cancel',callback_data:'cc:cancel_prompt'}]]},true,true,{parse_mode:'HTML'});
+    return renderView(ctx, '✏️ <b>New Broadcast</b>\n━━━━━━━━━━━━━━━━━━\n' + escapeHtml(cfg.prompt), { inline_keyboard: [[{ text: '✖ Cancel', callback_data: 'cc:cancel_prompt' }]] }, true, true, { parse_mode: 'HTML' });
   });
-  bot.action('cc:broadcast_history',async(ctx)=>{
-    if(isOwnerAdmin(ctx))return denyAdminOnly(ctx);
+  bot.action('cc:broadcast_history', async (ctx) => {
+    if (isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
     await safeAnswer(ctx);
-    const rows=await listCreatorBroadcasts(pool,Number(ctx.from.id),10);
-    const statusIcon={pending:'⏳',processing:'🚀',paused:'⏸',completed:'✅',cancelled:'🛑',failed:'⚠️'};
-    const body=rows.length?rows.map(r=>statusIcon[r.status]+' #'+r.id+' · '+r.status+'\\n👥 '+r.total_recipients+' · 📤 '+r.sent_count+' · ⚠️ '+r.failed_count).join('\\n\\n'):'No broadcasts yet.';
-    const kb=rows.map(r=>[{text:'Details #'+r.id+' · '+r.status,callback_data:'cc:broadcast_detail:'+r.id}]);
-    kb.push([{text:'← Broadcast',callback_data:'cc:broadcast'},{text:'Creator Hub',callback_data:'cc:home'}]);
-    return renderView(ctx,'📋 <b>Broadcast History</b>\\n━━━━━━━━━━━━━━━━━━\\n\\n'+body,{inline_keyboard:kb},true,true,{parse_mode:'HTML'});
+    const rows = await listCreatorBroadcasts(pool, Number(ctx.from.id), 10);
+    const statusIcon = { pending: '⏳', processing: '🚀', paused: '⏸', completed: '✅', cancelled: '🛑', failed: '⚠️' };
+    const body = rows.length
+      ? rows.map((r) => `${statusIcon[r.status] ?? '📋'} #${r.id} · ${escapeHtml(r.status)}\n👥 ${r.total_recipients} · 📤 ${r.sent_count} · ⚠️ ${r.failed_count}`).join('\n\n')
+      : 'No broadcasts yet.';
+    const kb = rows.map((r) => [{ text: 'Details #' + r.id + ' · ' + r.status, callback_data: 'cc:broadcast_detail:' + r.id }]);
+    kb.push([{ text: '← Broadcast', callback_data: 'cc:broadcast' }, { text: 'Creator Hub', callback_data: 'cc:home' }]);
+    return renderView(ctx, '📋 <b>Broadcast History</b>\n━━━━━━━━━━━━━━━━━━\n\n' + body, { inline_keyboard: kb }, true, true, { parse_mode: 'HTML' });
   });
-  bot.action(/^cc:broadcast_detail:(\\d+)$/,async(ctx)=>{
-    if(isOwnerAdmin(ctx))return denyAdminOnly(ctx);
-    const id=Number(ctx.match[1]),owner=Number(ctx.from.id);
-    const b=await getCreatorBroadcast(pool,owner,id);
-    if(!b){await safeAnswer(ctx,'Broadcast not found.',true);return;}
+  bot.action(/^cc:broadcast_detail:(\d+)$/, async (ctx) => {
+    if (isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    const id = Number(ctx.match[1]), owner = Number(ctx.from.id);
+    const b = await getCreatorBroadcast(pool, owner, id);
+    if (!b) { await safeAnswer(ctx, 'Broadcast not found.', true); return; }
     await safeAnswer(ctx);
-    const pct=b.total_recipients?Math.floor(Number(b.sent_count)*100/Number(b.total_recipients)):0;
-    const msg='📋 <b>Broadcast #'+b.id+'</b>\\n━━━━━━━━━━━━━━━━━━\\nStatus: <b>'+b.status+'</b>\\n👥 Total: '+b.total_recipients+'\\n📤 Sent: '+b.sent_count+' ('+pct+'%)\\n⚠️ Failed: '+b.failed_count+'\\n⏳ Pending: '+b.pending_count+'\\n\n'+(b.last_error?'Last error: '+String(b.last_error).slice(0,300):'');
-    const kb=[];
-    if(['processing','pending'].includes(b.status))kb.push([{text:'⏸ Pause',callback_data:'cc:broadcast_manage:paused:'+id}]);
-    if(b.status==='paused')kb.push([{text:'▶ Resume',callback_data:'cc:broadcast_manage:pending:'+id}]);
-    if(['processing','pending','paused'].includes(b.status))kb.push([{text:'🛑 Cancel',callback_data:'cc:broadcast_manage:cancelled:'+id}]);
-    if(['completed','failed','paused'].includes(b.status)&&Number(b.failed_count)>0)kb.push([{text:'🔁 Retry Failed',callback_data:'cc:broadcast_retry:'+id}]);
-    kb.push([{text:'↻ Refresh',callback_data:'cc:broadcast_detail:'+id},{text:'← History',callback_data:'cc:broadcast_history'}]);
-    return renderView(ctx,msg,{inline_keyboard:kb},true,true,{parse_mode:'HTML'});
+    const pct = b.total_recipients ? Math.floor(Number(b.sent_count) * 100 / Number(b.total_recipients)) : 0;
+    const msg = '📋 <b>Broadcast #' + b.id + '</b>\n━━━━━━━━━━━━━━━━━━\nStatus: <b>' + escapeHtml(b.status) + '</b>\n👥 Total: ' + b.total_recipients + '\n📤 Sent: ' + b.sent_count + ' (' + pct + '%)\n⚠️ Failed: ' + b.failed_count + '\n⏳ Pending: ' + b.pending_count + '\n\n' + (b.last_error ? 'Last error: ' + escapeHtml(String(b.last_error).slice(0, 300)) : '');
+    const kb = [];
+    if (['processing', 'pending'].includes(b.status)) kb.push([{ text: '⏸ Pause', callback_data: 'cc:broadcast_manage:paused:' + id }]);
+    if (b.status === 'paused') kb.push([{ text: '▶ Resume', callback_data: 'cc:broadcast_manage:pending:' + id }]);
+    if (['processing', 'pending', 'paused'].includes(b.status)) kb.push([{ text: '🛑 Cancel', callback_data: 'cc:broadcast_manage:cancelled:' + id }]);
+    if (['completed', 'failed', 'paused'].includes(b.status) && Number(b.failed_count) > 0) kb.push([{ text: '🔁 Retry Failed', callback_data: 'cc:broadcast_retry:' + id }]);
+    kb.push([{ text: '↻ Refresh', callback_data: 'cc:broadcast_detail:' + id }, { text: '← History', callback_data: 'cc:broadcast_history' }]);
+    return renderView(ctx, msg, { inline_keyboard: kb }, true, true, { parse_mode: 'HTML' });
   });
-  bot.action(/^cc:broadcast_manage:(paused|pending|cancelled):(\\d+)$/,async(ctx)=>{
-    if(isOwnerAdmin(ctx))return denyAdminOnly(ctx);
-    const status=ctx.match[1],id=Number(ctx.match[2]),owner=Number(ctx.from.id);
-    const changed=await setCreatorBroadcastStatus(pool,owner,id,status);
-    await safeAnswer(ctx,changed?'Broadcast updated.':'Broadcast could not be updated.',!changed);
-    return bot.telegram.editMessageReplyMarkup(ctx.chat.id,ctx.callbackQuery.message.message_id,{inline_keyboard:[[{text:'↻ Refresh Details',callback_data:'cc:broadcast_detail:'+id}],[{text:'← History',callback_data:'cc:broadcast_history'}]]}).catch(()=>{});
+  bot.action(/^cc:broadcast_manage:(paused|pending|cancelled):(\d+)$/, async (ctx) => {
+    if (isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    const status = ctx.match[1], id = Number(ctx.match[2]), owner = Number(ctx.from.id);
+    const changed = await setCreatorBroadcastStatus(pool, owner, id, status);
+    await safeAnswer(ctx, changed ? 'Broadcast updated.' : 'Broadcast could not be updated.', !changed);
+    return bot.telegram.editMessageReplyMarkup(ctx.chat.id, ctx.callbackQuery.message.message_id, undefined, { inline_keyboard: [[{ text: '↻ Refresh Details', callback_data: 'cc:broadcast_detail:' + id }], [{ text: '← History', callback_data: 'cc:broadcast_history' }]] }).catch(() => {});
   });
-  bot.action(/^cc:broadcast_retry:(\\d+)$/,async(ctx)=>{
-    if(isOwnerAdmin(ctx))return denyAdminOnly(ctx);
-    const id=Number(ctx.match[1]);
-    try{const n=await retryCreatorBroadcast(pool,Number(ctx.from.id),id);await safeAnswer(ctx,'Retry queued for '+n+' failed recipient(s).');}
-    catch(e){await safeAnswer(ctx,e.message||'Retry failed.',true);}
-    return renderView(ctx,'🔁 Retry requested for Broadcast #'+id,{inline_keyboard:[[{text:'📋 Details',callback_data:'cc:broadcast_detail:'+id},{text:'History',callback_data:'cc:broadcast_history'}]]},true,true);
+  bot.action(/^cc:broadcast_retry:(\d+)$/, async (ctx) => {
+    if (isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    const id = Number(ctx.match[1]);
+    try {
+      const n = await retryCreatorBroadcast(pool, Number(ctx.from.id), id);
+      await safeAnswer(ctx, 'Retry queued for ' + n + ' failed recipient(s).');
+    } catch (e) {
+      await safeAnswer(ctx, e.message || 'Retry failed.', true);
+    }
+    return renderView(ctx, '🔁 Retry requested for Broadcast #' + id, { inline_keyboard: [[{ text: '📋 Details', callback_data: 'cc:broadcast_detail:' + id }, { text: 'History', callback_data: 'cc:broadcast_history' }]] }, true, true);
   });
 
   // Prompt starters & cancel
@@ -3094,11 +3486,35 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     }
     try {
       const cfg = setPrompt(ctx.from.id, action);
+      let promptText = cfg.prompt;
+      const inlineKeyboard = [];
+
+      if (action === 'storage_add') {
+        const botInfo = await ctx.telegram.getMe().catch(() => null);
+        const botLabel = botInfo?.username ? `@${botInfo.username}` : 'this Main Bot';
+        promptText = [
+          '🗄 Add Storage Channel',
+          '',
+          `1️⃣ Add ${botLabel} as an Administrator in your channel (with Post Messages permission). If you use your own Delivery Bot, add it as Administrator too.`,
+          '2️⃣ Then send the -100... channel ID, @username, or t.me link — OR simply forward any post from your channel right here.',
+        ].join('\n');
+      } else if (action === 'delivery_bot_add' && !isOwnerAdmin(ctx)) {
+        const storageRows = await listStorageChannels(pool, Number(ctx.from.id)).catch(() => []);
+        const hasOwnStorage = storageRows.some((c) => c.is_enabled);
+        promptText = hasOwnStorage
+          ? `${cfg.prompt}\n\n🛡️ Reminder: Make sure your new Delivery Bot is also added as an Administrator in your own Storage Channel(s) — otherwise it will not work.`
+          : `${cfg.prompt}\n\n⚠️ IMPORTANT REQUIREMENT:\nYou MUST add your own Storage Channel (and make both this Main Bot and your Delivery Bot Administrators in it) — otherwise your Delivery Bot will NOT work!`;
+        if (!hasOwnStorage) {
+          inlineKeyboard.push([{ text: '🗄 Add Storage Channel First', callback_data: 'cc:prompt:storage_add' }]);
+        }
+      }
+
+      inlineKeyboard.push([{ text: '✖ Cancel', callback_data: 'cc:cancel_prompt' }]);
       await safeAnswer(ctx);
       await renderView(
         ctx,
-        `✏️ Interactive Input\n━━━━━━━━━━━━━━━━━━\n${cfg.prompt}`,
-        { inline_keyboard: [[{ text: '✖ Cancel', callback_data: 'cc:cancel_prompt' }]] },
+        `✏️ Interactive Input\n━━━━━━━━━━━━━━━━━━\n${promptText}`,
+        { inline_keyboard: inlineKeyboard },
         true,
       );
     } catch {
@@ -3120,12 +3536,56 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     );
   });
 
-  // Media input for creator/owner broadcast prompts. The main bot's file_id is
-  // resolved to a Telegram file URL by the source bot, then re-uploaded by each delivery bot.
+  // Forwarded channel message support for storage_add + media input for broadcast prompts.
   bot.on('message', async (ctx, next) => {
     const active = getActivePrompt(ctx.from?.id);
-    if (!active || !['creator_broadcast','owner_broadcast'].includes(active.action)) return next();
+    if (!active) return next();
+
     const m = ctx.message;
+    if (active.action === 'storage_add') {
+      const forwardedChat = m.forward_origin?.type === 'channel'
+        ? m.forward_origin.chat
+        : (m.forward_from_chat?.type === 'channel' ? m.forward_from_chat : null);
+      const isForwarded = Boolean(forwardedChat || m.forward_origin || m.forward_from_chat || m.forward_from || m.forward_sender_name);
+      if (!isForwarded) return next();
+
+      clearPrompt(ctx.from.id);
+      const ownerId = getOwnerScope(ctx);
+      const retryKeyboard = {
+        inline_keyboard: [
+          [{ text: '↻ Try Again', callback_data: 'cc:prompt:storage_add' }],
+          [
+            { text: '← Back to Section', callback_data: active.back },
+            { text: '🎛 Main Menu', callback_data: 'cc:home' },
+          ],
+        ],
+      };
+      if (!forwardedChat) {
+        return ctx.reply(
+          '❌ That forwarded message is not from a Telegram channel.\nPlease forward a post directly from your Telegram channel, or send its -100... channel ID or @username.',
+          { reply_markup: retryKeyboard },
+        );
+      }
+      try {
+        const chat = await validateStorageChannel(ctx, forwardedChat.id, { requireUserAdmin: !isOwnerAdmin(ctx) });
+        const saved = await saveStorageChannel(pool, chat, ctx.from.id, ownerId);
+        return ctx.reply(
+          `✅ Storage Channel Connected!\n━━━━━━━━━━━━━━━━━━\n🗄 ${saved.title ?? 'Channel'}\n🆔 ID: ${saved.telegram_chat_id}\n⚡ Status: ${saved.is_enabled ? '🟢 Enabled' : '⚪ Disabled'} · 🧪 Tested OK`,
+          {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '← Back to Section', callback_data: active.back },
+                { text: '🎛 Main Menu', callback_data: 'cc:home' },
+              ]],
+            },
+          },
+        );
+      } catch (error) {
+        return ctx.reply('❌ Action failed: ' + error.message, { reply_markup: retryKeyboard });
+      }
+    }
+
+    if (!['creator_broadcast', 'owner_broadcast'].includes(active.action)) return next();
     let mediaType = null, mediaFileId = null;
     if (m.photo?.length) { mediaType = 'photo'; mediaFileId = m.photo[m.photo.length - 1].file_id; }
     else if (m.video) { mediaType = 'video'; mediaFileId = m.video.file_id; }
@@ -3144,7 +3604,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
         if (isOwnerAdmin(ctx)) throw new Error('Creator broadcasts must be sent from a creator account.');
         creatorId = Number(ctx.from.id);
         const bots = await deliveryManager.list(creatorId);
-        const activeBot = bots.find(b => b.is_enabled && b.runtime_status === 'running');
+        const activeBot = pickCreatorBroadcastBot(bots);
         if (!activeBot) throw new Error('No active delivery bot is running.');
         botId = Number(activeBot.id);
       }
@@ -3212,11 +3672,11 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
         case 'creator_broadcast': {
           if (isOwnerAdmin(ctx)) throw new Error('Creator broadcasts must be sent from a creator account.');
           const bots = await deliveryManager.list(Number(ctx.from.id));
-          const activeBot = bots.find(b => b.is_enabled && b.runtime_status === 'running');
+          const activeBot = pickCreatorBroadcastBot(bots);
           if (!activeBot) throw new Error('No active delivery bot is running.');
-          const parsed=parseBroadcastContent(text);
-          if(!parsed.body)throw new Error('Enter announcement text before adding buttons.');
-          return showBroadcastPreview(ctx,{kind:'creator',ownerTelegramId:ctx.from.id,deliveryBotId:Number(activeBot.id),messageText:parsed.body,buttons:parsed.buttons});
+          const parsed = parseBroadcastContent(text);
+          if (!parsed.body) throw new Error('Enter announcement text before adding buttons.');
+          return showBroadcastPreview(ctx, { kind: 'creator', ownerTelegramId: ctx.from.id, deliveryBotId: Number(activeBot.id), messageText: parsed.body, buttons: parsed.buttons });
         }
         case 'storage_add': {
           const parsed = parseStorageIdentifier(text);
@@ -3241,9 +3701,26 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
         case 'delivery_bot_add': {
           try { await ctx.deleteMessage(); } catch {}
           const record = await deliveryManager.addToken(text.replace(/\s+/g, ''), ctx.from.id, ownerId);
+          let extraNotice = '';
+          let replyMarkup = backKeyboard;
+          if (ownerId !== null) {
+            const storageRows = await listStorageChannels(pool, ownerId).catch(() => []);
+            const hasOwnStorage = storageRows.some((c) => c.is_enabled);
+            if (!hasOwnStorage) {
+              extraNotice = `\n\n⚠️ ACTION REQUIRED — Bot Will Not Work Yet!\nYou MUST add your own Storage Channel now and make both this Main Bot and @${record.username} Administrators in it — otherwise your Delivery Bot will NOT work!`;
+              replyMarkup = {
+                inline_keyboard: [
+                  [{ text: '🗄 Add Storage Channel Now', callback_data: 'cc:prompt:storage_add' }],
+                  ...backKeyboard.inline_keyboard,
+                ],
+              };
+            } else {
+              extraNotice = `\n\n🛡️ Important: Make sure @${record.username} is added as an Administrator in your own Storage Channel(s), otherwise it cannot deliver files.`;
+            }
+          }
           return ctx.reply(
-            `🤖 Delivery Bot Connected!\n━━━━━━━━━━━━━━━━━━\n🆔 Record #${record.id}\n🤖 Bot: @${record.username}\n🏷 Role: ${record.role}\n⚡ Runtime: ${record.runtime_status}`,
-            { reply_markup: backKeyboard },
+            `🤖 Delivery Bot Connected!\n━━━━━━━━━━━━━━━━━━\n🆔 Record #${record.id}\n🤖 Bot: @${record.username}\n🏷 Role: ${record.role}\n⚡ Runtime: ${record.runtime_status}${extraNotice}`,
+            { reply_markup: replyMarkup },
           );
         }
         case 'force_sub_add': {
@@ -3864,11 +4341,40 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
             },
           );
         }
+        case 'owner_bot_prio': {
+          if (!isOwnerAdmin(ctx)) throw new Error('Owner permission required.');
+          const id = active.meta?.botId;
+          if (!id) throw new Error('Missing delivery bot ID.');
+          const priority = Number(text);
+          if (!Number.isInteger(priority) || priority < 0 || priority > 100000) {
+            throw new Error('Priority must be an integer between 0 and 100000.');
+          }
+          const updated = await updateDeliveryBotForOwner(pool, id, { priority }, deliveryManager);
+          if (!updated) throw new Error('Delivery bot not found.');
+          return ctx.reply(
+            `✅ Priority updated for @${updated.bot.username} (#${updated.bot.id}): ${priority}.`,
+            {
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: '🤖 Bot Details', callback_data: `cc:all_bot:${id}` }, { text: '🌐 All Bots', callback_data: 'cc:all_bots:0' }],
+                  [{ text: '🎛 Main Menu', callback_data: 'cc:home' }],
+                ],
+              },
+            },
+          );
+        }
         default:
           return next();
       }
     } catch (error) {
-      return ctx.reply('❌ Action failed: ' + error.message, { reply_markup: backKeyboard });
+      const retryRow = active.action === 'storage_add'
+        ? [[{ text: '↻ Try Again', callback_data: 'cc:prompt:storage_add' }]]
+        : active.action === 'delivery_bot_add'
+          ? [[{ text: '↻ Try Again', callback_data: 'cc:prompt:delivery_bot_add' }]]
+          : [];
+      return ctx.reply('❌ Action failed: ' + error.message, {
+        reply_markup: { inline_keyboard: [...retryRow, ...backKeyboard.inline_keyboard] },
+      });
     }
   });
 

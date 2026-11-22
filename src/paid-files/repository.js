@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { normalizeUpperCode, hashUpperCode } from '../utils/validation.js';
 import { setTelegramStarsPrice } from '../payments/telegram-stars.js';
+import { cleanupUnreferencedFiles } from '../storage/file-cleanup.js';
 
 function parsePaidIdOrHash(idOrCode) {
   const raw = String(idOrCode ?? '').trim();
@@ -54,7 +55,8 @@ export async function listPaidFileLinks(pool, limit = 30, ownerId = null) {
   }
   const { rows } = await pool.query(
     `SELECT pfl.id, pfl.public_code, pfl.price_minor, pfl.currency, pfl.is_enabled, pfl.expires_at, pfl.created_by, pfl.created_at,
-       f.file_code, f.file_name, COUNT(p.id)::int AS purchase_count
+       f.file_code, f.file_name, COUNT(p.id)::int AS purchase_count,
+       (SELECT COUNT(*)::int FROM link_open_events e WHERE e.link_kind='paid_file' AND e.link_id=pfl.id) AS view_count
      FROM paid_file_links pfl JOIN files f ON f.id = pfl.file_id
      LEFT JOIN paid_file_purchases p ON p.paid_link_id = pfl.id
      GROUP BY pfl.id, f.file_code, f.file_name
@@ -178,6 +180,9 @@ export async function deletePaidFileLink(pool, idOrCode, ownerId = null) {
   }
   if (deleted) {
     await setTelegramStarsPrice(pool, 'paid_file', deleted.id, 0).catch(() => {});
+    if (deleted.file_id) {
+      await cleanupUnreferencedFiles(pool, [deleted.file_id], ownerId).catch(() => {});
+    }
   }
   return deleted;
 }

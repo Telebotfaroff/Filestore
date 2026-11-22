@@ -147,4 +147,29 @@ test('validateStorageChannel, validateForceSubChannel, and inspectBotChannelAcce
   assert.deepEqual(inspection.forceSub, [
     { channel: 'ForceSub 1', status: 'force_sub_needs_admin' },
   ]);
+
+  // Auto-retries -100 prefix if user enters positive channel digits
+  const autoPrefixed = await validateStorageChannel({
+    telegram: {
+      getMe: async () => ({ id: 999, username: 'Filestore_advbot' }),
+      getChat: async (id) => {
+        if (String(id) === '1234567890') throw new Error('400: Bad Request: chat not found');
+        if (id === -1001234567890) return { id: -1001234567890, type: 'channel', title: 'AutoPrefixed' };
+        throw new Error('unexpected');
+      },
+      getChatMember: async () => ({ status: 'administrator', can_post_messages: true }),
+    },
+  }, '1234567890');
+  assert.equal(autoPrefixed.id, -1001234567890);
+
+  // Translates unrecoverable "chat not found" into actionable Main Bot admin instructions
+  await assert.rejects(
+    () => validateStorageChannel({
+      telegram: {
+        getMe: async () => ({ id: 999, username: 'Filestore_advbot' }),
+        getChat: async () => { throw new Error('400: Bad Request: chat not found'); },
+      },
+    }, '-1009999999999'),
+    /@Filestore_advbot as an Administrator.*Post Messages/,
+  );
 });

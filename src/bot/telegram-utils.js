@@ -58,13 +58,52 @@ export function getCommandArgText(ctx) {
   return getCommandArgs(ctx).join(' ');
 }
 
+async function resolveChannelChat(ctx, channelInput) {
+  try {
+    return await ctx.telegram.getChat(channelInput);
+  } catch (error) {
+    const msg = String(error?.message ?? '');
+    const rawStr = String(channelInput ?? '').trim();
+    if (/chat not found/i.test(msg) && /^\d+$/.test(rawStr) && !rawStr.startsWith('100')) {
+      const prefixedId = -Number('100' + rawStr);
+      if (Number.isSafeInteger(prefixedId)) {
+        try {
+          return await ctx.telegram.getChat(prefixedId);
+        } catch {
+          // Fall through to helpful error below
+        }
+      }
+    }
+    if (/chat not found|bot is not a member|forbidden|kicked|not enough rights|channel_private/i.test(msg)) {
+      const botInfo = await ctx.telegram.getMe().catch(() => null);
+      const botLabel = botInfo?.username ? `@${botInfo.username}` : 'this Main Bot';
+      throw new Error(
+        `Telegram could not access that channel ("chat not found"). Make sure you:\n` +
+        `1) Add ${botLabel} as an Administrator in your channel first (with Post Messages permission),\n` +
+        `2) Send the full -100... channel ID, @username, t.me link, or simply forward any post from that channel.`,
+      );
+    }
+    throw error;
+  }
+}
+
 export async function validateStorageChannel(ctx, channelInput, { requireUserAdmin = false } = {}) {
-  const chat = await ctx.telegram.getChat(channelInput);
+  const chat = await resolveChannelChat(ctx, channelInput);
   if (chat.type !== 'channel') throw new Error('Only Telegram channels are supported as storage destinations.');
   const botInfo = await ctx.telegram.getMe();
-  const member = await ctx.telegram.getChatMember(chat.id, botInfo.id);
-  if (member.status !== 'administrator') throw new Error('The Main Bot must be an administrator in this channel.');
-  if (member.can_post_messages !== true) throw new Error('The Main Bot must have permission to post in this channel.');
+  const botLabel = botInfo?.username ? `@${botInfo.username}` : 'The Main Bot';
+  let member;
+  try {
+    member = await ctx.telegram.getChatMember(chat.id, botInfo.id);
+  } catch (error) {
+    const msg = String(error?.message ?? '');
+    if (/chat not found|forbidden|member list is inaccessible|bot is not a member|not enough rights/i.test(msg)) {
+      throw new Error(`${botLabel} must be an administrator in this channel before it can be added.`);
+    }
+    throw error;
+  }
+  if (member.status !== 'administrator') throw new Error(`${botLabel} must be an administrator in this channel.`);
+  if (member.can_post_messages !== true) throw new Error(`${botLabel} must have permission to post in this channel.`);
   if (requireUserAdmin && ctx.from?.id) {
     try {
       const userMember = await ctx.telegram.getChatMember(chat.id, ctx.from.id);
@@ -80,11 +119,21 @@ export async function validateStorageChannel(ctx, channelInput, { requireUserAdm
 }
 
 export async function validateForceSubChannel(ctx, channelInput, { requireUserAdmin = false } = {}) {
-  const chat = await ctx.telegram.getChat(channelInput);
+  const chat = await resolveChannelChat(ctx, channelInput);
   if (chat.type !== 'channel') throw new Error('Force-subscription only supports Telegram channels.');
   const me = await ctx.telegram.getMe();
-  const member = await ctx.telegram.getChatMember(chat.id, me.id);
-  if (member.status !== 'administrator') throw new Error('Main Bot must be a channel administrator to verify membership.');
+  const botLabel = me?.username ? `@${me.username}` : 'Main Bot';
+  let member;
+  try {
+    member = await ctx.telegram.getChatMember(chat.id, me.id);
+  } catch (error) {
+    const msg = String(error?.message ?? '');
+    if (/chat not found|forbidden|member list is inaccessible|bot is not a member|not enough rights/i.test(msg)) {
+      throw new Error(`${botLabel} must be a channel administrator to verify membership.`);
+    }
+    throw error;
+  }
+  if (member.status !== 'administrator') throw new Error(`${botLabel} must be a channel administrator to verify membership.`);
   if (requireUserAdmin && ctx.from?.id) {
     try {
       const userMember = await ctx.telegram.getChatMember(chat.id, ctx.from.id);

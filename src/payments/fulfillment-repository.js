@@ -1,4 +1,5 @@
 import { creditCreatorSale } from '../wallet/repository.js';
+import { getBotSlotSettings, creditBotSlotPurchase } from '../delivery/slot-repository.js';
 
 function priceMatchesTransaction(tx, basePriceMinor, currency) {
   if (tx.method === 'telegram_stars') return true;
@@ -30,7 +31,7 @@ export async function applyVerifiedPayment(pool, transactionId, options = {}) {
     if (tx.status !== 'verified') throw new Error('Only verified transactions can be fulfilled.');
     if (!tx.user_telegram_id || !tx.session_id) throw new Error('Verified transaction missing user or checkout session.');
     const sessionResult = await client.query(
-      'SELECT id, status, user_telegram_id, purpose, plan_id, file_id, batch_link_id, paid_link_id, expected_amount_minor, currency FROM payment_sessions WHERE id=$1 FOR UPDATE',
+      'SELECT id, status, user_telegram_id, purpose, plan_id, file_id, batch_link_id, paid_link_id, expected_amount_minor, currency, metadata FROM payment_sessions WHERE id=$1 FOR UPDATE',
       [tx.session_id],
     );
     if (!sessionResult.rowCount) throw new Error('Payment session not found.');
@@ -177,6 +178,22 @@ export async function applyVerifiedPayment(pool, transactionId, options = {}) {
         }
       }
       result = { type: 'paid_batch', batchId: batch.id, purchaseId: purchase.rows[0].id, fileCount: items.rowCount };
+    } else if (tx.purpose === 'bot_slot') {
+      const slotSettings = await getBotSlotSettings(client);
+      const expectedBaseMinor = Number(session.metadata?.baseAmountMinor) > 0
+        ? Number(session.metadata.baseAmountMinor)
+        : Number(slotSettings.priceMinor);
+      if (!priceMatchesTransaction(tx, expectedBaseMinor, slotSettings.currency || 'INR')) {
+        throw new Error('Payment amount does not match extra Delivery Bot slot price.');
+      }
+      const credited = await creditBotSlotPurchase(client, {
+        userId,
+        paymentTransactionId: tx.id,
+        amountMinor: tx.amount_minor,
+        currency: tx.currency,
+        method: tx.method,
+      });
+      result = { type: 'bot_slot', extraSlots: credited.extraSlots, credited: credited.credited };
     } else {
       throw new Error('Unsupported payment purpose.');
     }

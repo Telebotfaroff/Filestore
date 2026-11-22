@@ -39,18 +39,24 @@ function findAction(bot, data) {
   return null;
 }
 
-test('buildPublicMenuKeyboard stays within 64-byte callback_data limit and excludes Owner-only buttons', () => {
+test('buildPublicMenuKeyboard stays within 64-byte callback_data limit and focuses creators on link creation plus Web Setup (/token)', () => {
   const kb = buildPublicMenuKeyboard();
   const buttons = kb.inline_keyboard.flat();
-  const forbidden = new Set(['cc:dash', 'cc:health', 'cc:plans', 'cc:payments', 'cc:autodel', 'cc:wdq:pending:0', 'cc:jobs']);
+  const forbidden = new Set([
+    'cc:dash', 'cc:health', 'cc:plans', 'cc:payments', 'cc:autodel', 'cc:wdq:pending:0', 'cc:jobs',
+    'cc:storage', 'cc:bots', 'cc:short', 'cc:fsub', 'cc:cplans', 'cc:me', 'cc:broadcast',
+  ]);
   for (const btn of buttons) {
-    assert.ok(!forbidden.has(btn.callback_data), `Public menu must not expose Owner-only callback ${btn.callback_data}`);
+    assert.ok(!forbidden.has(btn.callback_data), `Public menu must not expose setup/owner callback ${btn.callback_data}`);
+    assert.ok(!/\(\//.test(btn.text), `Public menu button "${btn.text}" should not contain slash command text`);
     assert.ok(Buffer.byteLength(btn.callback_data, 'utf8') <= 64, `callback_data too long: ${btn.callback_data}`);
   }
-  assert.ok(buttons.some((b) => b.callback_data === 'cc:me'));
-  assert.ok(buttons.some((b) => b.callback_data === 'cc:storage'));
-  assert.ok(buttons.some((b) => b.callback_data === 'cc:bots'));
-  assert.ok(buttons.some((b) => b.callback_data === 'cc:short'));
+  assert.ok(buttons.some((b) => b.callback_data === 'cc:cmd_link'));
+  assert.ok(buttons.some((b) => b.callback_data === 'cc:cmd_batch'));
+  assert.ok(buttons.some((b) => b.callback_data === 'cc:plink'));
+  assert.ok(buttons.some((b) => b.callback_data === 'cc:links:0'));
+  assert.ok(buttons.some((b) => b.callback_data === 'cc:webtok'));
+  assert.ok(buttons.some((b) => b.callback_data === 'cc:uguide:overview'));
 });
 
 test('Main Bot opens private chat to public creators while protecting Owner-only commands and callbacks', async () => {
@@ -364,7 +370,7 @@ test('Creator Hub renders rich HTML cards safely and /guide opens interactive mu
     reply: async (text, options) => { guideReply = { text, options }; },
   });
   assert.equal(guideReply.options.parse_mode, 'HTML');
-  assert.match(guideReply.text, /FileStore User & Creator Guide/);
+  assert.match(guideReply.text, /FileStore Link Creator Guide/);
   assert.match(guideReply.text, /How It Works/);
 
   for (const chapter of ['overview', 'links', 'paid', 'setup', 'short', 'earn']) {

@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { normalizeUpperCode, hashUpperCode } from '../utils/validation.js';
 import { setTelegramStarsPrice } from '../payments/telegram-stars.js';
+import { cleanupUnreferencedFiles } from '../storage/file-cleanup.js';
 
 function parseBatchIdOrHash(idOrCode) {
   const raw = String(idOrCode ?? '').trim();
@@ -148,7 +149,8 @@ export async function listPaidBatchLinks(pool, limit = 30, ownerId = null) {
   }
   const { rows } = await pool.query(
     `SELECT b.id,b.public_code,b.title,b.price_minor,b.currency,b.is_enabled,b.expires_at,b.created_by,b.created_at,
-       COUNT(DISTINCT i.file_id)::int AS item_count, COUNT(DISTINCT p.id)::int AS purchase_count
+       COUNT(DISTINCT i.file_id)::int AS item_count, COUNT(DISTINCT p.id)::int AS purchase_count,
+       (SELECT COUNT(*)::int FROM link_open_events e WHERE e.link_kind='paid_batch' AND e.link_id=b.id) AS view_count
      FROM paid_batch_links b LEFT JOIN paid_batch_items i ON i.batch_link_id=b.id
      LEFT JOIN paid_batch_purchases p ON p.batch_link_id=b.id
      GROUP BY b.id ORDER BY b.created_at DESC LIMIT $1`,
@@ -223,6 +225,7 @@ export async function deletePaidBatchLink(pool, idOrCode, ownerId = null) {
   const { column, value } = parseBatchIdOrHash(idOrCode);
   const client = await pool.connect();
   let deleted = null;
+  let itemFileIds = [];
   try {
     await client.query('BEGIN');
     const existing = ownerId !== null && ownerId !== undefined
@@ -239,6 +242,8 @@ export async function deletePaidBatchLink(pool, idOrCode, ownerId = null) {
       return null;
     }
     const targetId = existing.rows[0].id;
+    const itemFilesRes = await client.query('SELECT file_id FROM paid_batch_items WHERE batch_link_id = $1', [targetId]).catch(() => ({ rows: [] }));
+    itemFileIds = (itemFilesRes?.rows || []).map((r) => r.file_id).filter(Boolean);
     await client.query('DELETE FROM paid_batch_purchases WHERE batch_link_id = $1', [targetId]);
     await client.query('DELETE FROM paid_batch_items WHERE batch_link_id = $1', [targetId]);
     const delRes = await client.query(
@@ -255,6 +260,9 @@ export async function deletePaidBatchLink(pool, idOrCode, ownerId = null) {
   }
   if (deleted) {
     await setTelegramStarsPrice(pool, 'paid_batch', deleted.id, 0).catch(() => {});
+    if (itemFileIds.length) {
+      await cleanupUnreferencedFiles(pool, itemFileIds, ownerId).catch(() => {});
+    }
   }
   return deleted;
 }

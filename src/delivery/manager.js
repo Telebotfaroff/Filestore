@@ -4,6 +4,8 @@ import { createDeliveryBot } from './bot.js';
 import { normalizeSecret } from '../utils/validation.js';
 import { launchTelegramBot, inspectBotChannelAccess } from '../bot/telegram-utils.js';
 import { cached, cacheDeletePrefix } from '../utils/cache.js';
+import { FREE_CREATOR_BOT_SLOTS } from './slot-repository.js';
+import { normalizeMainBotUsername } from './start-message-repository.js';
 
 const DELIVERY_BOT_CACHE_PREFIX = 'delivery-bots:';
 function invalidateDeliveryBotCache() { cacheDeletePrefix(DELIVERY_BOT_CACHE_PREFIX); }
@@ -24,6 +26,7 @@ function normalizeOwnerId(ownerId) {
 export function createDeliveryBotManager(config, logger, pool) {
   const runtimes = new Map();
   let mainBotId;
+  let mainBotUsername = normalizeMainBotUsername(config?.mainBotUsername);
   let healthTimer;
 
   async function validateToken(token) {
@@ -85,6 +88,28 @@ export function createDeliveryBotManager(config, logger, pool) {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock($1)', [74290138]);
       const scope = ownerWhere(normalizedOwner, 1);
+
+      if (normalizedOwner !== null) {
+        const [usedRes, settingsRes] = await Promise.all([
+          client.query(`SELECT COUNT(*)::int AS used FROM delivery_bots WHERE ${scope.clause}`, scope.params),
+          client.query(
+            'SELECT extra_bot_slots FROM user_creator_settings WHERE user_telegram_id = $1 FOR UPDATE',
+            [normalizedOwner],
+          ),
+        ]);
+        const used = Number(usedRes.rows[0]?.used ?? 0);
+        const extraSlots = Math.max(0, Number(settingsRes.rows[0]?.extra_bot_slots ?? 0));
+        const totalAllowed = FREE_CREATOR_BOT_SLOTS + extraSlots;
+        if (used >= totalAllowed) {
+          throw Object.assign(
+            new Error(
+              `Delivery Bot limit reached (${used}/${totalAllowed} slots used). You get ${FREE_CREATOR_BOT_SLOTS} free bot slot — unlock an extra slot on the Web Control Panel or change your existing bot.`,
+            ),
+            { code: 'BOT_SLOT_LIMIT_REACHED', statusCode: 402 },
+          );
+        }
+      }
+
       const primary = await client.query(
         `SELECT 1 FROM delivery_bots WHERE role = 'primary' AND is_enabled = TRUE AND ${scope.clause} LIMIT 1`,
         scope.params,
@@ -110,6 +135,67 @@ export function createDeliveryBotManager(config, logger, pool) {
     }
   }
 
+  async function replaceToken(id, rawToken, updatedBy, ownerId = undefined) {
+    const token = normalizeSecret(rawToken);
+    if (!token || token.length < 20) throw new Error('Please send a complete bot token.');
+    const existing = await getBotRecord(id, ownerId);
+    if (!existing) {
+      throw Object.assign(new Error('Delivery Bot not found.'), { statusCode: 404 });
+    }
+
+    const info = await validateToken(token);
+    if (info.id === mainBotId) {
+      throw new Error('The Main Bot token cannot be registered as a Delivery Bot.');
+    }
+
+    const duplicate = await pool.query(
+      'SELECT id FROM delivery_bots WHERE telegram_bot_id = $1 AND id <> $2 LIMIT 1',
+      [info.id, existing.id],
+    );
+    if (duplicate.rowCount) {
+      throw new Error('This bot is already registered.');
+    }
+
+    const ciphertext = encryptBotToken(token, config.tokenEncryptionKey);
+    try {
+      stopRuntime(existing.id);
+    } catch {}
+
+    await pool.query(
+      `UPDATE delivery_bots
+       SET telegram_bot_id = $2,
+           username = $3,
+           token_ciphertext = $4,
+           is_enabled = TRUE,
+           runtime_status = 'offline',
+           last_error = NULL,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [existing.id, info.id, info.username, ciphertext],
+    );
+    invalidateDeliveryBotCache();
+
+    const refreshed = await getBotRecord(existing.id);
+    const runtime = await startRuntime(refreshed);
+    if (!runtime) {
+      throw new Error('Replacement token was saved, but its runtime failed to start.');
+    }
+    const scopeOwner = normalizeOwnerId(existing.owner_telegram_id);
+    await ensurePrimary(scopeOwner);
+
+    const { storage, forceSub } = await inspectBotChannelAccess(
+      runtime.runtime.bot.telegram,
+      pool,
+      info.id,
+      scopeOwner,
+    ).catch(() => ({ storage: [], forceSub: [] }));
+
+    return {
+      bot: await getBotRecord(existing.id),
+      checks: [...storage, ...forceSub],
+    };
+  }
+
   function stopRuntime(id) {
     const entry = runtimes.get(String(id));
     if (!entry) return;
@@ -127,10 +213,18 @@ export function createDeliveryBotManager(config, logger, pool) {
       const token = decryptBotToken(record.token_ciphertext, config.tokenEncryptionKey);
       const ownerTelegramId = normalizeOwnerId(record.owner_telegram_id);
       const isPlatformPrimary = ownerTelegramId === null && record.role === 'primary';
+      if (!mainBotUsername && typeof config?.notifyTelegram?.getMe === 'function') {
+        try {
+          const info = await config.notifyTelegram.getMe();
+          mainBotUsername = normalizeMainBotUsername(info?.username);
+        } catch {}
+      }
       const runtime = createDeliveryBot(config, logger, pool, token, {
         deliveryBotId: record.id,
         includeGlobal: isPlatformPrimary,
         ownerTelegramId,
+        mainBotUsername,
+        sourceTelegram: () => config.notifyTelegram ?? null,
       });
       if (!runtime) throw new Error('Delivery runtime could not be created');
       await launchTelegramBot(runtime.bot, (error) => {
@@ -270,6 +364,7 @@ export function createDeliveryBotManager(config, logger, pool) {
     const runtime = await startRuntime(refreshed);
     if (!runtime) return false;
     await pool.query("UPDATE delivery_bots SET runtime_status = 'running', last_health_at = NOW(), updated_at = NOW() WHERE id = $1", [id]);
+    invalidateDeliveryBotCache();
     const runtimeEntry = runtimes.get(String(id));
     if (runtimeEntry) runtimeEntry.paused = false;
     if (record.role === 'primary' || scopeOwner !== null) {
@@ -331,9 +426,17 @@ export function createDeliveryBotManager(config, logger, pool) {
     await ensurePrimary(null);
   }
 
+  function setMainBotUsername(username) {
+    const normalized = normalizeMainBotUsername(username);
+    if (normalized) {
+      mainBotUsername = normalized;
+    }
+  }
+
   async function startAll() {
     const mainInfo = await new Telegraf(config.mainBotToken).telegram.getMe();
     mainBotId = mainInfo.id;
+    mainBotUsername = normalizeMainBotUsername(mainInfo.username) ?? mainBotUsername;
     if (config.deliveryBotToken) {
       try {
         await storeToken(config.deliveryBotToken, 0, null);
@@ -371,6 +474,20 @@ export function createDeliveryBotManager(config, logger, pool) {
     return result.rowCount > 0;
   }
 
+  async function setEnabled(id, enabled, ownerId = undefined) {
+    if (enabled) {
+      return resume(id, ownerId);
+    }
+    const record = await getBotRecord(id, ownerId);
+    if (!record) return false;
+    const scopeOwner = normalizeOwnerId(record.owner_telegram_id);
+    stopRuntime(id);
+    await pool.query("UPDATE delivery_bots SET is_enabled = FALSE, runtime_status = 'paused', updated_at = NOW() WHERE id = $1", [id]);
+    invalidateDeliveryBotCache();
+    if (record.role === 'primary') await ensurePrimary(scopeOwner);
+    return true;
+  }
+
   async function list(ownerId = null) {
     const normalizedOwner = normalizeOwnerId(ownerId);
     const cacheKey = `${DELIVERY_BOT_CACHE_PREFIX}list:${normalizedOwner === null ? 'global' : normalizedOwner}`;
@@ -385,6 +502,6 @@ export function createDeliveryBotManager(config, logger, pool) {
     });
   }
 
-  return { startAll, stopAll, addToken, pause, resume, restart, remove, promotePrimary, setPriority, test, list };
+  return { startAll, stopAll, addToken, replaceToken, pause, resume, restart, remove, promotePrimary, setPriority, setEnabled, setMainBotUsername, test, list };
 }
 

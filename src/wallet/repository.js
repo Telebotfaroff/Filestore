@@ -1,7 +1,8 @@
 import { cached, cacheDeletePrefix } from '../utils/cache.js';
+import { normalizeUpiId } from '../payments/fampay.js';
+
 const CREATOR_SETTINGS_TTL = 45_000;
 const invalidateCreatorSettings = (userId) => cacheDeletePrefix(`creator-settings:${Number(userId)}:`);
-import { normalizeUpiId } from '../payments/fampay.js';
 
 export const MIN_WITHDRAWAL_INR_MINOR = 100; // ₹1.00 minimum UPI payout
 
@@ -62,6 +63,7 @@ export async function setCreatorForceSubEnabled(pool, userId, enabled) {
      RETURNING user_telegram_id, checkpoint_enabled, force_sub_enabled, payout_upi_id`,
     [uid, Boolean(enabled)],
   );
+  invalidateCreatorSettings(uid);
   return rows[0];
 }
 
@@ -263,6 +265,7 @@ export async function requestWithdrawal(pool, { userId, amountMinor = null, upiI
     );
 
     await client.query('COMMIT');
+    if (upiId) invalidateCreatorSettings(uid);
     return {
       withdrawal,
       availableAfterMinor: balanceAfter,

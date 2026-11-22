@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 const METHODS = new Set(['fampay', 'telegram_stars', 'stripe', 'crypto']);
-const PURPOSES = new Set(['premium', 'paid_file', 'paid_batch']);
+const PURPOSES = new Set(['premium', 'paid_file', 'paid_batch', 'bot_slot']);
 
 function safeHash(value) {
   return createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');

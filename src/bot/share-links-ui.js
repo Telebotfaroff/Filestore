@@ -1,5 +1,6 @@
 import { ingestTelegramMedia } from '../storage/ingest-handler.js';
 import { getIndexedFile, listRecentFiles, formatFileSize } from '../storage/file-query.js';
+import { countUnusedFilesForOwner } from '../storage/file-cleanup.js';
 import { escapeHtml, renderView, safeAnswer } from './telegram-utils.js';
 import {
   MAX_SHARE_BATCH_ITEMS,
@@ -151,15 +152,38 @@ export function registerShareLinksUi(bot, logger, pool, hooks = {}) {
   async function showShareLinks(ctx, page = 0, edit = false) {
     const safePage = Math.max(0, Number(page) || 0);
     const ownerScope = resolveOwnerScope(ctx);
-    const [{ total, rows }, botUsername] = await Promise.all([
+    const [{ total, rows }, botUsername, paidCountsRes, unusedFilesCount] = await Promise.all([
       listShareLinks(pool, { limit: LINKS_PAGE_SIZE, offset: safePage * LINKS_PAGE_SIZE, ownerId: ownerScope }),
       getShareableBotUsername(pool, ownerScope),
+      ownerScope !== null && ownerScope !== undefined
+        ? pool.query(
+            `SELECT
+               (SELECT COUNT(*)::int FROM paid_file_links WHERE created_by = $1) AS paid_files,
+               (SELECT COUNT(*)::int FROM paid_batch_links WHERE created_by = $1) AS paid_batches`,
+            [Number(ownerScope)],
+          ).catch(() => ({ rows: [{ paid_files: 0, paid_batches: 0 }] }))
+        : pool.query(
+            `SELECT
+               (SELECT COUNT(*)::int FROM paid_file_links) AS paid_files,
+               (SELECT COUNT(*)::int FROM paid_batch_links) AS paid_batches`,
+          ).catch(() => ({ rows: [{ paid_files: 0, paid_batches: 0 }] })),
+      countUnusedFilesForOwner(pool, ownerScope).catch(() => 0),
     ]);
+    const paidFilesCount = Number(paidCountsRes?.rows?.[0]?.paid_files ?? 0);
+    const paidBatchesCount = Number(paidCountsRes?.rows?.[0]?.paid_batches ?? 0);
     const pages = Math.max(1, Math.ceil(total / LINKS_PAGE_SIZE));
     const activePage = Math.min(safePage, pages - 1);
     const displayRows = activePage === safePage
       ? rows
       : (await listShareLinks(pool, { limit: LINKS_PAGE_SIZE, offset: activePage * LINKS_PAGE_SIZE, ownerId: ownerScope })).rows;
+
+    const extraNotes = [];
+    if (paidFilesCount + paidBatchesCount > 0) {
+      extraNotes.push(`💎 You also have <b>${paidFilesCount + paidBatchesCount}</b> paid link(s) — open below to manage.`);
+    }
+    if (unusedFilesCount > 0) {
+      extraNotes.push(`📁 <b>${unusedFilesCount}</b> uploaded file(s) aren't attached to any link — tap <b>Manage Files</b> to view or clean them.`);
+    }
 
     const lines = displayRows.length
       ? displayRows.map((row, idx) => {
@@ -167,7 +191,10 @@ export function registerShareLinksUi(bot, logger, pool, hooks = {}) {
           const kind = row.link_type === 'batch' ? `📚 Batch (${row.item_count}/${MAX_SHARE_BATCH_ITEMS})` : '🔗 Single';
           return `<b>${activePage * LINKS_PAGE_SIZE + idx + 1}.</b> ${row.is_enabled ? '🟢' : '⏸'} <b>${escapeHtml(String(row.title).slice(0, 70))}</b>\n${kind} · <code>${escapeHtml(row.link_code)}</code>\n<code>${escapeHtml(url)}</code>`;
         })
-      : ['<i>✨ No shareable links generated yet.\n\nUse <code>/link</code> for a single media file or <code>/Batch</code> for up to 20 files.</i>'];
+      : ['<i>✨ No free share links generated yet.\n\nUse <code>/link</code> for a single file or <code>/Batch</code> for up to 20 files.</i>'];
+    if (extraNotes.length) {
+      lines.push(extraNotes.join('\n'));
+    }
 
     const keyboard = displayRows.map((row) => [
       {
@@ -180,9 +207,16 @@ export function registerShareLinksUi(bot, logger, pool, hooks = {}) {
       },
     ]);
     keyboard.push([
-      { text: '➕ Single Link (/link)', callback_data: 'cc:cmd_link' },
-      { text: '➕ Batch (/Batch)', callback_data: 'cc:cmd_batch' },
+      { text: '➕ Single Link', callback_data: 'cc:cmd_link' },
+      { text: '➕ Batch Link', callback_data: 'cc:cmd_batch' },
     ]);
+    if (paidFilesCount > 0 || paidBatchesCount > 0 || unusedFilesCount > 0) {
+      const subRow = [];
+      if (paidFilesCount > 0) subRow.push({ text: `💎 Paid Links (${paidFilesCount})`, callback_data: 'cc:paid' });
+      if (paidBatchesCount > 0) subRow.push({ text: `📚 Paid Batches (${paidBatchesCount})`, callback_data: 'cc:batch' });
+      if (unusedFilesCount > 0) subRow.push({ text: `📁 Manage Files (${unusedFilesCount})`, callback_data: 'cc:files:0' });
+      keyboard.push(subRow);
+    }
     const nav = [];
     if (activePage > 0) nav.push({ text: '← Prev', callback_data: `cc:links:${activePage - 1}` });
     nav.push({ text: '↻ Refresh', callback_data: `cc:links:${activePage}` });

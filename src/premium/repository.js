@@ -41,9 +41,7 @@ export async function getPremiumPlanById(pool, id, ownerId = undefined) {
       `SELECT id, name, price_minor, currency, duration_days, is_enabled, owner_telegram_id FROM premium_plans WHERE id = $1 AND ${scope.clause} LIMIT 1`,
       [planId, ...scope.params],
     );
-    const row = rows[0] ?? null;
-    if (row) invalidatePlanCache(ownerId);
-    return row;
+    return rows[0] ?? null;
   }
   const { rows } = await pool.query(
     'SELECT id, name, price_minor, currency, duration_days, is_enabled, owner_telegram_id FROM premium_plans WHERE id = $1 LIMIT 1',
@@ -82,7 +80,7 @@ export async function setPremiumPlanEnabled(pool, id, enabled, ownerId = undefin
       [planId, Boolean(enabled), ...scope.params],
     );
     const row = rows[0] ?? null;
-    if (row) invalidatePlanCache(ownerId);
+    if (row) invalidatePlanCache(row.owner_telegram_id ?? null);
     return row;
   }
   const { rows } = await pool.query(
@@ -92,7 +90,7 @@ export async function setPremiumPlanEnabled(pool, id, enabled, ownerId = undefin
     [planId, Boolean(enabled)],
   );
   const row = rows[0] ?? null;
-  if (row) invalidatePlanCache(ownerId);
+  if (row) invalidatePlanCache(row.owner_telegram_id ?? null);
   return row;
 }
 
@@ -109,7 +107,7 @@ export async function editPremiumPlan(pool, id, input, ownerId = undefined) {
       [planId, input.name, input.priceMinor, input.currency, input.durationDays, input.enabled, ...scope.params],
     );
     const row = rows[0] ?? null;
-    if (row) invalidatePlanCache(ownerId);
+    if (row) invalidatePlanCache(row.owner_telegram_id ?? null);
     return row;
   }
   const { rows } = await pool.query(
@@ -117,7 +115,7 @@ export async function editPremiumPlan(pool, id, input, ownerId = undefined) {
     [planId, input.name, input.priceMinor, input.currency, input.durationDays, input.enabled],
   );
   const row = rows[0] ?? null;
-  if (row) invalidatePlanCache(ownerId);
+  if (row) invalidatePlanCache(row.owner_telegram_id ?? null);
   return row;
 }
 
@@ -131,12 +129,12 @@ export async function removePremiumPlan(pool, id, ownerId = undefined) {
       [planId, ...scope.params],
     );
     const row = rows[0] ?? null;
-    if (row) invalidatePlanCache(ownerId);
+    if (row) invalidatePlanCache(row.owner_telegram_id ?? null);
     return row;
   }
   const { rows } = await pool.query('DELETE FROM premium_plans WHERE id = $1 RETURNING id, name, owner_telegram_id', [planId]);
   const row = rows[0] ?? null;
-  if (row) invalidatePlanCache(ownerId);
+  if (row) invalidatePlanCache(row.owner_telegram_id ?? null);
   return row;
 }
 

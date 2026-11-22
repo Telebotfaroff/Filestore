@@ -7,7 +7,7 @@ export async function recordLinkOpen(pool, kind, linkId, userId, botId = null) {
 export async function getOwnerLinkAnalytics(pool, limit=50) {
   const {rows}=await pool.query(`WITH all_links AS (
     SELECT id,link_code AS code,title,link_type AS type,created_by,created_at,'share' AS kind FROM share_links
-    UNION ALL SELECT id,public_code AS code,file_name AS title,'single' AS type,created_by,created_at,'paid_file' AS kind FROM paid_file_links
+    UNION ALL SELECT pfl.id,pfl.public_code AS code,f.file_name AS title,'single' AS type,pfl.created_by,pfl.created_at,'paid_file' AS kind FROM paid_file_links pfl JOIN files f ON f.id=pfl.file_id
     UNION ALL SELECT id,public_code AS code,title,'batch' AS type,created_by,created_at,'paid_batch' AS kind FROM paid_batch_links
   ), views AS (
     SELECT link_kind,link_id,COUNT(*)::int AS view_count,COUNT(DISTINCT viewer_telegram_id)::int AS unique_viewers,
