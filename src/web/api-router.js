@@ -87,6 +87,7 @@ import {
   revokePremiumMembership,
 } from '../premium/repository.js';
 import { handleBroadcastRoutes } from './routes/broadcast-routes.js';
+import { handleWalletRoutes } from './routes/wallet-routes.js';
 import {
   getCreatorSettings,
   setCreatorCheckpointEnabled,
@@ -1189,82 +1190,10 @@ export async function handlePanelApiRequest(req, res, state, logger) {
       }
     }
 
-    // ── Creator Wallet & Withdrawals ────────────────────────────────────
-    if (method === 'GET' && pathname === '/api/panel/wallet') {
-      const [summary, referral, platformFees] = await Promise.all([
-        getCreatorWalletSummary(pool, auth.userId),
-        getUserReferralSummary(pool, auth.userId, state.botUsername ?? null).catch(() => null),
-        getPlatformFeeSettings(pool).catch(() => null),
-      ]);
-      const inr = summary.inrWallet || {};
-      return sendJson(res, 200, {
-        wallet: {
-          availableMinor: Number(inr.available_minor ?? 0),
-          lockedMinor: Number(inr.locked_minor ?? 0),
-          totalEarnedMinor: Number(inr.total_earned_minor ?? 0),
-          totalWithdrawnMinor: Number(inr.total_withdrawn_minor ?? 0),
-          upiId: summary.settings?.payout_upi_id ?? null,
-        },
-        minWithdrawalMinor: MIN_WITHDRAWAL_INR_MINOR,
-        referral,
-        platformFees,
-        recentLedger: summary.recentLedger.map((e) => ({
-          id: e.id,
-          entryType: e.entry_type,
-          amountMinor: Number(e.amount_minor),
-          currency: e.currency,
-          description: e.note || e.reference_code || '',
-          createdAt: e.created_at,
-        })),
-        recentWithdrawals: summary.recentWithdrawals.map((w) => ({
-          id: w.id,
-          amountMinor: Number(w.amount_minor),
-          currency: w.currency,
-          upiId: w.upi_id,
-          status: w.status,
-          payoutReference: w.payout_reference,
-          adminNote: w.admin_note,
-          createdAt: w.created_at,
-          processedAt: w.processed_at,
-        })),
-      });
-    }
+        // Creator wallet endpoints are handled by their dedicated route module.
+    if (await handleWalletRoutes({ method, pathname, auth, pool, state, sendJson, readJsonBody, getCreatorWalletSummary, getUserReferralSummary, getPlatformFeeSettings, MIN_WITHDRAWAL_INR_MINOR, setCreatorPayoutUpi, parseMinorAmount, requestWithdrawal, notifyAdminsWithdrawalRequest, adminIds, logger })) return;
 
-    if (method === 'POST' && pathname === '/api/panel/wallet/upi') {
-      const body = await readJsonBody(req);
-      const saved = await setCreatorPayoutUpi(pool, auth.userId, String(body.upiId || ''));
-      return sendJson(res, 200, { ok: true, upiId: saved.payout_upi_id });
-    }
-
-    if (method === 'POST' && pathname === '/api/panel/wallet/withdraw') {
-      const body = await readJsonBody(req);
-      const amountMinor = body.amount !== undefined && String(body.amount).trim() !== ''
-        ? parseMinorAmount(body.amount, { allowZero: false })
-        : null;
-      const result = await requestWithdrawal(pool, {
-        userId: auth.userId,
-        amountMinor,
-        upiId: body.upiId ? String(body.upiId).trim() : null,
-      });
-      if (state.notifyTelegram && result?.withdrawal) {
-        void notifyAdminsWithdrawalRequest(
-          state.notifyTelegram,
-          adminIds,
-          result.withdrawal,
-          { username: auth.username, first_name: auth.firstName },
-          logger,
-        ).catch(() => {});
-      }
-      return sendJson(res, 201, {
-        ok: true,
-        withdrawal: result.withdrawal,
-        availableAfterMinor: result.availableAfterMinor,
-        lockedAfterMinor: result.lockedAfterMinor,
-      });
-    }
-
-
-    // ── Delivery Bots (Creator / Actor-Scoped Management) ───────────────
+// ── Delivery Bots (Creator / Actor-Scoped Management) ───────────────
     if (method === 'GET' && pathname === '/api/panel/bots') {
       const scopeWhere = ownerScope === null ? 'd.owner_telegram_id IS NULL' : 'd.owner_telegram_id = $1';
       const scopeParams = ownerScope === null ? [] : [Number(ownerScope)];
