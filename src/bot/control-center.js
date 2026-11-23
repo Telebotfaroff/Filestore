@@ -2551,7 +2551,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
 
   registerStorageActions(bot, { safeAnswer, showStorageDetail, getOwnerScope, findOwnedStorageRow, validateStorageChannel, pool, updateStorageTest, isOwnerAdmin, setPrimaryStorageChannel, setStorageEnabled, removeStorageChannel, showStorage });
 
-  registerDeliveryBotActions(bot, { safeAnswer, showCloneBotScreen, showSlotUnlockScreen, isOwnerAdmin, unlockSlotWithWallet, pool, renderView, escapeHtml, sendStarsInvoice, config, getBotSlotSettings, createFamPayCheckout, verifyFamPaySession, cancelFamPaySession, getOwnerScope, findOwnedBotRow, setPrompt, showBots, showBotDetail, deliveryManager });
+  registerDeliveryBotActions(bot, { safeAnswer, showCloneBotScreen, showSlotUnlockScreen, isOwnerAdmin, unlockSlotWithWallet, pool, renderView, escapeHtml, formatMoney, sendStarsInvoice, config, getBotSlotSettings, createFamPayCheckout, verifyFamPaySession, cancelFamPaySession, getOwnerScope, findOwnedBotRow, setPrompt, showBots, showBotDetail, deliveryManager });
 
   registerOwnerBotActions(bot, { isOwnerAdmin, denyAdminOnly, safeAnswer, showAllBotsForOwner, showOwnerBotDetail, deliveryManager, updateDeliveryBotForOwner, pool, getDeliveryBotDetailsForOwner, setPrompt, renderView });
 
