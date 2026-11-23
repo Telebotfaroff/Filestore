@@ -52,7 +52,7 @@ Copy `.env.example` to `.env` for local development, or add these variables in y
 | `DATABASE_URL` | **Yes** | — | PostgreSQL connection string (`postgresql://user:pass@host:5432/db?sslmode=require`) |
 | `ADMIN_IDS` | **Yes** | — | Comma-separated numeric Telegram User IDs of platform owners (e.g. `123456789`) |
 | `DELIVERY_BOT_TOKEN` | Optional | `""` | Default Delivery Bot token from `@BotFather` (additional delivery bots can be added from the panel) |
-| `TOKEN_ENCRYPTION_KEY` | Recommended | Auto-generated in DB | 64-character hex string (32 bytes) used to encrypt stored delivery bot tokens. Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `TOKEN_ENCRYPTION_KEY` | Recommended | Auto-generated in DB | 64-character hex string (32 bytes) used to encrypt stored delivery bot tokens. Base64-encoded 32-byte keys are also accepted for compatibility. Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `FILESTORE_PORT` | Optional | `3000` | HTTP port for the Web Control Panel & `/health` endpoint. **Set this to match your host's exposed port** (e.g. `8000` on Koyeb or `10000` on Render) |
 | `APP_URL` | Optional | `""` | Public HTTPS URL of your Web Control Panel (e.g. `https://your-app.koyeb.app`) |
 | `NODE_ENV` | Optional | `development` | Set to `production` when deployed |
@@ -80,7 +80,7 @@ Copy `.env.example` to `.env` for local development, or add these variables in y
    - `DELIVERY_BOT_TOKEN=<your_delivery_bot_token>`
    - `ADMIN_IDS=<your_telegram_numeric_id>`
    - `DATABASE_URL=<your_neon_postgresql_url>`
-   - `TOKEN_ENCRYPTION_KEY=<64_char_hex_key>`
+   - `TOKEN_ENCRYPTION_KEY=<64_char_hex_key>` (or base64-encoded 32-byte key)
    - `FILESTORE_PORT=8000` (on Koyeb) or `FILESTORE_PORT=10000` (on Render) — match the port configured in your host's service settings.
    - `APP_URL=https://<your-deployed-domain>`
 5. **Deploy & Verify**:
