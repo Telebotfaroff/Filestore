@@ -613,7 +613,7 @@ export async function handlePanelApiRequest(req, res, state, logger) {
       if (await handleOwnerDashboardRoutes({ req, res, method, pathname, auth, pool, parsedUrl, sendJson, readJsonBody, getOwnerLinkAnalytics, getAdminDashboardStats, getOperationalHealth, getPaymentReconciliationStats, getPaymentAnalytics, getRecentDeliveryJobs, getAutoDeleteMinutes, listFailedScheduledDeletions, listPaymentMethods, normalizeOwnerStats, setAutoDeleteMinutes, retryFailedDeliveryJob })) return;
 
       // Owner withdrawal administration is handled by the dedicated module.
-      if (await handleOwnerWithdrawalRoutes({ req, res, method, pathname, auth, pool, state, sendJson, readJsonBody, listWithdrawalRequests, approveWithdrawalPaid, rejectWithdrawalRefund, notifyWithdrawalOutcome, logger })) return;
+      if (await handleOwnerWithdrawalRoutes({ req, res, method, pathname, auth, pool, state, parsedUrl, sendJson, readJsonBody, listWithdrawalRequests, approveWithdrawalPaid, rejectWithdrawalRefund, notifyWithdrawalOutcome, logger })) return;
 
       if (await handleOwnerPaymentRoutes({ req, res, method, pathname, auth, pool, config, parsedUrl, sendJson, readJsonBody, searchPaymentTransactions, listPaymentTransactions, listPaymentMethods, applyVerifiedPayment, adminIds, disablePaymentMethod, enableFamPay, enableTelegramStars })) return;
 
