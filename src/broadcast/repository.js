@@ -168,8 +168,8 @@ export async function retryCreatorBroadcast(pool, owner, id) {
     );
     if (r.rowCount === 0) throw new Error('No failed recipients to retry.');
     await c.query(
-      "UPDATE creator_broadcasts SET status='pending',completed_at=NULL,last_error=NULL WHERE id=$1",
-      [Number(id)],
+      "UPDATE creator_broadcasts SET status='pending',completed_at=NULL,last_error=NULL,failed_count=GREATEST(0,failed_count-$2) WHERE id=$1",
+      [Number(id), r.rowCount],
     );
     await c.query('COMMIT');
     wakeDeliveryWorkers('broadcast-retry');
