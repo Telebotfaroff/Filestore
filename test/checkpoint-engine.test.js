@@ -45,14 +45,14 @@ test('checkpoint provider remains blocked until a verifier is configured', async
   const result = await getCheckpointRequirement(pool, 1234);
   assert.equal(result.required, true);
   assert.equal(result.blocked, true);
-  assert.equal(result.reason, 'provider_verification_not_configured');
+  assert.equal(result.reason, 'provider_verification_not_supported');
 });
 
 test('callback-only providers cannot unlock checkpoint access', async () => {
   const pool = {
     query: async (sql) => {
       if (sql.includes('FROM shortener_providers')) return { rowCount: 2, rows: [
-        { id: 20, name: 'Callback only', verification_mode: 'callback' },
+        { id: 20, name: 'Callback only', verification_mode: 'unverified' },
         { id: 21, name: 'Unverified', verification_mode: 'unverified' },
       ] };
       if (sql.includes('FROM user_checkpoint_state')) return { rowCount: 0, rows: [] };
@@ -71,7 +71,7 @@ test('checkpoint rotation skips unverified providers and counts only eligible pr
     query: async (sql) => {
       if (sql.includes('FROM shortener_providers')) return { rowCount: 3, rows: [
         { id: 10, name: 'Broken verifier', verification_mode: 'unverified' },
-        { id: 11, name: 'Ready A', verification_mode: 'provider_api' },
+        { id: 11, name: 'Ready A', verification_mode: 'unverified' },
         { id: 12, name: 'Ready B', verification_mode: 'provider_api' },
       ] };
       if (sql.includes('FROM user_checkpoint_state')) return { rowCount: 1, rows: [{ last_provider_id: 11, checkpoint_expires_at: new Date(Date.now() - 1000) }] };
@@ -89,7 +89,7 @@ test('checkpoint rotation skips unverified providers and counts only eligible pr
 test('active checkpoint grants access until expiry', async () => {
   const pool = {
     query: async (sql) => {
-      if (sql.includes('FROM shortener_providers')) return { rowCount: 2, rows: [{ id: 4, name: 'A', verification_mode: 'provider_api' }, { id: 5, name: 'B', verification_mode: 'callback' }] };
+      if (sql.includes('FROM shortener_providers')) return { rowCount: 2, rows: [{ id: 4, name: 'A', verification_mode: 'provider_api' }, { id: 5, name: 'B', verification_mode: 'unverified' }] };
       if (sql.includes('FROM user_checkpoint_state')) return { rowCount: 1, rows: [{ last_provider_id: 4, checkpoint_expires_at: new Date(Date.now() + 60_000) }] };
       throw new Error('Unexpected query');
     },
@@ -152,8 +152,8 @@ test('parseShortenerInput handles base_url|api_key and multiple shorteners clean
   assert.equal(first.name, 'shrinkme.io');
   assert.equal(first.baseUrl, 'https://shrinkme.io');
   assert.equal(first.apiEndpoint, 'https://shrinkme.io/api');
-  assert.equal(first.verificationMode, 'callback');
-  assert.equal(first.enabled, true);
+  assert.equal(first.verificationMode, 'unverified');
+  assert.equal(first.enabled, false);
 
   const duplicateHost = parseShortenerInput('https://shrinkme.io|another_key_2', [{ name: 'shrinkme.io' }]);
   assert.equal(duplicateHost.name, 'shrinkme.io #2');
@@ -234,7 +234,7 @@ test('createCheckpointChallenge decrypts API key, persists session hash, and cal
     response_url_path: 'shortenedUrl',
     response_format: 'json',
     checkpoint_minutes: 1440,
-    verification_mode: 'callback',
+    verification_mode: 'unverified',
   };
   const fakeFetch = async (url) => {
     const req = new URL(url);
