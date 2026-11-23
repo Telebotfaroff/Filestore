@@ -1,5 +1,5 @@
 // Owner-only manual premium membership management routes.
-export async function handleOwnerPremiumRoutes({ res, method, pathname, auth, pool, sendJson, readJsonBody, parseTelegramUserId, parsePositiveInt, grantPremiumMembership, revokePremiumMembership })n  {
+export async function handleOwnerPremiumRoutes({ res, method, pathname, auth, pool, sendJson, readJsonBody, parseTelegramUserId, parsePositiveInt, grantPremiumMembership, revokePremiumMembership }) {
   const respond = (...args) => { sendJson(...args); return true; };
         if (method === 'POST' && pathname === '/api/panel/owner/premium/grant') {
           const body = await readJsonBody(req);
