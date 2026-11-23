@@ -11,7 +11,7 @@ import { checkForceSubscription } from '../access/force-subscription.js';
 import { upsertTelegramUser } from '../access/user-repository.js';
 import { trackDeliveryBotUser } from '../web/user-management-repository.js';
 import { evaluateAccess } from '../access/access-manager.js';
-import { getCheckpointRequirement, createCheckpointChallenge, applyVerifiedCheckpoint } from '../access/checkpoint-engine.js';
+import { getCheckpointRequirement, createCheckpointChallenge } from '../access/checkpoint-engine.js';
 import { getPaidFileLink, requestPaidFilePurchase, hasPaidFileEntitlement } from '../paid-files/repository.js';
 import { listPremiumPlans, getPremiumPlanById } from '../premium/repository.js';
 import { sendStarsInvoice, handleStarsPreCheckout, handleStarsSuccessfulPayment, getTelegramStarsPrice } from '../payments/telegram-stars.js';
@@ -773,30 +773,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
 
     try {
       if (/^chk_/i.test(payload)) {
-        const chkToken = payload.slice(4);
-        if (!chkToken) return ctx.reply('⚠️ Invalid verification link.');
-        try {
-          const verified = await applyVerifiedCheckpoint(pool, chkToken, 'signed_callback');
-          await pool.query(
-            'INSERT INTO activity_logs (event_type, actor_telegram_id, target_telegram_id, details) VALUES ($1, $2, $2, $3::jsonb)',
-            ['checkpoint_verified', ctx.from.id, JSON.stringify({ providerId: verified.providerId, providerName: verified.providerName, checkpointMinutes: verified.checkpointMinutes })],
-          ).catch(() => {});
-          return ctx.reply(
-            [
-              `🎉 <b>Verification Complete!</b> (${escapeHtml(verified.providerName)})`,
-              '━━━━━━━━━━━━━━━━━━',
-              '',
-              `🔓 Free file access is now unlocked for <b>${verified.checkpointMinutes} minute(s)</b>`,
-              `⏳ <b>Valid until:</b> ${escapeHtml(new Date(verified.expiresAt).toLocaleString())}`,
-              '',
-              '🚀 <i>Tap your file link again or use <code>/get &lt;file_code&gt;</code> to receive your files!</i>',
-            ].join('\n'),
-            HTML,
-          );
-        } catch (err) {
-          logger.warn({ error: err.message, userId: ctx.from.id }, 'Checkpoint callback verification failed');
-          return ctx.reply('⚠️ Verification link is invalid, already used, or expired. Request the file again to get a new verification link.');
-        }
+        return ctx.reply('⚠️ Checkpoint verification is currently unavailable. A shortener redirect alone cannot prove completion, so access has not been unlocked. Please try again later.');
       }
       if (/^paid_/i.test(payload)) {
         return await openPaidFileCheckout(ctx, payload.slice(5), { deliverIfAlreadyPaid: true });
