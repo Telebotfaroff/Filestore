@@ -4,6 +4,7 @@ import { registerDeliveryJobActions } from './controllers/delivery-job-controlle
 import { registerForceSubActions } from './controllers/force-sub-controller.js';
 import { registerShortenerActions } from './controllers/shortener-controller.js';
 import { registerPremiumPlanActions } from './controllers/premium-plan-controller.js';
+import { registerPaymentMethodActions } from './controllers/payment-method-controller.js';
 import {
   createCreatorBroadcast,
   getCreatorBroadcast,
@@ -3016,22 +3017,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
 
   registerPremiumPlanActions(bot, { isOwnerAdmin, denyAdminOnly, safeAnswer, showPlanDetail, pool, showPlans });
 
-  // Payment method actions
-  bot.action(/^cc:plan_stars:(\d+)$/, async (ctx) => {
-    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
-    const planId = Number(ctx.match[1]);
-    const res = await pool.query('SELECT id, name FROM premium_plans WHERE id = $1 LIMIT 1', [planId]);
-    if (!res.rowCount) return safeAnswer(ctx, 'Plan not found.', true);
-    const plan = res.rows[0];
-    setPrompt(ctx.from.id, 'plan_stars_single', { back: `cc:plan:${planId}`, meta: { planId } });
-    await safeAnswer(ctx);
-    return renderView(
-      ctx,
-      `⭐ Set Telegram Stars Price\n━━━━━━━━━━━━━━━━━━\n💎 Plan #${plan.id}: ${plan.name}\n\n✏️ Send the integer Stars price (e.g. 50), or 0 to remove:`,
-      { inline_keyboard: [[{ text: '✖ Cancel', callback_data: 'cc:cancel_prompt' }]] },
-      true,
-    );
-  });
+  registerPaymentMethodActions(bot, { isOwnerAdmin, denyAdminOnly, pool, safeAnswer, setPrompt, renderView });
 
   // Creator-scoped Premium plan actions
   bot.action(/^cc:cplan:(\d+)$/, async (ctx) => {
