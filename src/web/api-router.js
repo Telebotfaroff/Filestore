@@ -1191,7 +1191,7 @@ export async function handlePanelApiRequest(req, res, state, logger) {
     }
 
         // Creator wallet endpoints are handled by their dedicated route module.
-    if (await handleWalletRoutes({ method, pathname, auth, pool, state, sendJson, readJsonBody, getCreatorWalletSummary, getUserReferralSummary, getPlatformFeeSettings, MIN_WITHDRAWAL_INR_MINOR, setCreatorPayoutUpi, parseMinorAmount, requestWithdrawal, notifyAdminsWithdrawalRequest, adminIds, logger })) return;
+    if (await handleWalletRoutes({ req, res, method, pathname, auth, pool, state, sendJson, readJsonBody, getCreatorWalletSummary, getUserReferralSummary, getPlatformFeeSettings, MIN_WITHDRAWAL_INR_MINOR, setCreatorPayoutUpi, parseMinorAmount, requestWithdrawal, notifyAdminsWithdrawalRequest, adminIds, logger })) return;
 
 // ── Delivery Bots (Creator / Actor-Scoped Management) ───────────────
     if (method === 'GET' && pathname === '/api/panel/bots') {
