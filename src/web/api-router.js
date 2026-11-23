@@ -95,6 +95,7 @@ import { handleShortenerRoutes } from './routes/shortener-routes.js';
 import { handleChannelRoutes } from './routes/channel-routes.js';
 import { handleFileRoutes } from './routes/file-routes.js';
 import { handleLinkRoutes } from './routes/link-routes.js';
+// Paid batch delivery uses the ?start=pbatch_${r.public_code} deep-link prefix in link-routes.js.
 import { handleDeliveryBotRoutes } from './routes/delivery-bot-routes.js';
 import {
   getCreatorSettings,
