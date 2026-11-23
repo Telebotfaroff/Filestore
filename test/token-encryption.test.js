@@ -9,6 +9,12 @@ test('encrypts and decrypts bot tokens with authenticated envelope', () => {
   assert.notEqual(encrypted, token);
   assert.equal(decryptBotToken(encrypted, key), token);
 });
+test('accepts documented 64-character hex encryption keys', () => {
+  const hexKey = Buffer.alloc(32, 9).toString('hex');
+  const token = '987654:HEX_KEY_TEST';
+  const encrypted = encryptBotToken(token, hexKey);
+  assert.equal(decryptBotToken(encrypted, hexKey), token);
+});
 test('rejects invalid encryption key size', () => {
   assert.throws(() => encryptBotToken('token', 'invalid'), /32-byte key/);
 });
