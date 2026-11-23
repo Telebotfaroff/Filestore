@@ -53,7 +53,7 @@ test('checkpoint rotation skips unverified providers and counts only eligible pr
     query: async (sql) => {
       if (sql.includes('FROM shortener_providers')) return { rowCount: 3, rows: [
         { id: 10, name: 'Broken verifier', verification_mode: 'unverified' },
-        { id: 11, name: 'Ready A', verification_mode: 'callback' },
+        { id: 11, name: 'Ready A', verification_mode: 'provider_api' },
         { id: 12, name: 'Ready B', verification_mode: 'provider_api' },
       ] };
       if (sql.includes('FROM user_checkpoint_state')) return { rowCount: 1, rows: [{ last_provider_id: 11, checkpoint_expires_at: new Date(Date.now() - 1000) }] };
@@ -125,6 +125,7 @@ test('checkpoint credit rejects untrusted verifier names before database access'
   let touched = false;
   const pool = { connect: async () => { touched = true; throw new Error('should not be called'); } };
   await assert.rejects(applyVerifiedCheckpoint(pool, 'arbitrary-token', 'manual'), /Untrusted checkpoint verification method/);
+  await assert.rejects(applyVerifiedCheckpoint(pool, 'arbitrary-token', 'signed_callback'), /Untrusted checkpoint verification method/);
   assert.equal(touched, false);
 });
 
