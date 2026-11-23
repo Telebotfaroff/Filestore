@@ -1,5 +1,5 @@
 // Creator wallet API endpoints extracted from the panel router.
-export async function handleWalletRoutes({ method, pathname, auth, pool, state, sendJson, readJsonBody, getCreatorWalletSummary, getUserReferralSummary, getPlatformFeeSettings, MIN_WITHDRAWAL_INR_MINOR, setCreatorPayoutUpi, parseMinorAmount, requestWithdrawal, notifyAdminsWithdrawalRequest, adminIds, logger }) {
+export async function handleWalletRoutes({ req, res, method, pathname, auth, pool, state, sendJson, readJsonBody, getCreatorWalletSummary, getUserReferralSummary, getPlatformFeeSettings, MIN_WITHDRAWAL_INR_MINOR, setCreatorPayoutUpi, parseMinorAmount, requestWithdrawal, notifyAdminsWithdrawalRequest, adminIds, logger }) {
   const respond = (...args) => { sendJson(...args); return true; };
       if (method === 'GET' && pathname === '/api/panel/wallet') {
         const [summary, referral, platformFees] = await Promise.all([
