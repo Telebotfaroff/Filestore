@@ -1,6 +1,6 @@
 // Creator delivery-bot and slot-payment callback controller.
 export function registerDeliveryBotActions(bot, context) {
-  const { safeAnswer, showCloneBotScreen, showSlotUnlockScreen, isOwnerAdmin, unlockSlotWithWallet, pool, renderView, escapeHtml, sendStarsInvoice, config, getBotSlotSettings, createFamPayCheckout, verifyFamPaySession, cancelFamPaySession, getOwnerScope, findOwnedBotRow, setPrompt, showBots, showBotDetail, deliveryManager } = context;
+  const { safeAnswer, showCloneBotScreen, showSlotUnlockScreen, isOwnerAdmin, unlockSlotWithWallet, pool, renderView, escapeHtml, formatMoney, sendStarsInvoice, config, getBotSlotSettings, createFamPayCheckout, verifyFamPaySession, cancelFamPaySession, getOwnerScope, findOwnedBotRow, setPrompt, showBots, showBotDetail, deliveryManager } = context;
   // Delivery Bot & Slot actions
   bot.action('cc:clone', async (ctx) => {
     await safeAnswer(ctx);
