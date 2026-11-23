@@ -1,5 +1,5 @@
 // Creator and owner dashboard overview API routes.
-export async function handleOverviewRoutes({ res, method, pathname, auth, ownerScope, pool, state, parsedUrl, sendJson, listShareLinks, listPaidFileLinks, listPaidBatchLinks, listShortenerProviders, listStorageChannels, listForceSubChannels, getCreatorWalletSummary, listPremiumPlans, getShareableBotUsername, getGlobalCheckpointEnabled, getCreatorSettings, getForceSubGlobal, getAdminDashboardStats, listWithdrawalRequests, getAdminDashboardStats, normalizeOwnerStats, MIN_WITHDRAWAL_INR_MINOR }) {
+export async function handleOverviewRoutes({ res, method, pathname, auth, ownerScope, pool, state, parsedUrl, sendJson, listShareLinks, listPaidFileLinks, listPaidBatchLinks, listShortenerProviders, listStorageChannels, listForceSubChannels, getCreatorWalletSummary, listPremiumPlans, getShareableBotUsername, getGlobalCheckpointEnabled, getCreatorSettings, getForceSubGlobal, listWithdrawalRequests, getAdminDashboardStats, normalizeOwnerStats, MIN_WITHDRAWAL_INR_MINOR }) {
   const respond = (...args) => { sendJson(...args); return true; };
       if (method === 'GET' && pathname === '/api/panel/overview') {
         const daysParam = Number(parsedUrl.searchParams.get('days'));
