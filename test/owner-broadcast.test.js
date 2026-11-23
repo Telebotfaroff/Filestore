@@ -289,7 +289,7 @@ function createBroadcastPool() {
       }
       return { rows: [], rowCount: count };
     }
-    if (n.startsWith("UPDATE creator_broadcasts SET status='pending',completed_at=NULL,last_error=NULL WHERE id=$1")) {
+    if (n.startsWith("UPDATE creator_broadcasts SET status='pending',completed_at=NULL,last_error=NULL,failed_count=GREATEST(0,failed_count-$2) WHERE id=$1")) {
       const b = broadcasts.find((x) => x.id === Number(params[0]));
       if (b) {
         b.status = 'pending';
