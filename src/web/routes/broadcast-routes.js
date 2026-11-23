@@ -9,7 +9,7 @@ import {
 } from '../../broadcast/repository.js';
 import { parsePositiveInt } from '../../utils/validation.js';
 
-export async function handleBroadcastRoutes({ method, pathname, auth, pool, parsedUrl, sendJson, readJsonBody }) {
+export async function handleBroadcastRoutes({ req, res, method, pathname, auth, pool, state, parsedUrl, sendJson, readJsonBody }) {
   const respond = (...args) => { sendJson(...args); return true; };
       if (method === 'GET' && pathname === '/api/panel/broadcasts') {
         if (auth.isOwner) {
