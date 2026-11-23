@@ -1,5 +1,5 @@
 // Owner analytics, dashboard, and operational settings API routes.
-export async function handleOwnerDashboardRoutes({ req, res, method, pathname, auth, pool, parsedUrl, sendJson, readJsonBody, getOwnerLinkAnalytics, getAdminDashboardStats, getOperationalHealth, getPaymentReconciliationStats, getPaymentAnalytics, getRecentDeliveryJobs, getAutoDeleteMinutes, listFailedScheduledDeletions, listPaymentMethods, normalizeOwnerStats, setAutoDeleteMinutes, retryFailedDeliveryJob })n  {
+export async function handleOwnerDashboardRoutes({ req, res, method, pathname, auth, pool, parsedUrl, sendJson, readJsonBody, getOwnerLinkAnalytics, getAdminDashboardStats, getOperationalHealth, getPaymentReconciliationStats, getPaymentAnalytics, getRecentDeliveryJobs, getAutoDeleteMinutes, listFailedScheduledDeletions, listPaymentMethods, normalizeOwnerStats, setAutoDeleteMinutes, retryFailedDeliveryJob }) {
   const respond = (...args) => { sendJson(...args); return true; };
         if (method === 'GET' && pathname === '/api/panel/owner/link-analytics') {
           const rows = await getOwnerLinkAnalytics(pool, 100);
