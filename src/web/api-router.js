@@ -100,6 +100,7 @@ import { handleDeliveryBotRoutes } from './routes/delivery-bot-routes.js';
 import { handleOwnerSettingsRoutes } from './routes/owner-settings-routes.js';
 import { handleOwnerBotRoutes } from './routes/owner-bot-routes.js';
 import { handleOwnerDashboardRoutes } from './routes/owner-dashboard-routes.js';
+import { handleOwnerWithdrawalRoutes } from './routes/owner-withdrawal-routes.js';
 import {
   getCreatorSettings,
   setCreatorCheckpointEnabled,
@@ -610,54 +611,8 @@ export async function handlePanelApiRequest(req, res, state, logger) {
       // Owner analytics and dashboard endpoints are handled by the dedicated module.
       if (await handleOwnerDashboardRoutes({ req, res, method, pathname, auth, pool, parsedUrl, sendJson, readJsonBody, getOwnerLinkAnalytics, getAdminDashboardStats, getOperationalHealth, getPaymentReconciliationStats, getPaymentAnalytics, getRecentDeliveryJobs, getAutoDeleteMinutes, listFailedScheduledDeletions, listPaymentMethods, normalizeOwnerStats, setAutoDeleteMinutes, retryFailedDeliveryJob })) return;
 
-      if (method === 'GET' && pathname === '/api/panel/owner/withdrawals') {
-        const statusParam = parsedUrl.searchParams.get('status') || 'pending';
-        const allowed = ['pending', 'paid', 'rejected', 'all'];
-        const status = allowed.includes(statusParam) ? statusParam : 'pending';
-        const data = await listWithdrawalRequests(pool, { status, limit: 50, offset: 0 });
-        return sendJson(res, 200, {
-          status,
-          total: data.total,
-          rows: data.rows.map((w) => ({
-            id: w.id,
-            userId: String(w.user_telegram_id),
-            username: w.username ?? null,
-            firstName: w.first_name ?? null,
-            amountMinor: Number(w.amount_minor),
-            currency: w.currency,
-            upiId: w.upi_id,
-            status: w.status,
-            payoutReference: w.payout_reference,
-            adminNote: w.admin_note,
-            createdAt: w.created_at,
-            processedAt: w.processed_at,
-          })),
-        });
-      }
-
-      const wdActionMatch = pathname.match(/^\/api\/panel\/owner\/withdrawals\/(\d+)\/(approve|reject)$/);
-      if (method === 'POST' && wdActionMatch) {
-        const requestId = Number(wdActionMatch[1]);
-        const action = wdActionMatch[2];
-        const body = await readJsonBody(req);
-        if (action === 'approve') {
-          const result = await approveWithdrawalPaid(pool, requestId, auth.userId, {
-            payoutReference: body.payoutReference ? String(body.payoutReference).trim().slice(0, 80) : null,
-            adminNote: body.adminNote ? String(body.adminNote).trim().slice(0, 200) : null,
-          });
-          if (state.notifyTelegram && result?.request) {
-            void notifyWithdrawalOutcome(state.notifyTelegram, result.request, 'paid', logger).catch(() => {});
-          }
-          return sendJson(res, 200, { ok: true, withdrawal: result.request });
-        }
-        const result = await rejectWithdrawalRefund(pool, requestId, auth.userId, {
-          adminNote: body.adminNote ? String(body.adminNote).trim().slice(0, 200) : null,
-        });
-        if (state.notifyTelegram && result?.request) {
-          void notifyWithdrawalOutcome(state.notifyTelegram, result.request, 'rejected', logger).catch(() => {});
-        }
-        return sendJson(res, 200, { ok: true, withdrawal: result.request });
-      }
+      // Owner withdrawal administration is handled by the dedicated module.
+      if (await handleOwnerWithdrawalRoutes({ req, res, method, pathname, auth, pool, state, sendJson, readJsonBody, listWithdrawalRequests, approveWithdrawalPaid, rejectWithdrawalRefund, notifyWithdrawalOutcome, logger })) return;
 
       if (await handleOwnerPaymentRoutes({ req, res, method, pathname, auth, pool, config, parsedUrl, sendJson, readJsonBody, searchPaymentTransactions, listPaymentTransactions, listPaymentMethods, applyVerifiedPayment, adminIds, disablePaymentMethod, enableFamPay, enableTelegramStars })) return;
 
