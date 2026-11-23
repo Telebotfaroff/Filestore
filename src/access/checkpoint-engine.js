@@ -122,13 +122,13 @@ export async function getCheckpointRequirement(pool, userId, ownerId = null) {
 
   // Rotate only across configured providers; an unverified provider must not
   // block other providers that are ready to serve checkpoint links.
-  const eligible = providers.rows.filter((provider) => provider.verification_mode !== 'unverified');
+  const eligible = providers.rows.filter((provider) => provider.verification_mode === 'provider_api');
   if (!eligible.length) {
     const first = providers.rows[0];
     return {
       required: true,
       blocked: true,
-      reason: 'provider_verification_not_configured',
+      reason: 'provider_verification_not_supported',
       provider: first ? { id: first.id, name: first.name } : null,
       candidates: [],
       step: 0,
@@ -218,7 +218,7 @@ export async function createCheckpointChallenge(pool, config, userId, providerIn
 
 // Must only be called by a provider-specific verification adapter after server-side proof.
 export async function applyVerifiedCheckpoint(pool, token, verifiedBy) {
-  if (!['provider_api', 'signed_callback'].includes(verifiedBy)) throw new Error('Untrusted checkpoint verification method.');
+  if (verifiedBy !== 'provider_api') throw new Error('Untrusted checkpoint verification method.');
   const tokenHash = hashToken(String(token));
   const client = await pool.connect();
   try {
