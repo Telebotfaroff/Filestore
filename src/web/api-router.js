@@ -101,6 +101,7 @@ import { handleOwnerSettingsRoutes } from './routes/owner-settings-routes.js';
 import { handleOwnerBotRoutes } from './routes/owner-bot-routes.js';
 import { handleOwnerDashboardRoutes } from './routes/owner-dashboard-routes.js';
 import { handleOwnerWithdrawalRoutes } from './routes/owner-withdrawal-routes.js';
+import { handleOwnerPremiumRoutes } from './routes/owner-premium-routes.js';
 import {
   getCreatorSettings,
   setCreatorCheckpointEnabled,
@@ -616,24 +617,8 @@ export async function handlePanelApiRequest(req, res, state, logger) {
 
       if (await handleOwnerPaymentRoutes({ req, res, method, pathname, auth, pool, config, parsedUrl, sendJson, readJsonBody, searchPaymentTransactions, listPaymentTransactions, listPaymentMethods, applyVerifiedPayment, adminIds, disablePaymentMethod, enableFamPay, enableTelegramStars })) return;
 
-      if (method === 'POST' && pathname === '/api/panel/owner/premium/grant') {
-        const body = await readJsonBody(req);
-        const userId = parseTelegramUserId(body.userId);
-        const planId = parsePositiveInt(body.planId, 'Plan ID');
-        const days = body.days !== undefined && String(body.days).trim() !== '' ? Number(body.days) : null;
-        if (days !== null && (!Number.isInteger(days) || days < 1 || days > 3650)) {
-          return sendJson(res, 400, { error: 'Override days must be 1–3650.' });
-        }
-        const result = await grantPremiumMembership(pool, userId, planId, days, auth.userId);
-        return sendJson(res, 200, { ok: true, result });
-      }
-
-      if (method === 'POST' && pathname === '/api/panel/owner/premium/revoke') {
-        const body = await readJsonBody(req);
-        const userId = parseTelegramUserId(body.userId);
-        const revokedCount = await revokePremiumMembership(pool, userId, auth.userId);
-        return sendJson(res, 200, { ok: true, revokedCount });
-      }
+      // Owner premium membership routes are handled by the dedicated module.
+      if (await handleOwnerPremiumRoutes({ res, method, pathname, auth, pool, sendJson, readJsonBody, parseTelegramUserId, parsePositiveInt, grantPremiumMembership, revokePremiumMembership })) return;
     }
 
     return sendJson(res, 404, { error: 'API route not found.' });
