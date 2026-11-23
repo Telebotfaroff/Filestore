@@ -1,6 +1,6 @@
 // Guided input prompt callback controller.
 export function registerPromptActions(bot, context) {
-  const { OWNER_ONLY_PROMPTS, isOwnerAdmin, denyAdminOnly, setPrompt, deliveryManager, pool, getCreatorSlotsSnapshot, clearPrompt, safeAnswer, showSlotUnlockScreen, renderView, getActivePrompt, getShortenerDraft, clearShortenerDraft } = context;
+  const { OWNER_ONLY_PROMPTS, isOwnerAdmin, denyAdminOnly, setPrompt, deliveryManager, pool, listStorageChannels, getCreatorSlotsSnapshot, clearPrompt, safeAnswer, showSlotUnlockScreen, renderView, getActivePrompt, getShortenerDraft, clearShortenerDraft } = context;
   // Prompt starters & cancel
   bot.action(/^cc:prompt:([a-z_]+)$/, async (ctx) => {
     const action = ctx.match[1];
