@@ -149,7 +149,8 @@ test('024_web_access_tokens.sql migration defines hashed web_access_tokens table
   const routerSrc = await readFile(path.resolve(__dirname, '../src/web/api-router.js'), 'utf8');
   assert.doesNotMatch(routerSrc, /setting_value|setting_key/);
   assert.match(routerSrc, /SELECT value FROM app_settings WHERE key = 'checkpoint_enabled'/);
-  assert.match(routerSrc, /FROM files WHERE status = 'active' AND uploaded_by = \$1/);
+  const fileRoutesSrc = await readFile(path.resolve(__dirname, '../src/web/routes/file-routes.js'), 'utf8');
+  assert.match(fileRoutesSrc, /FROM files WHERE status = 'active' AND uploaded_by = \$1/);
 });
 
 test('token-repository issues hashed tokens, rotates cleanly, and enforces fail-closed owner role', async () => {
