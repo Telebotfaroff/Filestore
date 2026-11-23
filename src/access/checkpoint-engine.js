@@ -120,23 +120,40 @@ export async function getCheckpointRequirement(pool, userId, ownerId = null) {
     return { required: false, reason: 'checkpoint_active', expiresAt: state.rows[0].checkpoint_expires_at };
   }
 
+  // Rotate only across configured providers; an unverified provider must not
+  // block other providers that are ready to serve checkpoint links.
+  const eligible = providers.rows.filter((provider) => provider.verification_mode !== 'unverified');
+  if (!eligible.length) {
+    const first = providers.rows[0];
+    return {
+      required: true,
+      blocked: true,
+      reason: 'provider_verification_not_configured',
+      provider: first ? { id: first.id, name: first.name } : null,
+      candidates: [],
+      step: 0,
+      total: 0,
+    };
+  }
+
   let nextIndex = 0;
   const lastId = state.rows[0]?.last_provider_id;
   if (lastId !== null && lastId !== undefined) {
-    const index = providers.rows.findIndex((provider) => Number(provider.id) === Number(lastId));
-    if (index >= 0) nextIndex = (index + 1) % providers.rows.length;
-  }
-  const provider = providers.rows[nextIndex];
-  if (provider.verification_mode === 'unverified') {
-    return { required: true, blocked: true, reason: 'provider_verification_not_configured', provider: { id: provider.id, name: provider.name } };
+    const index = eligible.findIndex((provider) => Number(provider.id) === Number(lastId));
+    if (index >= 0) nextIndex = (index + 1) % eligible.length;
   }
   const orderedCandidates = [
-    ...providers.rows.slice(nextIndex),
-    ...providers.rows.slice(0, nextIndex),
-  ].filter((p) => p.verification_mode !== 'unverified');
-  return { required: true, provider, candidates: orderedCandidates, step: nextIndex + 1, total: providers.rowCount };
+    ...eligible.slice(nextIndex),
+    ...eligible.slice(0, nextIndex),
+  ];
+  return {
+    required: true,
+    provider: orderedCandidates[0],
+    candidates: orderedCandidates,
+    step: nextIndex + 1,
+    total: eligible.length,
+  };
 }
-
 export async function createCheckpointSession(pool, userId, providerId, destinationUrl, customToken = null) {
   const destination = validHttpsUrl(destinationUrl);
   const token = customToken ?? randomBytes(32).toString('base64url');
