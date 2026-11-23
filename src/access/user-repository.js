@@ -15,4 +15,5 @@ export async function upsertTelegramUser(pool, user) {
       [user.id, JSON.stringify({ username: user.username ?? null })],
     );
   }
+  return { isNewUser: !existing.rowCount };
 }

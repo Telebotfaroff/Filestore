@@ -282,7 +282,17 @@ export async function handleStarsSuccessfulPayment(pool, ctx, token, logger, adm
     } else if (fulfilled.type === 'paid_batch') {
       await ctx.reply(`✅ Telegram Stars payment successful!\nAll ${fulfilled.fileCount ?? ''} files in the batch are unlocked. Open the batch again or use /batch_get <code> to receive them.`.trim());
     } else if (fulfilled.type === 'bot_slot') {
-      await ctx.reply(`✅ Telegram Stars payment successful!\n🔓 +1 Extra Delivery Bot slot unlocked! Open the Web Control Panel (/token) -> Setup & Delivery Bots to connect your next bot.`);
+      await ctx.reply(
+        '✅ Telegram Stars payment successful!\n🔓 +1 Extra Delivery Bot slot unlocked! Tap below to connect your next Delivery Bot.',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '➕ Add Delivery Bot Now', callback_data: 'cc:prompt:delivery_bot_add' }],
+              [{ text: '🤖 My Delivery Bots', callback_data: 'cc:bots' }],
+            ],
+          },
+        },
+      );
     } else {
       await ctx.reply('✅ Telegram Stars payment successful! Your file is now unlocked. Use /get <file_code> or open your share link again to receive it.');
     }

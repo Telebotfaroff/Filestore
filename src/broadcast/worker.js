@@ -70,6 +70,7 @@ export function createCreatorBroadcastWorker(telegram,pool,logger,deliveryBotId,
    const safeErr=sanitizeError(e?.message);
    logger.error({broadcastId:job.id,error:safeErr},'Creator broadcast worker failed');
    await pool.query("UPDATE creator_broadcasts SET status='pending',last_error=$2 WHERE id=$1 AND status='processing'",[job.id,safeErr]).catch(()=>{});
+   return false;
   }
   return true;
  }

@@ -35,7 +35,9 @@ export function createMainBot(config, logger, pool) {
     }
     if (ctx.from?.id) {
       try {
-        await upsertTelegramUser(pool, ctx.from);
+        const res = await upsertTelegramUser(pool, ctx.from);
+        ctx.state = ctx.state ?? {};
+        ctx.state.isNewTelegramUser = Boolean(res?.isNewUser);
       } catch (error) {
         logger?.warn?.({ userId: ctx.from.id, error: error.message }, 'Main Bot user upsert failed');
       }

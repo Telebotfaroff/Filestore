@@ -19,6 +19,8 @@ const HTML = { parse_mode: 'HTML' };
 
 function formatLedgerType(entryType) {
   if (entryType === 'sale_credit') return '📈 Sale';
+  if (entryType === 'referral_reward') return '🎁 Referral';
+  if (entryType === 'slot_purchase') return '🔓 Bot Slot';
   if (entryType === 'withdrawal_hold') return '⏳ Hold';
   if (entryType === 'withdrawal_paid') return '✅ Paid';
   if (entryType === 'withdrawal_refund') return '↩ Refund';
@@ -119,10 +121,13 @@ export function registerWalletUi(bot, config, logger, pool, hooks = {}) {
       keyboard[0].push({ text: '💸 Withdraw Funds', callback_data: 'cc:me_wd' });
     }
     keyboard.push([
+      { text: '🎁 Refer & Earn', callback_data: 'cc:referral' },
       { text: '📜 Full History', callback_data: 'cc:me_hist' },
-      { text: '↻ Refresh', callback_data: 'cc:me' },
     ]);
-    keyboard.push([{ text: '← Main Menu', callback_data: 'cc:home' }]);
+    keyboard.push([
+      { text: '↻ Refresh', callback_data: 'cc:me' },
+      { text: '← Main Menu', callback_data: 'cc:home' },
+    ]);
 
     return renderView(ctx, lines.join('\n'), { inline_keyboard: keyboard }, edit, true, HTML);
   }

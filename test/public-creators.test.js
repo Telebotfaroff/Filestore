@@ -39,12 +39,12 @@ function findAction(bot, data) {
   return null;
 }
 
-test('buildPublicMenuKeyboard stays within 64-byte callback_data limit and focuses creators on link creation plus Web Setup (/token)', () => {
+test('buildPublicMenuKeyboard stays within 64-byte callback_data limit and exposes creator links, Delivery Bot, and Web Setup (/token)', () => {
   const kb = buildPublicMenuKeyboard();
   const buttons = kb.inline_keyboard.flat();
   const forbidden = new Set([
     'cc:dash', 'cc:health', 'cc:plans', 'cc:payments', 'cc:autodel', 'cc:wdq:pending:0', 'cc:jobs',
-    'cc:storage', 'cc:bots', 'cc:short', 'cc:fsub', 'cc:cplans', 'cc:me', 'cc:broadcast',
+    'cc:storage', 'cc:short', 'cc:fsub', 'cc:cplans', 'cc:me', 'cc:broadcast',
   ]);
   for (const btn of buttons) {
     assert.ok(!forbidden.has(btn.callback_data), `Public menu must not expose setup/owner callback ${btn.callback_data}`);
@@ -55,6 +55,8 @@ test('buildPublicMenuKeyboard stays within 64-byte callback_data limit and focus
   assert.ok(buttons.some((b) => b.callback_data === 'cc:cmd_batch'));
   assert.ok(buttons.some((b) => b.callback_data === 'cc:plink'));
   assert.ok(buttons.some((b) => b.callback_data === 'cc:links:0'));
+  assert.ok(buttons.some((b) => b.callback_data === 'cc:bots'));
+  assert.ok(buttons.some((b) => b.callback_data === 'cc:referral'));
   assert.ok(buttons.some((b) => b.callback_data === 'cc:webtok'));
   assert.ok(buttons.some((b) => b.callback_data === 'cc:uguide:overview'));
 });
@@ -390,4 +392,208 @@ test('Creator Hub renders rich HTML cards safely and /guide opens interactive mu
   }
   clearCache();
 });
+
+test('Main Bot /start clone & My Delivery Bot enforce creator bot slots, support in-bot slot unlock, and bot token replacement', async () => {
+  clearCache();
+  const creatorId = 8080;
+  let extraBotSlots = 0;
+  let walletAvailableMinor = 15000; // ₹150.00 INR
+  const creatorBots = [];
+  const replacedCalls = [];
+
+  const handleQuery = async (sql, params = []) => {
+    const s = String(sql).replace(/\s+/g, ' ').trim();
+    if (s === 'BEGIN' || s === 'COMMIT' || s === 'ROLLBACK') return { rows: [], rowCount: 0 };
+    if (s.includes('INSERT INTO users')) return { rows: [], rowCount: 1 };
+    if (s.includes('FROM app_settings WHERE key = $1')) {
+      return { rows: [{ value: { priceMinor: 9900, currency: 'INR', starsPrice: null } }], rowCount: 1 };
+    }
+    if (s.includes('SELECT extra_bot_slots FROM user_creator_settings')) {
+      return { rows: [{ extra_bot_slots: extraBotSlots }], rowCount: 1 };
+    }
+    if (s.includes('SELECT COUNT(*)::int AS used FROM delivery_bots WHERE owner_telegram_id = $1')) {
+      return { rows: [{ used: creatorBots.length }], rowCount: 1 };
+    }
+    if (s.includes('SELECT id, telegram_bot_id, username, role, priority, is_enabled, runtime_status, last_health_at, last_error FROM delivery_bots WHERE id = $1 AND owner_telegram_id = $2')) {
+      const found = creatorBots.find((b) => Number(b.id) === Number(params[0]) && Number(params[1]) === creatorId);
+      return { rows: found ? [found] : [], rowCount: found ? 1 : 0 };
+    }
+    if (s.includes('FROM storage_channels')) {
+      return { rows: [{ id: 1, telegram_chat_id: -10012345, title: 'Creator Vault', is_enabled: true }], rowCount: 1 };
+    }
+    if (s.includes('FROM creator_wallets') && s.includes('FOR UPDATE')) {
+      return { rows: [{ available_minor: walletAvailableMinor }], rowCount: 1 };
+    }
+    if (s.includes('FROM creator_wallets')) {
+      return { rows: [{ currency: 'INR', available_minor: walletAvailableMinor, locked_minor: 0, total_earned_minor: 15000, total_withdrawn_minor: 0 }], rowCount: 1 };
+    }
+    if (s.includes('UPDATE creator_wallets SET available_minor = available_minor - $2')) {
+      const debit = Number(params[1]);
+      if (walletAvailableMinor < debit) return { rows: [], rowCount: 0 };
+      walletAvailableMinor -= debit;
+      return { rows: [{ available_minor: walletAvailableMinor }], rowCount: 1 };
+    }
+    if (s.includes('INSERT INTO user_creator_settings (user_telegram_id, extra_bot_slots)')) {
+      extraBotSlots += 1;
+      return { rows: [{ extra_bot_slots: extraBotSlots }], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 0 };
+  };
+
+  const pool = {
+    query: handleQuery,
+    connect: async () => ({ query: handleQuery, release() {} }),
+  };
+
+  const deliveryManager = {
+    list: async (ownerId) => (Number(ownerId) === creatorId ? [...creatorBots] : []),
+    addToken: async (token, by, ownerId) => {
+      assert.equal(Number(ownerId), creatorId);
+      const totalAllowed = 1 + extraBotSlots;
+      if (creatorBots.length >= totalAllowed) {
+        throw Object.assign(new Error('Limit reached'), { code: 'BOT_SLOT_LIMIT_REACHED', statusCode: 402 });
+      }
+      const rec = {
+        id: creatorBots.length + 10,
+        telegram_bot_id: 9000 + creatorBots.length + 1,
+        username: `CreatorClone${creatorBots.length + 1}Bot`,
+        role: creatorBots.length === 0 ? 'primary' : 'backup',
+        priority: 10,
+        is_enabled: true,
+        runtime_status: 'running',
+        last_health_at: null,
+        last_error: null,
+      };
+      creatorBots.push(rec);
+      return rec;
+    },
+    replaceToken: async (botId, rawToken, by, ownerId) => {
+      replacedCalls.push({ botId, rawToken, by, ownerId });
+      const target = creatorBots.find((b) => b.id === Number(botId));
+      target.username = 'ReplacedCloneBot';
+      return { bot: { ...target }, checks: [{ status: 'ok', channel: 'Creator Vault' }] };
+    },
+  };
+
+  const bot = createFakeBot();
+  registerControlCenter(bot, { adminIds: [1], deliveryManager }, { warn() {}, error() {}, info() {} }, pool);
+  const startCmd = bot.commands.find((c) => c.name === 'start')?.handler;
+  const runTextHandlers = async (ctx) => {
+    const handlers = bot.onHandlers.get('text') ?? [];
+    let idx = 0;
+    const next = async () => {
+      if (idx >= handlers.length) return undefined;
+      return handlers[idx++](ctx, next);
+    };
+    return next();
+  };
+
+  // 1. /start clone with 0/1 free slot shows clone onboarding & Add My Delivery Bot
+  let cloneReply;
+  await startCmd({
+    from: { id: creatorId, first_name: 'Riya' },
+    startPayload: 'clone',
+    message: { text: '/start clone' },
+    reply: async (text, options) => { cloneReply = { text, options }; },
+  });
+  assert.match(cloneReply.text, /Create Your Own Delivery Bot/);
+  assert.match(cloneReply.text, /0 \/ 1/);
+  const cloneButtons = cloneReply.options.reply_markup.inline_keyboard.flat();
+  assert.ok(cloneButtons.some((b) => b.callback_data === 'cc:prompt:delivery_bot_add'));
+
+  // 2. Prompt + submit first bot fills free slot (1/1)
+  const promptAddAction = findAction(bot, 'cc:prompt:delivery_bot_add');
+  let promptView;
+  await promptAddAction.handler({
+    from: { id: creatorId },
+    match: promptAddAction.match,
+    answerCbQuery: async () => {},
+    editMessageText: async (text, options) => { promptView = { text, options }; },
+  });
+  assert.match(promptView.text, /Slot: 0\/1 used/);
+
+  let addedReply;
+  await runTextHandlers({
+    from: { id: creatorId },
+    message: { text: '111111:FIRST_BOT_TOKEN_123456' },
+    deleteMessage: async () => {},
+    reply: async (text, options) => { addedReply = { text, options }; },
+  });
+  assert.match(addedReply.text, /Delivery Bot Connected/);
+  assert.match(addedReply.text, /@CreatorClone1Bot/);
+  assert.equal(creatorBots.length, 1);
+
+  // 3. /start clone & cc:bots & cc:prompt:delivery_bot_add now respect 1/1 full slot -> show Unlock Slot & Change Bot
+  await startCmd({
+    from: { id: creatorId, first_name: 'Riya' },
+    startPayload: 'clone',
+    message: { text: '/start clone' },
+    reply: async (text, options) => { cloneReply = { text, options }; },
+  });
+  assert.match(cloneReply.text, /1 \/ 1/);
+  assert.match(cloneReply.text, /Slot Limit Reached/);
+  const fullButtons = cloneReply.options.reply_markup.inline_keyboard.flat();
+  assert.ok(!fullButtons.some((b) => b.callback_data === 'cc:prompt:delivery_bot_add'));
+  assert.ok(fullButtons.some((b) => b.callback_data === 'cc:slot_unlock'));
+  assert.ok(fullButtons.some((b) => b.callback_data === 'cc:bot_replace:10'));
+
+  let blockedPromptView;
+  await promptAddAction.handler({
+    from: { id: creatorId },
+    match: promptAddAction.match,
+    answerCbQuery: async () => {},
+    editMessageText: async (text, options) => { blockedPromptView = { text, options }; },
+  });
+  assert.match(blockedPromptView.text, /Slot Limit Reached/);
+  assert.ok(blockedPromptView.options.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === 'cc:slot_pay_wallet'));
+
+  // 4. Replace existing bot via cc:bot_replace:10 without using another slot
+  const replaceAction = findAction(bot, 'cc:bot_replace:10');
+  let replacePrompt;
+  await replaceAction.handler({
+    from: { id: creatorId },
+    match: replaceAction.match,
+    answerCbQuery: async () => {},
+    editMessageText: async (text, options) => { replacePrompt = { text, options }; },
+  });
+  assert.match(replacePrompt.text, /Replace Delivery Bot @CreatorClone1Bot/);
+
+  let replaceReply;
+  await runTextHandlers({
+    from: { id: creatorId },
+    message: { text: '222222:REPLACEMENT_TOKEN_12345' },
+    deleteMessage: async () => {},
+    reply: async (text, options) => { replaceReply = { text, options }; },
+  });
+  assert.match(replaceReply.text, /Delivery Bot Replaced/);
+  assert.match(replaceReply.text, /@ReplacedCloneBot/);
+  assert.equal(replacedCalls.length, 1);
+  assert.equal(creatorBots.length, 1);
+
+  // 5. Unlock +1 slot from Wallet unlocks 2nd slot (1/2 used -> 1 available) and allows adding 2nd bot
+  const walletPayAction = findAction(bot, 'cc:slot_pay_wallet');
+  let unlockedView;
+  await walletPayAction.handler({
+    from: { id: creatorId },
+    answerCbQuery: async () => {},
+    editMessageText: async (text, options) => { unlockedView = { text, options }; },
+  });
+  assert.match(unlockedView.text, /\+1 Delivery Bot Slot Unlocked/);
+  assert.equal(extraBotSlots, 1);
+  assert.equal(walletAvailableMinor, 5100);
+  assert.ok(unlockedView.options.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === 'cc:prompt:delivery_bot_add'));
+
+  const botsAction = findAction(bot, 'cc:bots');
+  let botsAfterUnlock;
+  await botsAction.handler({
+    from: { id: creatorId },
+    answerCbQuery: async () => {},
+    editMessageText: async (text, options) => { botsAfterUnlock = { text, options }; },
+  });
+  assert.match(botsAfterUnlock.text, /1\/2 used \(1 available/);
+  assert.ok(botsAfterUnlock.options.reply_markup.inline_keyboard.flat().some((b) => b.callback_data === 'cc:prompt:delivery_bot_add'));
+
+  clearCache();
+});
+
 

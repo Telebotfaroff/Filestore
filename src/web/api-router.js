@@ -1,3 +1,4 @@
+import { gzipSync } from 'node:zlib';
 import { getOwnerLinkAnalytics } from './link-analytics-repository.js';
 import { listPanelUsers, listPanelPremiumMembers } from './user-management-repository.js';
 import {
@@ -5,7 +6,7 @@ import {
   getDeliveryBotDetailsForOwner,
   updateDeliveryBotForOwner,
 } from './owner-bots-repository.js';
-import { cacheDeletePrefix } from '../utils/cache.js';
+import { cached, cacheDeletePrefix } from '../utils/cache.js';
 import {
   issueOrRegenerateAccessToken,
   verifyAccessToken,
@@ -86,6 +87,7 @@ import {
   createCreatorBroadcast,
   getCreatorBroadcast,
   listCreatorBroadcasts,
+  listAllBroadcastsForOwner,
   retryCreatorBroadcast,
   setCreatorBroadcastStatus,
 } from '../broadcast/repository.js';
@@ -100,6 +102,16 @@ import {
   rejectWithdrawalRefund,
   MIN_WITHDRAWAL_INR_MINOR,
 } from '../wallet/repository.js';
+import {
+  getPlatformFeeSettings,
+  setPlatformFeeSettings,
+  getOwnerPlatformFeeSummary,
+} from '../wallet/fee-repository.js';
+import {
+  getUserReferralSummary,
+  listOwnerReferrals,
+  setReferralSettings,
+} from '../wallet/referral-repository.js';
 import {
   notifyAdminsWithdrawalRequest,
   notifyWithdrawalOutcome,
@@ -203,13 +215,29 @@ function clearAuthFailures(ip) {
 }
 
 function sendJson(res, statusCode, payload) {
-  res.writeHead(statusCode, {
+  const raw = Buffer.from(JSON.stringify(payload), 'utf8');
+  const baseHeaders = {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
+    'Vary': 'Accept-Encoding',
+  };
+  if (raw.length >= 1024 && String(res.__acceptEncoding || '').toLowerCase().includes('gzip')) {
+    const compressed = gzipSync(raw, { level: 5 });
+    res.writeHead(statusCode, {
+      ...baseHeaders,
+      'Content-Encoding': 'gzip',
+      'Content-Length': String(compressed.length),
+    });
+    res.end(compressed);
+    return;
+  }
+  res.writeHead(statusCode, {
+    ...baseHeaders,
+    'Content-Length': String(raw.length),
   });
-  res.end(JSON.stringify(payload));
+  res.end(raw);
 }
 
 function readJsonBody(req, maxBytes = MAX_BODY_BYTES) {
@@ -248,10 +276,12 @@ function extractBearerToken(req) {
 }
 
 async function getGlobalCheckpointEnabled(pool) {
-  const { rows } = await pool.query(
-    "SELECT value FROM app_settings WHERE key = 'checkpoint_enabled' LIMIT 1",
-  );
-  return rows[0]?.value === true || rows[0]?.value === 'true';
+  return cached('panel:checkpoint-enabled', 15_000, async () => {
+    const { rows } = await pool.query(
+      "SELECT value FROM app_settings WHERE key = 'checkpoint_enabled' LIMIT 1",
+    );
+    return rows[0]?.value === true || rows[0]?.value === 'true';
+  });
 }
 
 async function setGlobalCheckpointEnabled(pool, enabled, actorId) {
@@ -261,6 +291,7 @@ async function setGlobalCheckpointEnabled(pool, enabled, actorId) {
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
     [enabled ? 'true' : 'false', actorId],
   );
+  cacheDeletePrefix('panel:checkpoint-enabled');
 }
 
 function normalizeOwnerStats(raw = {}) {
@@ -323,6 +354,7 @@ function serializeOwnerBotRow(b) {
 }
 
 export async function handlePanelApiRequest(req, res, state, logger) {
+  res.__acceptEncoding = String(req.headers['accept-encoding'] || '');
   const parsedUrl = new URL(req.url || '/', 'http://localhost');
   const pathname = parsedUrl.pathname;
   const method = (req.method || 'GET').toUpperCase();
@@ -352,7 +384,7 @@ export async function handlePanelApiRequest(req, res, state, logger) {
     try {
       const body = await readJsonBody(req);
       const token = String(body.token || extractBearerToken(req) || '').trim();
-      const auth = await verifyAccessToken(pool, token, adminIds);
+      const auth = await verifyAccessToken(pool, token, adminIds, { bypassCache: true });
       if (!auth) {
         recordAuthFailure(ip);
         return sendJson(res, 401, { error: 'Invalid or revoked access token. Get a valid token from the bot with /token.' });
@@ -421,6 +453,17 @@ export async function handlePanelApiRequest(req, res, state, logger) {
         walletSummary,
         creatorPlans,
         deliveryBotUsername,
+        filesCountRes,
+        opensSeriesRes,
+        opensTotalRes,
+        earningsSeriesRes,
+        recentFilesRes,
+        checkpointEnabled,
+        forceSubEnabled,
+        ownBotsRows,
+        ownerRawDash,
+        ownerPendingWds,
+        ownerBotTotalRes,
       ] = await Promise.all([
         listShareLinks(pool, { limit: 6, offset: 0, ownerId: ownerScope }),
         listPaidFileLinks(pool, 100, ownerScope),
@@ -431,13 +474,9 @@ export async function handlePanelApiRequest(req, res, state, logger) {
         getCreatorWalletSummary(pool, auth.userId),
         listPremiumPlans(pool, auth.isOwner ? null : auth.userId),
         getShareableBotUsername(pool, ownerScope),
-      ]);
-
-      const filesCountRes = ownerScope === null
-        ? await pool.query("SELECT COUNT(*)::int AS total FROM files WHERE status = 'active'")
-        : await pool.query("SELECT COUNT(*)::int AS total FROM files WHERE status = 'active' AND uploaded_by = $1", [ownerScope]);
-
-      const [opensSeriesRes, opensTotalRes, earningsSeriesRes, recentFilesRes] = await Promise.all([
+        ownerScope === null
+          ? pool.query("SELECT COUNT(*)::int AS total FROM files WHERE status = 'active'")
+          : pool.query("SELECT COUNT(*)::int AS total FROM files WHERE status = 'active' AND uploaded_by = $1", [ownerScope]),
         ownerScope === null
           ? pool.query(
               `SELECT TO_CHAR(DATE(opened_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day,
@@ -497,6 +536,17 @@ export async function handlePanelApiRequest(req, res, state, logger) {
           ? pool.query("SELECT file_code, file_name, file_size, created_at FROM files WHERE status = 'active' ORDER BY created_at DESC LIMIT 4")
           : pool.query("SELECT file_code, file_name, file_size, created_at FROM files WHERE status = 'active' AND uploaded_by = $1 ORDER BY created_at DESC LIMIT 4", [ownerScope])
         ).catch(() => ({ rows: [] })),
+        auth.isOwner
+          ? getGlobalCheckpointEnabled(pool)
+          : getCreatorSettings(pool, auth.userId).then((s) => Boolean(s.checkpoint_enabled)),
+        getForceSubGlobal(pool, ownerScope),
+        (ownerScope === null
+          ? pool.query('SELECT id, username, role, is_enabled, runtime_status FROM delivery_bots WHERE owner_telegram_id IS NULL ORDER BY priority ASC, id ASC')
+          : pool.query('SELECT id, username, role, is_enabled, runtime_status FROM delivery_bots WHERE owner_telegram_id = $1 ORDER BY priority ASC, id ASC', [ownerScope])
+        ).catch(() => ({ rows: [] })),
+        auth.isOwner ? getAdminDashboardStats(pool) : Promise.resolve(null),
+        auth.isOwner ? listWithdrawalRequests(pool, { status: 'pending', limit: 1, offset: 0 }) : Promise.resolve(null),
+        auth.isOwner ? pool.query('SELECT COUNT(*)::int AS total FROM delivery_bots') : Promise.resolve(null),
       ]);
 
       const opensByDay = new Map((opensSeriesRes.rows || []).map((r) => [r.day, Number(r.opens || 0)]));
@@ -549,33 +599,19 @@ export async function handlePanelApiRequest(req, res, state, logger) {
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         .slice(0, 5);
 
-      const checkpointEnabled = auth.isOwner
-        ? await getGlobalCheckpointEnabled(pool)
-        : Boolean((await getCreatorSettings(pool, auth.userId)).checkpoint_enabled);
-
-      const forceSubEnabled = await getForceSubGlobal(pool, ownerScope);
-
-      const ownBotsRows = ownerScope === null
-        ? await pool.query('SELECT id, username, role, is_enabled, runtime_status FROM delivery_bots WHERE owner_telegram_id IS NULL ORDER BY priority ASC, id ASC').catch(() => ({ rows: [] }))
-        : await pool.query('SELECT id, username, role, is_enabled, runtime_status FROM delivery_bots WHERE owner_telegram_id = $1 ORDER BY priority ASC, id ASC', [ownerScope]).catch(() => ({ rows: [] }));
       const ownBots = ownBotsRows.rows || [];
       const primaryOwnBot = ownBots.find((b) => b.role === 'primary' && b.is_enabled) || ownBots.find((b) => b.is_enabled) || null;
 
       let ownerSummary = null;
-      if (auth.isOwner) {
-        const [rawDash, pendingWds, botTotalRes] = await Promise.all([
-          getAdminDashboardStats(pool),
-          listWithdrawalRequests(pool, { status: 'pending', limit: 1, offset: 0 }),
-          pool.query('SELECT COUNT(*)::int AS total FROM delivery_bots'),
-        ]);
-        const dash = normalizeOwnerStats(rawDash);
+      if (auth.isOwner && ownerRawDash) {
+        const dash = normalizeOwnerStats(ownerRawDash);
         ownerSummary = {
           trackedUsers: dash.trackedUsers,
           activePremium: dash.activePremium,
           paymentsApplied: dash.paymentsApplied,
           revenueByCurrency: dash.revenueByCurrency,
-          pendingWithdrawals: pendingWds.total,
-          totalDeliveryBots: Number(botTotalRes.rows[0]?.total ?? 0),
+          pendingWithdrawals: ownerPendingWds?.total ?? 0,
+          totalDeliveryBots: Number(ownerBotTotalRes?.rows?.[0]?.total ?? 0),
         };
       }
 
@@ -630,15 +666,17 @@ export async function handlePanelApiRequest(req, res, state, logger) {
 
     // ── Links (Free Share Links + Paid File Links + Paid Batch Links) ───
     if (method === 'GET' && pathname === '/api/panel/links') {
-      const [shareRes, paidFiles, paidBatches, botUsername] = await Promise.all([
+      const [shareRes, paidFiles, paidBatches, botUsername, platformFees] = await Promise.all([
         listShareLinks(pool, { limit: 100, offset: 0, ownerId: ownerScope }),
         listPaidFileLinks(pool, 100, ownerScope),
         listPaidBatchLinks(pool, 100, ownerScope),
         getShareableBotUsername(pool, ownerScope),
+        getPlatformFeeSettings(pool).catch(() => null),
       ]);
 
       return sendJson(res, 200, {
         deliveryBotUsername: botUsername ?? null,
+        platformFees,
         shareLinks: shareRes.rows.map((r) => ({
           id: r.id,
           kind: 'share',
@@ -1143,14 +1181,16 @@ export async function handlePanelApiRequest(req, res, state, logger) {
     // ── Creator Premium Plans ───────────────────────────────────────────
     if (method === 'GET' && pathname === '/api/panel/plans') {
       const scope = auth.isOwner ? null : auth.userId;
-      const [plans, botUsername, starsCfg] = await Promise.all([
+      const [plans, botUsername, starsCfg, platformFees] = await Promise.all([
         listPremiumPlans(pool, scope),
         getShareableBotUsername(pool, scope),
         loadStarsConfig(pool).catch(() => ({ isEnabled: false, starsPrices: {} })),
+        getPlatformFeeSettings(pool).catch(() => null),
       ]);
       return sendJson(res, 200, {
         scope: auth.isOwner ? 'platform' : 'creator',
         starsEnabled: Boolean(starsCfg.isEnabled),
+        platformFees,
         checkoutLink: !auth.isOwner && botUsername ? `https://t.me/${botUsername}?start=cprem_${auth.userId}` : null,
         plans: plans.map((p) => ({
           id: p.id,
@@ -1260,7 +1300,11 @@ export async function handlePanelApiRequest(req, res, state, logger) {
 
     // ── Creator Wallet & Withdrawals ────────────────────────────────────
     if (method === 'GET' && pathname === '/api/panel/wallet') {
-      const summary = await getCreatorWalletSummary(pool, auth.userId);
+      const [summary, referral, platformFees] = await Promise.all([
+        getCreatorWalletSummary(pool, auth.userId),
+        getUserReferralSummary(pool, auth.userId, state.botUsername ?? null).catch(() => null),
+        getPlatformFeeSettings(pool).catch(() => null),
+      ]);
       const inr = summary.inrWallet || {};
       return sendJson(res, 200, {
         wallet: {
@@ -1271,6 +1315,8 @@ export async function handlePanelApiRequest(req, res, state, logger) {
           upiId: summary.settings?.payout_upi_id ?? null,
         },
         minWithdrawalMinor: MIN_WITHDRAWAL_INR_MINOR,
+        referral,
+        platformFees,
         recentLedger: summary.recentLedger.map((e) => ({
           id: e.id,
           entryType: e.entry_type,
@@ -1605,8 +1651,54 @@ export async function handlePanelApiRequest(req, res, state, logger) {
       }
     }
 
-    // ── Creator Broadcasts (Website Compose & Campaign Management) ────────
+    // ── Creator & Owner Broadcasts (Website Compose & Campaign Management) ──
     if (method === 'GET' && pathname === '/api/panel/broadcasts') {
+      if (auth.isOwner) {
+        const [botsRes, campaigns] = await Promise.all([
+          pool.query(
+            `SELECT d.id, d.username, d.role, d.is_enabled, d.runtime_status, d.owner_telegram_id,
+                    u.username AS owner_username, u.first_name AS owner_first_name,
+                    COALESCE((SELECT COUNT(*)::int FROM delivery_bot_user_activity a WHERE a.delivery_bot_id = d.id), 0) AS total_users
+             FROM delivery_bots d
+             LEFT JOIN users u ON u.telegram_id = d.owner_telegram_id
+             WHERE d.is_enabled = TRUE
+             ORDER BY (d.owner_telegram_id IS NULL) ASC, total_users DESC, d.priority ASC, d.id ASC`,
+          ).catch(() => ({ rows: [] })),
+          listAllBroadcastsForOwner(pool, 30).catch(() => []),
+        ]);
+        return sendJson(res, 200, {
+          isOwnerMode: true,
+          bots: (botsRes.rows || []).map((b) => ({
+            id: Number(b.id),
+            username: b.username,
+            role: b.role,
+            isEnabled: Boolean(b.is_enabled),
+            runtimeStatus: b.runtime_status,
+            isPlatform: b.owner_telegram_id === null || b.owner_telegram_id === undefined,
+            ownerId: b.owner_telegram_id == null ? null : String(b.owner_telegram_id),
+            ownerUsername: b.owner_username ?? null,
+            ownerFirstName: b.owner_first_name ?? null,
+            totalUsers: Number(b.total_users || 0),
+          })),
+          campaigns: (campaigns || []).map((c) => ({
+            id: Number(c.id),
+            deliveryBotId: Number(c.delivery_bot_id),
+            botUsername: c.bot_username ?? null,
+            ownerId: c.owner_telegram_id == null ? null : String(c.owner_telegram_id),
+            ownerUsername: c.owner_username ?? null,
+            ownerFirstName: c.owner_first_name ?? null,
+            isPlatformBot: c.bot_owner_telegram_id === null || c.bot_owner_telegram_id === undefined,
+            status: c.status,
+            totalRecipients: Number(c.total_recipients || 0),
+            sentCount: Number(c.sent_count || 0),
+            failedCount: Number(c.failed_count || 0),
+            lastError: c.last_error ?? null,
+            createdAt: c.created_at,
+            completedAt: c.completed_at,
+          })),
+        });
+      }
+
       const creatorTarget = auth.userId;
       const [botsRes, campaigns] = await Promise.all([
         pool.query(
@@ -1619,18 +1711,23 @@ export async function handlePanelApiRequest(req, res, state, logger) {
         ).catch(() => ({ rows: [] })),
         listCreatorBroadcasts(pool, creatorTarget, 20).catch(() => []),
       ]);
+      const botNameById = new Map((botsRes.rows || []).map((b) => [Number(b.id), b.username]));
       return sendJson(res, 200, {
+        isOwnerMode: false,
         bots: (botsRes.rows || []).map((b) => ({
           id: Number(b.id),
           username: b.username,
           role: b.role,
           isEnabled: Boolean(b.is_enabled),
           runtimeStatus: b.runtime_status,
+          isPlatform: false,
+          ownerId: String(creatorTarget),
           totalUsers: Number(b.total_users || 0),
         })),
         campaigns: (campaigns || []).map((c) => ({
           id: Number(c.id),
           deliveryBotId: Number(c.delivery_bot_id),
+          botUsername: botNameById.get(Number(c.delivery_bot_id)) ?? null,
           status: c.status,
           totalRecipients: Number(c.total_recipients || 0),
           sentCount: Number(c.sent_count || 0),
@@ -1667,12 +1764,33 @@ export async function handlePanelApiRequest(req, res, state, logger) {
         }
         buttons.push([{ text: btnText, url: parsedBtnUrl.toString() }]);
       }
+
+      let targetOwnerId = auth.userId;
+      let allowPlatformBot = false;
+      if (auth.isOwner) {
+        const botLookup = await pool.query(
+          'SELECT id, owner_telegram_id, is_enabled FROM delivery_bots WHERE id = $1 LIMIT 1',
+          [deliveryBotId],
+        );
+        const targetBot = botLookup.rows[0];
+        if (!targetBot || !targetBot.is_enabled) {
+          return sendJson(res, 404, { error: 'Selected delivery bot not found or disabled.' });
+        }
+        if (targetBot.owner_telegram_id === null || targetBot.owner_telegram_id === undefined) {
+          allowPlatformBot = true;
+          targetOwnerId = auth.userId;
+        } else {
+          targetOwnerId = Number(targetBot.owner_telegram_id);
+        }
+      }
+
       const created = await createCreatorBroadcast(pool, {
-        ownerTelegramId: auth.userId,
+        ownerTelegramId: targetOwnerId,
         deliveryBotId,
         createdBy: auth.userId,
         messageText,
         buttons,
+        allowPlatformBot,
       });
       return sendJson(res, 201, { ok: true, id: created.id, totalRecipients: created.totalRecipients });
     }
@@ -1681,14 +1799,15 @@ export async function handlePanelApiRequest(req, res, state, logger) {
     if (method === 'POST' && broadcastActionMatch) {
       const campaignId = Number(broadcastActionMatch[1]);
       const action = broadcastActionMatch[2];
-      const existing = await getCreatorBroadcast(pool, auth.userId, campaignId);
+      const broadcastOwnerScope = auth.isOwner ? null : auth.userId;
+      const existing = await getCreatorBroadcast(pool, broadcastOwnerScope, campaignId);
       if (!existing) return sendJson(res, 404, { error: 'Broadcast campaign not found.' });
       if (action === 'retry') {
-        const retried = await retryCreatorBroadcast(pool, auth.userId, campaignId);
+        const retried = await retryCreatorBroadcast(pool, broadcastOwnerScope, campaignId);
         return sendJson(res, 200, { ok: true, retriedCount: retried });
       }
       const targetStatus = action === 'pause' ? 'paused' : action === 'resume' ? 'pending' : 'cancelled';
-      const updated = await setCreatorBroadcastStatus(pool, auth.userId, campaignId, targetStatus);
+      const updated = await setCreatorBroadcastStatus(pool, broadcastOwnerScope, campaignId, targetStatus);
       if (!updated) return sendJson(res, 400, { error: 'Broadcast state could not be updated.' });
       return sendJson(res, 200, { ok: true, status: targetStatus });
     }
@@ -1739,6 +1858,47 @@ export async function handlePanelApiRequest(req, res, state, logger) {
               ? null
               : Number(body.starsPrice));
         const settings = await setBotSlotSettings(pool, { priceMinor, starsPrice }, auth.userId);
+        return sendJson(res, 200, { ok: true, settings });
+      }
+
+      if (method === 'GET' && pathname === '/api/panel/owner/referrals') {
+        const data = await listOwnerReferrals(pool, 50);
+        return sendJson(res, 200, data);
+      }
+
+      if (method === 'POST' && pathname === '/api/panel/owner/referral-settings') {
+        const body = await readJsonBody(req);
+        const enabled = body.enabled === undefined
+          ? undefined
+          : (typeof body.enabled === 'string' ? body.enabled === 'true' : Boolean(body.enabled));
+        const rewardMinor = body.rewardMinor !== undefined && body.rewardMinor !== null && body.rewardMinor !== ''
+          ? Number(body.rewardMinor)
+          : parseMinorAmount(body.reward ?? body.price, { allowZero: true });
+        const settings = await setReferralSettings(pool, { enabled, rewardMinor }, auth.userId);
+        return sendJson(res, 200, { ok: true, settings });
+      }
+
+      if (method === 'GET' && pathname === '/api/panel/owner/fees') {
+        const data = await getOwnerPlatformFeeSummary(pool, 30);
+        return sendJson(res, 200, data);
+      }
+
+      if (method === 'POST' && pathname === '/api/panel/owner/fee-settings') {
+        const body = await readJsonBody(req);
+        const enabled = body.enabled === undefined
+          ? undefined
+          : (typeof body.enabled === 'string' ? body.enabled === 'true' : Boolean(body.enabled));
+        const settings = await setPlatformFeeSettings(
+          pool,
+          {
+            enabled,
+            paidLinkFeeBps: body.paidLinkFeeBps,
+            premiumFeeBps: body.premiumFeeBps,
+            paidLinkFeePercent: body.paidLinkFeePercent,
+            premiumFeePercent: body.premiumFeePercent,
+          },
+          auth.userId,
+        );
         return sendJson(res, 200, { ok: true, settings });
       }
 
@@ -1958,12 +2118,21 @@ export async function handlePanelApiRequest(req, res, state, logger) {
       if (method === 'GET' && pathname === '/api/panel/owner/payments') {
         const q = (parsedUrl.searchParams.get('q') || '').trim();
         const status = (parsedUrl.searchParams.get('status') || 'all').trim();
-        if (q) {
-          const result = await searchPaymentTransactions(pool, q, 25);
-          return sendJson(res, 200, { total: result.total, rows: result.rows });
-        }
-        const result = await listPaymentTransactions(pool, { limit: 25, offset: 0, status });
-        return sendJson(res, 200, { total: result.total, rows: result.rows });
+        const [result, methods] = await Promise.all([
+          q ? searchPaymentTransactions(pool, q, 25) : listPaymentTransactions(pool, { limit: 25, offset: 0, status }),
+          listPaymentMethods(pool),
+        ]);
+        return sendJson(res, 200, {
+          total: result.total,
+          rows: result.rows,
+          paymentMethods: methods.map((m) => ({
+            method: m.method,
+            isEnabled: Boolean(m.is_enabled),
+            lastTestStatus: m.last_test_status,
+            lastTestError: m.last_test_error,
+            updatedAt: m.updated_at,
+          })),
+        });
       }
 
       const payReconcileMatch = pathname.match(/^\/api\/panel\/owner\/payments\/(\d+)\/reconcile$/);

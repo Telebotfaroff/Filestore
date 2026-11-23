@@ -1,6 +1,6 @@
 import { Telegraf } from 'telegraf';
 import { encryptBotToken, decryptBotToken } from '../security/token-encryption.js';
-import { createDeliveryBot } from './bot.js';
+import { createDeliveryBot, DELIVERY_BOT_MENU_COMMANDS } from './bot.js';
 import { normalizeSecret } from '../utils/validation.js';
 import { launchTelegramBot, inspectBotChannelAccess } from '../bot/telegram-utils.js';
 import { cached, cacheDeletePrefix } from '../utils/cache.js';
@@ -231,6 +231,7 @@ export function createDeliveryBotManager(config, logger, pool) {
         logger.error({ botId: record.telegram_bot_id, error: error.message }, 'Delivery Bot polling stopped unexpectedly');
         pool.query("UPDATE delivery_bots SET runtime_status = 'error', last_error = $2, updated_at = NOW() WHERE id = $1", [record.id, String(error.message).slice(0, 500)]).then(invalidateDeliveryBotCache).catch(() => {});
       });
+      void runtime.bot.telegram.setMyCommands([...DELIVERY_BOT_MENU_COMMANDS]).catch(() => {});
       runtimes.set(id, {
         runtime,
         recordId: record.id,
@@ -241,6 +242,8 @@ export function createDeliveryBotManager(config, logger, pool) {
       });
       if (record.role === 'primary' || ownerTelegramId !== null) {
         await runtime.startWorker({ deliveryBotId: record.id, includeGlobal: isPlatformPrimary });
+      } else {
+        runtime.startBroadcastWorker?.(record.id);
       }
       await pool.query("UPDATE delivery_bots SET runtime_status = 'running', last_health_at = NOW(), last_error = NULL, updated_at = NOW() WHERE id = $1", [record.id]);
       invalidateDeliveryBotCache();

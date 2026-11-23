@@ -4,9 +4,13 @@ import { escapeHtml } from '../bot/telegram-utils.js';
 export async function notifyCreatorSale(telegram, creatorCredit, logger = null) {
   if (!telegram || !creatorCredit?.creatorId) return;
   try {
-    const amountText = creatorCredit.currency === 'XTR'
-      ? `${creatorCredit.amountMinor} ⭐`
-      : formatMoney(creatorCredit.amountMinor, creatorCredit.currency);
+    const fmt = (minor) => (
+      creatorCredit.currency === 'XTR'
+        ? `${minor} ⭐`
+        : formatMoney(minor, creatorCredit.currency)
+    );
+    const amountText = fmt(creatorCredit.amountMinor);
+    const hasFee = Number(creatorCredit.feeAmountMinor || 0) > 0;
     const isPremiumPlan = creatorCredit.saleType === 'premium_plan';
     const heading = isPremiumPlan
       ? '💎 <b>New Premium Plan Sale Credited!</b>'
@@ -16,11 +20,18 @@ export async function notifyCreatorSale(telegram, creatorCredit, logger = null) 
           ? [`💎 <b>Plan:</b> ${escapeHtml(creatorCredit.planName)} (<code>${escapeHtml(creatorCredit.referenceCode ?? '')}</code>)`]
           : (creatorCredit.referenceCode ? [`💎 <b>Plan Ref:</b> <code>${escapeHtml(creatorCredit.referenceCode)}</code>`] : []))
       : (creatorCredit.referenceCode ? [`🏷 <b>Link Code:</b> <code>${escapeHtml(creatorCredit.referenceCode)}</code>`] : []);
+    const amountLines = hasFee
+      ? [
+          `💵 <b>Sale Price:</b> <code>${escapeHtml(fmt(creatorCredit.grossAmountMinor))}</code>`,
+          `🏛 <b>Platform Fee (${escapeHtml(String(creatorCredit.feePercent ?? 0))}%):</b> <code>-${escapeHtml(fmt(creatorCredit.feeAmountMinor))}</code>`,
+          `💰 <b>Net Credited:</b> <code>+${escapeHtml(amountText)}</code>`,
+        ]
+      : [`💰 <b>Amount Added:</b> <code>+${escapeHtml(amountText)}</code>`];
     const lines = [
       heading,
       '━━━━━━━━━━━━━━━━━━',
       '',
-      `💰 <b>Amount Added:</b> <code>+${escapeHtml(amountText)}</code>`,
+      ...amountLines,
       ...refLine,
       ...(creatorCredit.currency === 'INR' && creatorCredit.balanceAfterMinor !== undefined
         ? [`💵 <b>Available Balance: ${escapeHtml(formatMoney(creatorCredit.balanceAfterMinor, 'INR'))}</b>`]

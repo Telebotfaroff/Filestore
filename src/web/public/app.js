@@ -27,6 +27,8 @@ const state = {
     users: null,
     premiumMembers: null,
     ownerLinkAnalytics: null,
+    ownerReferrals: null,
+    ownerFees: null,
   },
   selectedBotId: null,
   filters: {
@@ -255,9 +257,33 @@ async function loadMeta() {
   } catch {}
 }
 
+let activeLoadSeq = 0;
+
+function hasCachedViewData(view) {
+  if (view === 'overview') return Boolean(state.data.overview);
+  if (view === 'setup') return Boolean(state.data.bots);
+  if (view === 'links') return Boolean(state.data.links);
+  if (view === 'shorteners') return Boolean(state.data.shorteners);
+  if (view === 'channels') return Boolean(state.data.channels);
+  if (view === 'plans') return Boolean(state.data.plans);
+  if (view === 'wallet') return Boolean(state.data.wallet);
+  if (view === 'broadcasts') return Boolean(state.data.broadcasts);
+  if (view === 'users') return Boolean(state.data.users);
+  if (view === 'owner_bots') return Boolean(state.selectedBotId ? state.data.ownerBotDetail : state.data.ownerBots);
+  if (view === 'premium_members') return Boolean(state.data.premiumMembers);
+  if (view === 'owner_link_analytics') return Boolean(state.data.ownerLinkAnalytics);
+  if (view === 'owner_referrals') return Boolean(state.data.ownerReferrals);
+  if (view === 'owner_kpis' || view === 'owner_delivery') return Boolean(state.data.ownerDashboard);
+  if (view === 'owner_withdrawals') return Boolean(state.data.ownerWithdrawals);
+  if (view === 'owner_payments') return Boolean(state.data.ownerPayments);
+  return false;
+}
+
 async function loadViewData(view = state.activeView) {
   if (!state.token || !state.user) return;
-  state.loading = true;
+  const seq = ++activeLoadSeq;
+  const alreadyHasData = hasCachedViewData(view);
+  state.loading = !alreadyHasData;
   state.error = '';
   render();
   try {
@@ -302,6 +328,8 @@ async function loadViewData(view = state.activeView) {
       state.data.premiumMembers = await api(`/api/panel/premium-members?${params.toString()}`);
     } else if (view === 'owner_link_analytics') {
       state.data.ownerLinkAnalytics = await api('/api/panel/owner/link-analytics');
+    } else if (view === 'owner_referrals') {
+      state.data.ownerReferrals = await api('/api/panel/owner/referrals');
     } else if (view === 'owner_kpis' || view === 'owner_delivery') {
       state.data.ownerDashboard = await api('/api/panel/owner/dashboard');
     } else if (view === 'owner_withdrawals') {
@@ -314,18 +342,22 @@ async function loadViewData(view = state.activeView) {
       } else {
         params.set('status', state.filters.paymentsStatus);
       }
-      const [payments, dash] = await Promise.all([
+      const [payments, fees] = await Promise.all([
         api(`/api/panel/owner/payments?${params.toString()}`),
-        api('/api/panel/owner/dashboard'),
+        api('/api/panel/owner/fees'),
       ]);
+      if (seq !== activeLoadSeq) return;
       state.data.ownerPayments = payments;
-      state.data.ownerDashboard = dash;
+      state.data.ownerFees = fees;
     }
   } catch (err) {
+    if (seq !== activeLoadSeq) return;
     state.error = err.message || 'Failed to load data.';
   } finally {
-    state.loading = false;
-    render();
+    if (seq === activeLoadSeq) {
+      state.loading = false;
+      render();
+    }
   }
 }
 
@@ -398,6 +430,7 @@ const NAV_ICONS = {
   users: '<svg class="nav-icon" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   premium_members: '<svg class="nav-icon" viewBox="0 0 24 24"><path d="m12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"/></svg>',
   owner_link_analytics: '<svg class="nav-icon" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>',
+  owner_referrals: '<svg class="nav-icon" viewBox="0 0 24 24"><path d="M20 12v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8"/><rect x="2" y="7" width="20" height="5" rx="1"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 1 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 1 0 0-5C13 2 12 7 12 7z"/></svg>',
   owner_delivery: '<svg class="nav-icon" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>',
 };
 
@@ -438,6 +471,7 @@ function getNavSections() {
         { id: 'owner_withdrawals', label: 'Withdrawals Queue', count: ov?.ownerSummary?.pendingWithdrawals ?? null },
         { id: 'owner_payments', label: 'Payments & Gateways', count: null },
         { id: 'owner_link_analytics', label: 'Link Analytics', count: null },
+        { id: 'owner_referrals', label: 'Referrals', count: null },
         { id: 'owner_delivery', label: 'Delivery & Auto-Delete', count: null },
       ],
     });
@@ -1207,12 +1241,23 @@ function renderBroadcasts() {
   if (state.loading && !d) return `<div class="surface">${renderSkeletonRows(5)}</div>`;
   const bots = d?.bots || [];
   const campaigns = d?.campaigns || [];
+  const isOwnerMode = Boolean(d?.isOwnerMode || state.user?.isOwner);
+
+  const formatBotOption = (b) => {
+    const ownerTag = isOwnerMode
+      ? (b.isPlatform
+          ? 'Platform Bot'
+          : (b.ownerUsername ? `Creator @${b.ownerUsername}` : (b.ownerFirstName ? `Creator ${b.ownerFirstName}` : `Creator ${b.ownerId}`)))
+      : '';
+    const statusTag = b.runtimeStatus && b.runtimeStatus !== 'running' ? ` · ${b.runtimeStatus}` : '';
+    return `@${b.username}${ownerTag ? ` · ${ownerTag}` : ''} · ${Number(b.totalUsers || 0)} users${statusTag}`;
+  };
 
   return `
     <div class="page-header">
       <div>
         <h1>Broadcasts</h1>
-        <p class="page-sub">Message subscribers of your Delivery Bot.</p>
+        <p class="page-sub">${isOwnerMode ? 'Send broadcasts on behalf of any creator or platform Delivery Bot.' : 'Message subscribers of your Delivery Bot.'}</p>
       </div>
     </div>
 
@@ -1223,16 +1268,16 @@ function renderBroadcasts() {
       <div class="surface-body">
         ${bots.length === 0 ? `
           <div class="empty-state">
-            <h3>Connect a Delivery Bot first</h3>
-            <button type="button" class="btn btn-primary" data-nav="setup">Setup Delivery Bots →</button>
+            <h3>${isOwnerMode ? 'No active Delivery Bots available' : 'Connect a Delivery Bot first'}</h3>
+            <button type="button" class="btn btn-primary" data-nav="${isOwnerMode ? 'owner_bots' : 'setup'}">${isOwnerMode ? 'View Delivery Bots →' : 'Setup Delivery Bots →'}</button>
           </div>
         ` : `
           <form id="creator-broadcast-form" class="gate-form">
             <div class="form-grid">
               <div class="field span-2">
-                <label class="field-label" for="bc-bot-id">Delivery Bot</label>
+                <label class="field-label" for="bc-bot-id">${isOwnerMode ? 'Target Delivery Bot (Creator / Platform)' : 'Delivery Bot'}</label>
                 <select id="bc-bot-id" class="select" name="deliveryBotId" required>
-                  ${bots.map((b) => `<option value="${b.id}">@${esc(b.username)} · ${Number(b.totalUsers || 0)} users</option>`).join('')}
+                  ${bots.map((b) => `<option value="${b.id}">${esc(formatBotOption(b))}</option>`).join('')}
                 </select>
               </div>
               <div class="field span-2">
@@ -1278,26 +1323,38 @@ function renderBroadcasts() {
               </tr>
             </thead>
             <tbody>
-              ${campaigns.map((c) => `
-                <tr>
-                  <td data-label="Campaign" class="mono">#${c.id} · Bot #${c.deliveryBotId}</td>
-                  <td data-label="Status">
-                    <span class="${c.status === 'completed' ? 'status-ok' : c.status === 'cancelled' ? 'status-danger' : 'status-warn'}">${esc(String(c.status).toUpperCase())}</span>
-                    ${c.lastError ? `<div class="cell-sub status-danger">${esc(String(c.lastError).slice(0, 60))}</div>` : ''}
-                  </td>
-                  <td data-label="Sent / Total" class="col-right num">${Number(c.sentCount || 0)} / ${Number(c.totalRecipients || 0)}</td>
-                  <td data-label="Failed" class="col-right num">${Number(c.failedCount || 0)}</td>
-                  <td data-label="Created" class="num">${esc(formatDateTime(c.createdAt))}</td>
-                  <td data-label="Actions" class="col-right">
-                    <div class="row-actions">
-                      ${c.status === 'pending' || c.status === 'running' ? `<button type="button" class="btn btn-sm" data-bc-act="${c.id}:pause">Pause</button>` : ''}
-                      ${c.status === 'paused' ? `<button type="button" class="btn btn-sm" data-bc-act="${c.id}:resume">Resume</button>` : ''}
-                      ${c.failedCount > 0 ? `<button type="button" class="btn btn-sm" data-bc-act="${c.id}:retry">Retry Failed</button>` : ''}
-                      ${c.status === 'pending' || c.status === 'running' || c.status === 'paused' ? `<button type="button" class="btn btn-sm btn-danger" data-bc-act="${c.id}:cancel">Cancel</button>` : ''}
-                    </div>
-                  </td>
-                </tr>
-              `).join('')}
+              ${campaigns.map((c) => {
+                const botLabel = c.botUsername ? `@${c.botUsername}` : `Bot #${c.deliveryBotId}`;
+                const creatorLabel = isOwnerMode
+                  ? (c.isPlatformBot
+                      ? 'Platform Bot'
+                      : (c.ownerUsername ? `@${c.ownerUsername}` : (c.ownerFirstName || (c.ownerId ? `Creator ${c.ownerId}` : ''))))
+                  : '';
+                const isActive = c.status === 'pending' || c.status === 'processing';
+                return `
+                  <tr>
+                    <td data-label="Campaign">
+                      <div class="cell-primary mono">#${c.id} · ${esc(botLabel)}</div>
+                      ${creatorLabel ? `<div class="cell-sub">${esc(creatorLabel)}</div>` : ''}
+                    </td>
+                    <td data-label="Status">
+                      <span class="${c.status === 'completed' ? 'status-ok' : c.status === 'cancelled' || c.status === 'failed' ? 'status-danger' : 'status-warn'}">${esc(String(c.status).toUpperCase())}</span>
+                      ${c.lastError ? `<div class="cell-sub status-danger">${esc(String(c.lastError).slice(0, 60))}</div>` : ''}
+                    </td>
+                    <td data-label="Sent / Total" class="col-right num">${Number(c.sentCount || 0)} / ${Number(c.totalRecipients || 0)}</td>
+                    <td data-label="Failed" class="col-right num">${Number(c.failedCount || 0)}</td>
+                    <td data-label="Created" class="num">${esc(formatDateTime(c.createdAt))}</td>
+                    <td data-label="Actions" class="col-right">
+                      <div class="row-actions">
+                        ${isActive ? `<button type="button" class="btn btn-sm" data-bc-act="${c.id}:pause">Pause</button>` : ''}
+                        ${c.status === 'paused' ? `<button type="button" class="btn btn-sm" data-bc-act="${c.id}:resume">Resume</button>` : ''}
+                        ${c.failedCount > 0 ? `<button type="button" class="btn btn-sm" data-bc-act="${c.id}:retry">Retry Failed</button>` : ''}
+                        ${isActive || c.status === 'paused' ? `<button type="button" class="btn btn-sm btn-danger" data-bc-act="${c.id}:cancel">Cancel</button>` : ''}
+                      </div>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
             </tbody>
           </table>
         </div>
@@ -1334,12 +1391,14 @@ function renderLinks() {
     !search || `${f.fileName} ${f.fileCode} ${f.fileType}`.toLowerCase().includes(search)
   ));
   const mainBotUrl = state.botUsername ? safeHttpsUrl(`https://t.me/${state.botUsername}`) : '';
+  const linkFeePct = !state.user?.isOwner && d?.platformFees?.enabled ? Number(d.platformFees.paidLinkFeePercent || 0) : 0;
+  const linkFeeLabel = linkFeePct > 0 ? ` · Platform fee: ${Number.isInteger(linkFeePct) ? linkFeePct : Number(linkFeePct.toFixed(2))}% on paid sales` : '';
 
   return `
     <div class="page-header">
       <div>
         <h1>Links &amp; Files</h1>
-        <p class="page-sub">Create in Telegram (/link, /Batch, /plink) · Manage &amp; clean here.</p>
+        <p class="page-sub">Create in Telegram (/link, /Batch, /plink) · Manage &amp; clean here${esc(linkFeeLabel)}.</p>
       </div>
       <div class="page-actions">
         ${unusedCount > 0 ? `<button class="btn btn-sm" id="clean-unused-files-btn">Clean Unused Files (${unusedCount})</button>` : ''}
@@ -1667,12 +1726,14 @@ function renderPlans() {
   if (state.loading && !d) return `<div class="surface">${renderSkeletonRows(4)}</div>`;
   const plans = d?.plans || [];
   const isOwner = state.user?.isOwner;
+  const planFeePct = !isOwner && d?.platformFees?.enabled ? Number(d.platformFees.premiumFeePercent || 0) : 0;
+  const planFeeLabel = planFeePct > 0 ? ` · Platform fee: ${Number.isInteger(planFeePct) ? planFeePct : Number(planFeePct.toFixed(2))}%` : '';
 
   return `
     <div class="page-header">
       <div>
         <h1>${isOwner ? 'Platform Plans' : 'VIP Plans'}</h1>
-        <p class="page-sub">${isOwner ? 'Manage platform plans &amp; grants.' : 'Paid tiers to skip shorteners.'}</p>
+        <p class="page-sub">${isOwner ? 'Manage platform plans &amp; grants.' : `Paid tiers to skip shorteners${esc(planFeeLabel)}.`}</p>
       </div>
       <div class="page-actions">
         ${isOwner ? `<button class="btn" id="btn-grant-premium">Grant</button><button class="btn" id="btn-revoke-premium">Revoke</button>` : ''}
@@ -1734,14 +1795,23 @@ function renderWallet() {
   const d = state.data.wallet;
   if (state.loading && !d) return `<div class="surface">${renderSkeletonRows(5)}</div>`;
   const w = d?.wallet || { availableMinor: 0, lockedMinor: 0, totalEarnedMinor: 0, totalWithdrawnMinor: 0, upiId: null };
+  const ref = d?.referral || null;
+  const refShareUrl = ref?.shareUrl ? safeHttpsUrl(ref.shareUrl) : '';
   const ledger = d?.recentLedger || [];
   const withdrawals = d?.recentWithdrawals || [];
+  const pf = !state.user?.isOwner && d?.platformFees?.enabled ? d.platformFees : null;
+  const pfLinkPct = pf ? Number(pf.paidLinkFeePercent || 0) : 0;
+  const pfPlanPct = pf ? Number(pf.premiumFeePercent || 0) : 0;
+  const fmtPct = (v) => `${Number.isInteger(v) ? v : Number(v.toFixed(2))}%`;
+  const feeNote = (pfLinkPct > 0 || pfPlanPct > 0)
+    ? ` · Platform fees: Paid links ${fmtPct(pfLinkPct)}, VIP ${fmtPct(pfPlanPct)}`
+    : '';
 
   return `
     <div class="page-header">
       <div>
         <h1>Wallet &amp; Payouts</h1>
-        <p class="page-sub">Min payout: ${esc(formatMoney(d?.minWithdrawalMinor || 100, 'INR'))} · UPI: <span class="mono">${w.upiId ? esc(w.upiId) : 'Not set'}</span></p>
+        <p class="page-sub">Min payout: ${esc(formatMoney(d?.minWithdrawalMinor || 100, 'INR'))} · UPI: <span class="mono">${w.upiId ? esc(w.upiId) : 'Not set'}</span>${esc(feeNote)}</p>
       </div>
       <div class="page-actions">
         <button class="btn" id="btn-set-upi">${w.upiId ? 'Edit UPI' : 'Set UPI ID'}</button>
@@ -1767,6 +1837,29 @@ function renderWallet() {
         <div class="kpi-value">${esc(formatMoney(w.totalWithdrawnMinor, 'INR'))}</div>
       </div>
     </div>
+
+    ${ref ? `
+      <div class="surface">
+        <div class="surface-header">
+          <div>
+            <div class="surface-title">Refer &amp; Earn</div>
+            <div class="surface-meta">
+              <span class="${ref.settings?.enabled ? 'status-ok' : 'status-muted'}">${ref.settings?.enabled ? 'Active' : 'Paused'}</span>
+              · ${esc(formatInrHero(ref.settings?.rewardMinor || 0))} / referral
+            </div>
+          </div>
+          ${refShareUrl ? `<button type="button" class="btn btn-sm btn-primary" data-copy-url="${esc(refShareUrl)}">Copy Link</button>` : ''}
+        </div>
+        <div class="surface-body">
+          <div class="kv-list">
+            <div class="kv-row"><span class="kv-key">Referrals</span><span class="kv-val mono">${Number(ref.totalReferrals || 0).toLocaleString()}</span></div>
+            <div class="kv-row"><span class="kv-key">Referral Earnings</span><span class="kv-val mono">${esc(formatInrHero(ref.totalEarnedMinor || 0))}</span></div>
+            <div class="kv-row"><span class="kv-key">Unique Token</span><span class="kv-val mono">${esc(ref.token || '—')}</span></div>
+            ${refShareUrl ? `<div class="kv-row"><span class="kv-key">Invite Link</span><span class="kv-val mono">${esc(refShareUrl)}</span></div>` : ''}
+          </div>
+        </div>
+      </div>
+    ` : ''}
 
     <div class="surface">
       <div class="surface-header">
@@ -2035,9 +2128,18 @@ function renderOwnerWithdrawals() {
 function renderOwnerPayments() {
   const pay = state.data.ownerPayments;
   const dash = state.data.ownerDashboard;
+  const fees = state.data.ownerFees;
   if (state.loading && !pay) return `<div class="surface">${renderSkeletonRows(5)}</div>`;
   const rows = pay?.rows || [];
-  const methods = dash?.paymentMethods || [];
+  const methods = pay?.paymentMethods || dash?.paymentMethods || [];
+  const feeSettings = fees?.settings || { enabled: true, paidLinkFeePercent: 0, premiumFeePercent: 0 };
+  const feeSummary = fees?.summary || { totalCount: 0, totalInrFeeMinor: 0, totalXtrFeeMinor: 0 };
+  const recentFees = fees?.recent || [];
+  const fmtPct = (v) => {
+    const n = Number(v || 0);
+    return `${Number.isInteger(n) ? n : Number(n.toFixed(2))}%`;
+  };
+  const saleTypeLabel = (t) => (t === 'premium' ? 'VIP Plan' : t === 'paid_batch' ? 'Paid Batch' : 'Paid File');
 
   return `
     <div class="page-header">
@@ -2045,6 +2147,102 @@ function renderOwnerPayments() {
         <h1>Payments &amp; Gateways</h1>
       </div>
     </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-cell">
+        <div class="kpi-label">Paid Links Fee</div>
+        <div class="kpi-value">${esc(fmtPct(feeSettings.paidLinkFeePercent))}</div>
+        <div class="kpi-sub"><span class="${feeSettings.enabled ? 'status-ok' : 'status-muted'}">${feeSettings.enabled ? 'Active' : 'Paused'}</span></div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-label">Premium Plans Fee</div>
+        <div class="kpi-value">${esc(fmtPct(feeSettings.premiumFeePercent))}</div>
+        <div class="kpi-sub"><span class="${feeSettings.enabled ? 'status-ok' : 'status-muted'}">${feeSettings.enabled ? 'Active' : 'Paused'}</span></div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-label">Fees Collected</div>
+        <div class="kpi-value">${esc(formatInrHero(feeSummary.totalInrFeeMinor || 0))}</div>
+        <div class="kpi-sub">${Number(feeSummary.totalXtrFeeMinor || 0) > 0 ? `+ ${Number(feeSummary.totalXtrFeeMinor).toLocaleString()} XTR` : 'INR platform share'}</div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-label">Fee Deductions</div>
+        <div class="kpi-value">${Number(feeSummary.totalCount || 0).toLocaleString()}</div>
+      </div>
+    </div>
+
+    <div class="surface">
+      <div class="surface-header">
+        <div>
+          <div class="surface-title">Creator Platform Fees</div>
+          <div class="surface-meta">Automatically deducted from creator paid link &amp; VIP membership sales before wallet credit.</div>
+        </div>
+      </div>
+      <div class="surface-body">
+        <form id="owner-fee-form" class="form-grid">
+          <div class="field">
+            <label class="field-label">Status</label>
+            <select class="select" name="enabled">
+              <option value="true" ${feeSettings.enabled ? 'selected' : ''}>Active</option>
+              <option value="false" ${!feeSettings.enabled ? 'selected' : ''}>Paused</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="field-label">Paid Links Fee (%)</label>
+            <input class="input mono" name="paidLinkFeePercent" type="number" min="0" max="90" step="0.01" value="${esc(feeSettings.paidLinkFeePercent ?? 0)}" required />
+          </div>
+          <div class="field">
+            <label class="field-label">Premium Memberships Fee (%)</label>
+            <input class="input mono" name="premiumFeePercent" type="number" min="0" max="90" step="0.01" value="${esc(feeSettings.premiumFeePercent ?? 0)}" required />
+          </div>
+          <div class="field" style="display:flex;align-items:flex-end;">
+            <button type="submit" class="btn btn-primary">Save Fee Settings</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    ${recentFees.length > 0 ? `
+      <div class="surface">
+        <div class="surface-header">
+          <div class="surface-title">Recent Fee Deductions (${recentFees.length})</div>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Creator</th>
+                <th>Sale</th>
+                <th class="col-right">Gross</th>
+                <th class="col-right">Fee</th>
+                <th class="col-right">Creator Net</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${recentFees.map((f) => {
+                const creatorName = f.creatorUsername ? `@${f.creatorUsername}` : (f.creatorFirstName || `Creator ${f.creatorId}`);
+                return `
+                  <tr>
+                    <td data-label="Creator">
+                      <div class="cell-primary">${esc(creatorName)}</div>
+                      <div class="cell-sub mono">${esc(f.creatorId)}</div>
+                    </td>
+                    <td data-label="Sale">
+                      <div class="cell-primary">${esc(saleTypeLabel(f.saleType))}</div>
+                      <div class="cell-sub mono">${esc(f.referenceCode || `Tx #${f.transactionId}`)}</div>
+                    </td>
+                    <td data-label="Gross" class="col-right mono">${esc(formatMoney(f.grossAmountMinor, f.currency))}</td>
+                    <td data-label="Fee" class="col-right mono status-ok">${esc(formatMoney(f.feeAmountMinor, f.currency))} <span class="cell-sub">(${esc(fmtPct(f.feePercent))})</span></td>
+                    <td data-label="Creator Net" class="col-right mono">${esc(formatMoney(f.netAmountMinor, f.currency))}</td>
+                    <td data-label="Date" class="num">${esc(formatDateTime(f.createdAt))}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    ` : ''}
 
     <div class="surface">
       <div class="surface-header">
@@ -2719,6 +2917,112 @@ function renderOwnerLinkAnalytics() {
   `;
 }
 
+function renderOwnerReferrals() {
+  const d = state.data.ownerReferrals;
+  if (state.loading && !d) return `<div class="surface">${renderSkeletonRows(6)}</div>`;
+  const settings = d?.settings || { enabled: true, rewardMinor: 100, currency: 'INR' };
+  const summary = d?.summary || { totalReferrals: 0, totalRewardedMinor: 0, uniqueReferrers: 0 };
+  const recent = d?.recent || [];
+
+  return `
+    <div class="page-header">
+      <div>
+        <h1>Referrals</h1>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-cell">
+        <div class="kpi-label">Reward / Referral</div>
+        <div class="kpi-value">${esc(formatInrHero(settings.rewardMinor || 0))}</div>
+        <div class="kpi-sub"><span class="${settings.enabled ? 'status-ok' : 'status-muted'}">${settings.enabled ? 'Active' : 'Paused'}</span></div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-label">Total Referrals</div>
+        <div class="kpi-value">${Number(summary.totalReferrals || 0).toLocaleString()}</div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-label">Paid Rewards</div>
+        <div class="kpi-value">${esc(formatInrHero(summary.totalRewardedMinor || 0))}</div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-label">Referrers</div>
+        <div class="kpi-value">${Number(summary.uniqueReferrers || 0).toLocaleString()}</div>
+      </div>
+    </div>
+
+    <div class="surface">
+      <div class="surface-header">
+        <div class="surface-title">Program Settings</div>
+      </div>
+      <div class="surface-body">
+        <form id="owner-referral-form" class="form-grid">
+          <div class="field">
+            <label class="field-label">Status</label>
+            <select class="select" name="enabled">
+              <option value="true" ${settings.enabled ? 'selected' : ''}>Active</option>
+              <option value="false" ${!settings.enabled ? 'selected' : ''}>Paused</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="field-label">Reward per Referral (INR)</label>
+            <input class="input mono" name="reward" type="number" min="0" max="100000" step="0.01" value="${(Number(settings.rewardMinor ?? 100) / 100).toFixed(2)}" required />
+          </div>
+          <div class="field" style="display:flex;align-items:flex-end;">
+            <button type="submit" class="btn btn-primary">Save Settings</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="surface">
+      <div class="surface-header">
+        <div class="surface-title">Recent Referrals (${recent.length})</div>
+      </div>
+      ${recent.length === 0 ? `
+        <div class="empty-state">
+          <h3>No referrals yet</h3>
+        </div>
+      ` : `
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Referrer</th>
+                <th>Invited User</th>
+                <th>Token</th>
+                <th class="col-right">Reward</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${recent.map((r) => {
+                const rrName = r.referrerUsername ? `@${r.referrerUsername}` : (r.referrerFirstName || `User ${r.referrerId}`);
+                const rdName = r.referredUsername ? `@${r.referredUsername}` : (r.referredFirstName || `User ${r.referredId}`);
+                return `
+                  <tr>
+                    <td data-label="Referrer">
+                      <div class="cell-primary">${esc(rrName)}</div>
+                      <div class="cell-sub mono">${esc(r.referrerId)}</div>
+                    </td>
+                    <td data-label="Invited User">
+                      <div class="cell-primary">${esc(rdName)}</div>
+                      <div class="cell-sub mono">${esc(r.referredId)}</div>
+                    </td>
+                    <td data-label="Token" class="mono">${esc(r.token)}</td>
+                    <td data-label="Reward" class="col-right mono status-ok">+${esc(formatMoney(r.rewardMinor, r.currency))}</td>
+                    <td data-label="Date" class="num">${esc(formatDateTime(r.createdAt))}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `}
+    </div>
+  `;
+}
+
 function renderActiveView() {
   switch (state.activeView) {
     case 'overview': return renderOverview();
@@ -2737,6 +3041,7 @@ function renderActiveView() {
     case 'owner_withdrawals': return renderOwnerWithdrawals();
     case 'owner_payments': return renderOwnerPayments();
     case 'owner_link_analytics': return renderOwnerLinkAnalytics();
+    case 'owner_referrals': return renderOwnerReferrals();
     case 'owner_delivery': return renderOwnerDelivery();
     default: return renderOverview();
   }
@@ -4303,6 +4608,53 @@ function bindWorkspaceEvents() {
       } catch (err) { toast(err.message, true); }
     });
   });
+
+  // Owner Referrals settings form
+  document.getElementById('owner-referral-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const submitBtn = form.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    try {
+      const vals = Object.fromEntries(new FormData(form).entries());
+      await api('/api/panel/owner/referral-settings', {
+        method: 'POST',
+        body: {
+          enabled: vals.enabled === 'true',
+          reward: vals.reward,
+        },
+      });
+      toast('Referral settings saved.');
+      await loadViewData('owner_referrals');
+    } catch (err) {
+      toast(err.message || 'Could not save referral settings.', true);
+      submitBtn.disabled = false;
+    }
+  });
+
+  // Owner Platform Fee settings form
+  document.getElementById('owner-fee-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const submitBtn = form.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    try {
+      const vals = Object.fromEntries(new FormData(form).entries());
+      await api('/api/panel/owner/fee-settings', {
+        method: 'POST',
+        body: {
+          enabled: vals.enabled === 'true',
+          paidLinkFeePercent: vals.paidLinkFeePercent,
+          premiumFeePercent: vals.premiumFeePercent,
+        },
+      });
+      toast('Platform fee settings saved.');
+      await loadViewData('owner_payments');
+    } catch (err) {
+      toast(err.message || 'Could not save platform fee settings.', true);
+      submitBtn.disabled = false;
+    }
+  });
 }
 
 function render() {
@@ -4313,8 +4665,10 @@ function render() {
   }
 }
 
-(async function bootstrap() {
+(function bootstrap() {
   document.documentElement.classList.add('dark');
-  await loadMeta();
   render();
+  loadMeta().then(() => {
+    if (!state.user && state.botUsername) render();
+  });
 })();

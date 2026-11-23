@@ -76,6 +76,9 @@ import {
   enableFamPay,
   testFamPayImapConnection,
   maskEmail,
+  createFamPayCheckout,
+  verifyFamPaySession,
+  cancelFamPaySession,
 } from '../payments/fampay.js';
 import {
   loadStarsConfig,
@@ -85,7 +88,11 @@ import {
   getTelegramStarsPrice,
   sendStarsInvoice,
 } from '../payments/telegram-stars.js';
-import { getBotSlotSettings } from '../delivery/slot-repository.js';
+import {
+  getBotSlotSettings,
+  getCreatorBotSlotQuota,
+  unlockSlotWithWallet,
+} from '../delivery/slot-repository.js';
 import {
   listPaidFileLinks,
   disablePaidFileLink,
@@ -112,6 +119,10 @@ import {
   getCreatorWalletSummary,
   setCreatorCheckpointEnabled,
 } from '../wallet/repository.js';
+import {
+  getUserReferralSummary,
+  claimReferralOnStart,
+} from '../wallet/referral-repository.js';
 
 import { registerShareLinksUi } from './share-links-ui.js';
 import { registerPaidLinksUi } from './paid-links-ui.js';
@@ -389,6 +400,10 @@ const PROMPT_CONFIGS = {
     back: 'cc:bots',
     prompt: '🤖 Send the @BotFather token for the Delivery Bot.\n🔒 Your message will be deleted immediately for security.',
   },
+  bot_replace: {
+    back: 'cc:bots',
+    prompt: '🔄 Send the new @BotFather token to replace this Delivery Bot.\n🔒 Your message will be deleted immediately, and all existing links stay active.',
+  },
   force_sub_add: {
     back: 'cc:fsub',
     prompt: '🔒 Send the channel identifier and HTTPS join link separated by a space:\n<channel_id or @username> <https://t.me/...>',
@@ -568,6 +583,10 @@ export function buildPublicMenuKeyboard() {
       [
         { text: '💎 Paid Link', callback_data: 'cc:plink' },
         { text: '📋 My Links', callback_data: 'cc:links:0' },
+      ],
+      [
+        { text: '🤖 My Delivery Bot', callback_data: 'cc:bots' },
+        { text: '🎁 Refer & Earn', callback_data: 'cc:referral' },
       ],
       [
         { text: '🌐 Web Control Panel', callback_data: 'cc:webtok' },
@@ -788,8 +807,8 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
             '• /plink — Monetized paid link\n' +
             '• /links — Manage &amp; edit links</blockquote>',
           '',
-          '🌐 <b>Web Setup &amp; Analytics</b>',
-          '<i>Tap <b>Web Control Panel</b> below (or /token) to manage bots, channels, shorteners, plans, broadcasts &amp; payouts.</i>',
+          '🌐 <b>Bot &amp; Web Setup</b>',
+          '<i>Tap <b>🤖 My Delivery Bot</b> to connect your own bot, or <b>🌐 Web Control Panel</b> (/token) for channels, shorteners, plans &amp; payouts.</i>',
         ];
       } catch (error) {
         logger.warn({ creatorId, error: error.message }, 'Creator hub summary fallback');
@@ -1043,26 +1062,62 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     return renderView(ctx, text, keyboard, edit);
   }
 
+  async function getCreatorSlotsSnapshot(ownerId, isOwner, existingBots = []) {
+    const raw = await getCreatorBotSlotQuota(pool, ownerId, isOwner);
+    if (raw.isUnlimited) return raw;
+    const usedSlots = Math.max(Number(raw.usedSlots ?? 0), existingBots.length);
+    const totalAllowed = Math.max(1, Number(raw.totalAllowed ?? 1));
+    const remainingSlots = Math.max(0, totalAllowed - usedSlots);
+    return {
+      ...raw,
+      usedSlots,
+      totalAllowed,
+      remainingSlots,
+    };
+  }
+
   async function showBots(ctx, edit = false) {
     const ownerId = getOwnerScope(ctx);
-    const [rows, storageRows] = await Promise.all([
+    const isOwner = isOwnerAdmin(ctx);
+    const [rows, storageRows, slots] = await Promise.all([
       deliveryManager.list(ownerId),
       ownerId !== null ? listStorageChannels(pool, ownerId).catch(() => []) : Promise.resolve([]),
+      getCreatorSlotsSnapshot(ownerId, isOwner),
     ]);
+    const effectiveSlots = slots.isUnlimited
+      ? slots
+      : {
+          ...slots,
+          usedSlots: Math.max(slots.usedSlots, rows.length),
+          remainingSlots: Math.max(0, slots.totalAllowed - Math.max(slots.usedSlots, rows.length)),
+        };
     const hasOwnStorage = ownerId === null || storageRows.some((c) => c.is_enabled);
     let fallbackNote = '';
     if (!rows.length && ownerId !== null) {
       const sharedUsername = await getShareableBotUsername(pool, null).catch(() => null);
       if (sharedUsername) {
-        fallbackNote = `\n\n☁️ Currently using shared platform Delivery Bot @${sharedUsername}. Adding your own Delivery Bot is optional.`;
+        fallbackNote = `\n\n☁️ Currently using shared platform Delivery Bot @${sharedUsername}. Adding your own Delivery Bot gives you a branded clone!`;
       }
     }
+    const slotLine = effectiveSlots.isUnlimited
+      ? '🎟 Bot Slots: Unlimited (Platform Owner)'
+      : `🎟 Bot Slots: ${effectiveSlots.usedSlots}/${effectiveSlots.totalAllowed} used (${effectiveSlots.remainingSlots} available · ${effectiveSlots.freeSlots} free${effectiveSlots.extraSlots > 0 ? ` + ${effectiveSlots.extraSlots} unlocked` : ''})`;
     const storageRequirementNote = ownerId !== null && !hasOwnStorage
       ? '\n\n⚠️ IMPORTANT REQUIREMENT:\nIf you add your own Delivery Bot, you MUST also add your own Storage Channel (and make both the Main Bot and your Delivery Bot Administrators in it) — otherwise your Delivery Bot will NOT work!'
       : '';
-    const lines = rows.length
-      ? rows.map((row) => `#${row.id} · 🤖 @${row.username} (${row.role === 'primary' ? '⭐ PRIMARY' : row.role.toUpperCase()})\n⚡ Runtime: ${row.runtime_status === 'running' ? '🟢 running' : '🟡 ' + row.runtime_status} · Enabled: ${row.is_enabled ? '✅' : '⏸'} · Priority: ${row.priority}${row.last_error ? '\n⚠️ Error: ' + String(row.last_error).slice(0, 120) : ''}`)
-      : [`🤖 No custom Delivery Bots registered yet. Add one with the button below.${fallbackNote}`];
+    const lines = [slotLine];
+    if (rows.length) {
+      lines.push(
+        rows.map((row) => `#${row.id} · 🤖 @${row.username} (${row.role === 'primary' ? '⭐ PRIMARY' : row.role.toUpperCase()})\n⚡ Runtime: ${row.runtime_status === 'running' ? '🟢 running' : '🟡 ' + row.runtime_status} · Enabled: ${row.is_enabled ? '✅' : '⏸'} · Priority: ${row.priority}${row.last_error ? '\n⚠️ Error: ' + String(row.last_error).slice(0, 120) : ''}`).join('\n\n'),
+      );
+    } else {
+      lines.push(`🤖 No custom Delivery Bots registered yet. Add one with the button below.${fallbackNote}`);
+    }
+    if (!effectiveSlots.isUnlimited && effectiveSlots.remainingSlots === 0) {
+      lines.push(
+        `🔒 Slot limit reached (${effectiveSlots.usedSlots}/${effectiveSlots.totalAllowed}). Unlock +1 slot or tap a bot below to Change Bot without losing any links.`,
+      );
+    }
     if (storageRequirementNote) lines.push(storageRequirementNote.trim());
     const keyboard = rows.slice(0, 8).map((row) => [
       {
@@ -1070,8 +1125,16 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
         callback_data: `cc:bot:${row.id}`,
       },
     ]);
-    keyboard.push([{ text: '➕ Add Delivery Bot', callback_data: 'cc:prompt:delivery_bot_add' }]);
-    if (isOwnerAdmin(ctx)) {
+    if (effectiveSlots.isUnlimited || effectiveSlots.remainingSlots > 0) {
+      keyboard.push([{ text: '➕ Add Delivery Bot', callback_data: 'cc:prompt:delivery_bot_add' }]);
+    } else {
+      const slotPriceLabel = formatMoney(effectiveSlots.priceMinor, effectiveSlots.currency || 'INR');
+      keyboard.push([{ text: `🔓 Unlock +1 Slot (${slotPriceLabel})`, callback_data: 'cc:slot_unlock' }]);
+      if (rows.length === 1) {
+        keyboard.push([{ text: `🔄 Change @${String(rows[0].username).slice(0, 22)}`, callback_data: `cc:bot_replace:${rows[0].id}` }]);
+      }
+    }
+    if (isOwner) {
       keyboard.push([{ text: '🌐 All Delivery Bots (Owner)', callback_data: 'cc:all_bots:0' }]);
     }
     if (ownerId !== null && !hasOwnStorage) {
@@ -1082,6 +1145,171 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
       { text: '← Main Menu', callback_data: 'cc:home' },
     ]);
     return renderView(ctx, '🤖 Delivery Bots\n━━━━━━━━━━━━━━━━━━\n\n' + lines.join('\n\n'), { inline_keyboard: keyboard }, edit);
+  }
+
+  async function showCloneBotScreen(ctx, edit = false) {
+    if (isOwnerAdmin(ctx)) {
+      const bots = await deliveryManager.list(null).catch(() => []);
+      const lines = [
+        '🤖 <b>Create Your Own Delivery Bot</b> · <i>Owner Mode</i>',
+        '━━━━━━━━━━━━━━━━━━',
+        '',
+        `<blockquote>🎟 <b>Bot Slots:</b> Unlimited (Platform Owner)\n🤖 <b>Connected Platform Bots:</b> <code>${bots.length}</code></blockquote>`,
+        '',
+        '👇 Tap <b>➕ Add Delivery Bot</b> to register another bot, or manage existing bots below.',
+      ];
+      const keyboard = [
+        [{ text: '➕ Add Delivery Bot', callback_data: 'cc:prompt:delivery_bot_add' }],
+        [
+          { text: '🤖 My Delivery Bots', callback_data: 'cc:bots' },
+          { text: '🌐 All Bots', callback_data: 'cc:all_bots:0' },
+        ],
+        [{ text: '🎛 Main Menu', callback_data: 'cc:home' }],
+      ];
+      return renderView(ctx, lines.join('\n'), { inline_keyboard: keyboard }, edit, true, { parse_mode: 'HTML' });
+    }
+
+    const creatorId = Number(ctx.from.id);
+    const [bots, storageRows, rawSlots] = await Promise.all([
+      deliveryManager.list(creatorId),
+      listStorageChannels(pool, creatorId).catch(() => []),
+      getCreatorBotSlotQuota(pool, creatorId, false),
+    ]);
+    const usedSlots = Math.max(Number(rawSlots.usedSlots ?? 0), bots.length);
+    const totalAllowed = Math.max(1, Number(rawSlots.totalAllowed ?? 1));
+    const remainingSlots = Math.max(0, totalAllowed - usedSlots);
+    const hasOwnStorage = storageRows.some((c) => c.is_enabled);
+    const priceLabel = formatMoney(rawSlots.priceMinor, rawSlots.currency || 'INR');
+    const starsSuffix = rawSlots.starsPrice ? ` · ${Number(rawSlots.starsPrice)}★` : '';
+
+    const botSummary = bots.length
+      ? bots
+          .slice(0, 5)
+          .map((b) => `• ${b.role === 'primary' ? '⭐ ' : ''}@${escapeHtml(b.username)} — ${b.runtime_status === 'running' ? '🟢 running' : `🟡 ${escapeHtml(b.runtime_status)}`}`)
+          .join('\n')
+      : '<i>No custom Delivery Bot connected yet.</i>';
+
+    const lines = [
+      '🤖 <b>Create Your Own Delivery Bot</b>',
+      '━━━━━━━━━━━━━━━━━━',
+      '<i>Launch your own branded clone bot powered by FileStore!</i>',
+      '',
+      '<blockquote>🎟 <b>Your Bot Slots:</b> <code>' + `${usedSlots} / ${totalAllowed}` + '</code> used (<code>' + remainingSlots + '</code> available)\n'
+      + `🆓 <b>Allowance:</b> ${rawSlots.freeSlots} free bot${rawSlots.extraSlots > 0 ? ` + ${rawSlots.extraSlots} unlocked` : ''}\n`
+      + `🗄 <b>Storage Channel:</b> ${hasOwnStorage ? '✅ Connected' : '⚠️ Not added yet'}</blockquote>`,
+      '',
+      '🤖 <b>Connected Bots</b>',
+      `<blockquote>${botSummary}</blockquote>`,
+    ];
+
+    const keyboard = [];
+    if (remainingSlots > 0) {
+      lines.push(
+        '',
+        '⚡ <b>Quick 3-Step Setup</b>',
+        '<blockquote><b>1.</b> Create a bot in <code>@BotFather</code> &amp; copy its token\n'
+        + '<b>2.</b> Add your Storage Channel &amp; make both bots Admins\n'
+        + '<b>3.</b> Tap <b>➕ Add My Delivery Bot</b> below &amp; paste your token</blockquote>',
+      );
+      if (!hasOwnStorage) {
+        lines.push('', '⚠️ <i>You must add your own Storage Channel — otherwise your Delivery Bot will not deliver files.</i>');
+      }
+      keyboard.push([{ text: '➕ Add My Delivery Bot', callback_data: 'cc:prompt:delivery_bot_add' }]);
+      if (!hasOwnStorage) {
+        keyboard.push([{ text: '🗄 Add Storage Channel', callback_data: 'cc:prompt:storage_add' }]);
+      }
+    } else {
+      lines.push(
+        '',
+        '🔒 <b>Slot Limit Reached</b>',
+        `<blockquote>You have used all <code>${usedSlots}/${totalAllowed}</code> Delivery Bot slots.\n\n`
+        + `• <b>Unlock +1 Slot</b> (${escapeHtml(priceLabel)}${starsSuffix}) to add another bot\n`
+        + '• Or <b>Change Bot</b> to replace an old/deleted bot — all existing links keep working!</blockquote>',
+      );
+      keyboard.push([{ text: `🔓 Unlock +1 Slot (${priceLabel})`, callback_data: 'cc:slot_unlock' }]);
+      if (bots.length === 1) {
+        keyboard.push([{ text: `🔄 Change @${String(bots[0].username).slice(0, 22)}`, callback_data: `cc:bot_replace:${bots[0].id}` }]);
+      }
+    }
+
+    if (bots.length > 0) {
+      keyboard.push([{ text: '🤖 Manage My Bots', callback_data: 'cc:bots' }]);
+    }
+    keyboard.push([
+      { text: '🌐 Web Control Panel', callback_data: 'cc:webtok' },
+      { text: '🎛 Main Menu', callback_data: 'cc:home' },
+    ]);
+    return renderView(ctx, lines.join('\n'), { inline_keyboard: keyboard }, edit, true, { parse_mode: 'HTML' });
+  }
+
+  async function showSlotUnlockScreen(ctx, edit = true, { limitReached = false } = {}) {
+    if (isOwnerAdmin(ctx)) {
+      await safeAnswer(ctx, 'Platform owners already have unlimited delivery bot slots.', true);
+      return showBots(ctx, edit);
+    }
+    const creatorId = Number(ctx.from.id);
+    const [bots, rawSlots, wallet, fpCfg, starsCfg] = await Promise.all([
+      deliveryManager.list(creatorId),
+      getCreatorBotSlotQuota(pool, creatorId, false),
+      getCreatorWalletSummary(pool, creatorId).catch(() => ({ inrWallet: { available_minor: 0 } })),
+      loadFamPayConfig(pool, config.tokenEncryptionKey).catch(() => ({ isEnabled: false, isConfigured: false })),
+      loadStarsConfig(pool).catch(() => ({ isEnabled: false })),
+    ]);
+    const usedSlots = Math.max(Number(rawSlots.usedSlots ?? 0), bots.length);
+    const totalAllowed = Math.max(1, Number(rawSlots.totalAllowed ?? 1));
+    const remainingSlots = Math.max(0, totalAllowed - usedSlots);
+    const priceLabel = formatMoney(rawSlots.priceMinor, rawSlots.currency || 'INR');
+    const walletAvail = Number(wallet?.inrWallet?.available_minor ?? 0);
+    const walletLabel = formatMoney(walletAvail, 'INR');
+    const canWallet = walletAvail >= Number(rawSlots.priceMinor || 0);
+    const fampayReady = Boolean(fpCfg?.isEnabled && fpCfg?.isConfigured);
+    const starsReady = Boolean(starsCfg?.isEnabled && rawSlots.starsPrice);
+
+    const lines = [
+      limitReached ? '🔒 <b>Delivery Bot Slot Limit Reached</b>' : '🔓 <b>Unlock +1 Delivery Bot Slot</b>',
+      '━━━━━━━━━━━━━━━━━━',
+      '',
+      `<blockquote>🎟 <b>Current Slots:</b> <code>${usedSlots} / ${totalAllowed}</code> used (<code>${remainingSlots}</code> free)\n`
+      + `➕ <b>After Unlock:</b> <code>${totalAllowed} → ${totalAllowed + 1}</code> bot slots\n`
+      + `💳 <b>Slot Price:</b> <code>${escapeHtml(priceLabel)}</code>${rawSlots.starsPrice ? ` · <code>${Number(rawSlots.starsPrice)}★</code>` : ''}\n`
+      + `💰 <b>Wallet Balance:</b> <code>${escapeHtml(walletLabel)}</code></blockquote>`,
+    ];
+
+    if (bots.length) {
+      lines.push(
+        '',
+        '💡 <i>Need to replace a deleted or old bot without buying a slot? Tap Change Bot to swap its token while keeping all your links active.</i>',
+      );
+    }
+
+    const keyboard = [];
+    if (remainingSlots > 0 && !limitReached) {
+      keyboard.push([{ text: '➕ Add Delivery Bot (Slot Available)', callback_data: 'cc:prompt:delivery_bot_add' }]);
+    }
+    if (canWallet) {
+      keyboard.push([{ text: `💰 Pay ${priceLabel} from Wallet`, callback_data: 'cc:slot_pay_wallet' }]);
+    }
+    if (fampayReady) {
+      keyboard.push([{ text: `📲 Pay ${priceLabel} via UPI QR`, callback_data: 'cc:slot_pay_upi' }]);
+    }
+    if (starsReady) {
+      keyboard.push([{ text: `⭐ Pay ${Number(rawSlots.starsPrice)} Stars`, callback_data: 'cc:slot_pay_stars' }]);
+    }
+    if (!canWallet && !fampayReady && !starsReady) {
+      lines.push('', `⚠️ <i>No payment gateway is active right now and your wallet balance is below ${escapeHtml(priceLabel)}.</i>`);
+    }
+    if (bots.length === 1) {
+      keyboard.push([{ text: `🔄 Change @${String(bots[0].username).slice(0, 22)}`, callback_data: `cc:bot_replace:${bots[0].id}` }]);
+    } else if (bots.length > 1) {
+      keyboard.push([{ text: '🤖 Manage / Change Existing Bot', callback_data: 'cc:bots' }]);
+    }
+    keyboard.push([
+      { text: '🌐 Open Web Panel', callback_data: 'cc:webtok' },
+      { text: '← My Bots', callback_data: 'cc:bots' },
+    ]);
+    keyboard.push([{ text: '🎛 Main Menu', callback_data: 'cc:home' }]);
+
+    return renderView(ctx, lines.join('\n'), { inline_keyboard: keyboard }, edit, true, { parse_mode: 'HTML' });
   }
 
   async function findOwnedBotRow(id, ownerId) {
@@ -1125,9 +1353,12 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
       ],
       [
         { text: '🔄 Restart', callback_data: `cc:bot_rst:${botRow.id}` },
-        ...(botRow.role !== 'primary' ? [{ text: '⭐ Set Primary', callback_data: `cc:bot_pri:${botRow.id}` }] : []),
+        { text: '🔄 Change Bot Token', callback_data: `cc:bot_replace:${botRow.id}` },
       ],
     ];
+    if (botRow.role !== 'primary') {
+      rows.push([{ text: '⭐ Set Primary', callback_data: `cc:bot_pri:${botRow.id}` }]);
+    }
     if (confirmDelete) {
       rows.push([
         { text: '⚠ Confirm Remove', callback_data: `cc:bot_rm_ok:${botRow.id}` },
@@ -2226,6 +2457,73 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     return renderView(ctx, `📖 ${sec.title}\n\n${sec.body}`, keyboard, edit);
   }
 
+  async function showReferralScreen(ctx, edit = false) {
+    const userId = Number(ctx.from.id);
+    const mainUsername = ctx.botInfo?.username
+      || bot.botInfo?.username
+      || (typeof ctx.telegram?.getMe === 'function' ? (await ctx.telegram.getMe().catch(() => null))?.username : null)
+      || (typeof config?.notifyTelegram?.getMe === 'function' ? (await config.notifyTelegram.getMe().catch(() => null))?.username : null);
+    const [ref, wallet] = await Promise.all([
+      getUserReferralSummary(pool, userId, mainUsername),
+      getCreatorWalletSummary(pool, userId).catch(() => ({ inrWallet: { available_minor: 0 } })),
+    ]);
+    const rewardLabel = formatMoney(ref.settings.rewardMinor, ref.settings.currency || 'INR');
+    const earnedLabel = formatMoney(ref.totalEarnedMinor, 'INR');
+    const walletAvailLabel = formatMoney(wallet?.inrWallet?.available_minor ?? 0, 'INR');
+    const statusBadge = ref.settings.enabled ? '🟢 Active' : '⚪ Paused by Owner';
+
+    const lines = [
+      '🎁 <b>Refer &amp; Earn Program</b>',
+      '━━━━━━━━━━━━━━━━━━',
+      '<i>Invite new users &amp; creators with your unique link to earn instant INR wallet rewards!</i>',
+      '',
+      `<blockquote>💸 <b>Reward / Referral:</b> <code>${escapeHtml(rewardLabel)}</code>  ·  ${statusBadge}\n`
+      + `👥 <b>Total Referrals:</b> <code>${ref.totalReferrals}</code>\n`
+      + `📈 <b>Referral Earnings:</b> <code>${escapeHtml(earnedLabel)}</code>\n`
+      + `💵 <b>Wallet Balance:</b> <code>${escapeHtml(walletAvailLabel)}</code></blockquote>`,
+      '',
+      '🔗 <b>Your Unique Referral Link</b>',
+      ref.shareUrl
+        ? `<blockquote><code>${escapeHtml(ref.shareUrl)}</code>\n🪪 <b>Token:</b> <code>${escapeHtml(ref.token)}</code></blockquote>`
+        : `<blockquote>🪪 <b>Unique Token:</b> <code>${escapeHtml(ref.token)}</code></blockquote>`,
+    ];
+
+    if (ref.recentReferrals.length) {
+      lines.push(
+        '',
+        '🕒 <b>Recent Referrals</b>',
+        '<blockquote>' + ref.recentReferrals.slice(0, 5).map((r) => {
+          const who = r.username
+            ? `@${escapeHtml(r.username)}`
+            : escapeHtml(r.firstName || `User ${r.referredUserId}`);
+          return `• ${who} — <b>+${escapeHtml(formatMoney(r.rewardMinor, r.currency))}</b>`;
+        }).join('\n') + '</blockquote>',
+      );
+    }
+
+    lines.push(
+      '',
+      '🛡 <i>Only genuine first-time users who join with your unique token count (1 reward per user, no self-referrals).</i>',
+    );
+
+    const shareBtnRow = ref.shareUrl
+      ? [{
+          text: '📤 Share Referral Link',
+          url: `https://t.me/share/url?url=${encodeURIComponent(ref.shareUrl)}&text=${encodeURIComponent(`Join FileStore using my invite link! ${ref.shareUrl}`)}`,
+        }]
+      : [];
+
+    const keyboard = [
+      ...(shareBtnRow.length ? [shareBtnRow] : []),
+      [
+        { text: '💰 My Wallet', callback_data: 'cc:me' },
+        { text: '↻ Refresh', callback_data: 'cc:referral' },
+      ],
+      [{ text: '← Main Menu', callback_data: 'cc:home' }],
+    ];
+    return renderView(ctx, lines.join('\n'), { inline_keyboard: keyboard }, edit, true, { parse_mode: 'HTML' });
+  }
+
   // Entry commands
   bot.command('start', async (ctx) => {
     clearPrompt(ctx.from.id);
@@ -2234,6 +2532,50 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     paidLinksUi.clearSession(ctx.from.id);
     walletUi.clearSession(ctx.from.id);
     const startPayload = String(ctx.startPayload ?? (ctx.message?.text || '').split(/\s+/)[1] ?? '').trim();
+    const refMatch = startPayload.match(/^ref_([A-Za-z0-9_-]{8,32})$/i);
+    if (refMatch) {
+      try {
+        const claim = await claimReferralOnStart(pool, {
+          referredUser: ctx.from,
+          token: refMatch[1],
+          isNewUser: ctx.state?.isNewTelegramUser ?? null,
+        });
+        if (claim?.credited) {
+          const rewardText = formatMoney(claim.rewardMinor, claim.currency || 'INR');
+          const invitedLabel = ctx.from?.username
+            ? `@${escapeHtml(ctx.from.username)}`
+            : escapeHtml(ctx.from?.first_name || `User ${ctx.from?.id}`);
+          const notifier = config?.notifyTelegram ?? bot.telegram;
+          if (typeof notifier?.sendMessage === 'function' && claim.rewardMinor > 0) {
+            void notifier.sendMessage(
+              claim.referrerId,
+              [
+                '🎉 <b>New Successful Referral!</b>',
+                '━━━━━━━━━━━━━━━━━━',
+                `👤 <b>Invited User:</b> ${invitedLabel}`,
+                `💵 <b>Reward Credited:</b> <code>+${escapeHtml(rewardText)}</code>`,
+                `💰 <b>New Wallet Balance:</b> <code>${escapeHtml(formatMoney(claim.balanceAfterMinor ?? 0, claim.currency || 'INR'))}</code>`,
+              ].join('\n'),
+              { parse_mode: 'HTML' },
+            ).catch(() => {});
+          }
+          await ctx.reply(
+            '🎁 <b>Welcome via Referral!</b>\nYour account is ready — tap <b>🎁 Refer &amp; Earn</b> below to invite others too.',
+            { parse_mode: 'HTML' },
+          ).catch(() => {});
+        } else if (claim?.reason === 'self_referral') {
+          await ctx.reply('ℹ️ You cannot claim a referral reward using your own referral link.').catch(() => {});
+        }
+      } catch (error) {
+        logger?.warn?.({ userId: ctx.from?.id, error: error.message }, 'Referral claim failed on /start');
+      }
+      await showHome(ctx, false);
+      return;
+    }
+    if (/^clone$/i.test(startPayload)) {
+      await showCloneBotScreen(ctx, false);
+      return;
+    }
     if (/^botslot$/i.test(startPayload) && !isOwnerAdmin(ctx)) {
       try {
         const slotSettings = await getBotSlotSettings(pool);
@@ -2254,7 +2596,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
         await ctx.reply('❌ Telegram Stars slot checkout is unavailable right now: ' + error.message);
         return;
       }
-      await ctx.reply('🔓 To unlock an extra Delivery Bot slot using UPI or Wallet balance, open your Web Control Panel with /token -> Setup & Delivery Bots.');
+      await showSlotUnlockScreen(ctx, false);
       return;
     }
     await showHome(ctx, false);
@@ -2267,6 +2609,20 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     paidLinksUi.clearSession(ctx.from.id);
     walletUi.clearSession(ctx.from.id);
     await showHome(ctx, false);
+  });
+
+  bot.command(['referral', 'refer'], async (ctx) => {
+    clearPrompt(ctx.from.id);
+    clearShortenerDraft(ctx.from.id);
+    shareLinksUi.clearSession(ctx.from.id);
+    paidLinksUi.clearSession(ctx.from.id);
+    walletUi.clearSession(ctx.from.id);
+    await showReferralScreen(ctx, false);
+  });
+
+  bot.action('cc:referral', async (ctx) => {
+    await safeAnswer(ctx);
+    await showReferralScreen(ctx, true);
   });
 
   bot.command('guide', async (ctx) => {
@@ -2438,7 +2794,176 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     await showStorage(ctx, true);
   });
 
-  // Delivery Bot actions
+  // Delivery Bot & Slot actions
+  bot.action('cc:clone', async (ctx) => {
+    await safeAnswer(ctx);
+    await showCloneBotScreen(ctx, true);
+  });
+
+  bot.action('cc:slot_unlock', async (ctx) => {
+    await safeAnswer(ctx);
+    await showSlotUnlockScreen(ctx, true);
+  });
+
+  bot.action('cc:slot_pay_wallet', async (ctx) => {
+    if (isOwnerAdmin(ctx)) return safeAnswer(ctx, 'Owners already have unlimited slots.', true);
+    try {
+      const result = await unlockSlotWithWallet(pool, Number(ctx.from.id));
+      const newTotal = 1 + Number(result.extraSlots || 1);
+      await safeAnswer(ctx, 'Extra Delivery Bot slot unlocked! 🔓');
+      return renderView(
+        ctx,
+        [
+          '✅ <b>+1 Delivery Bot Slot Unlocked!</b>',
+          '━━━━━━━━━━━━━━━━━━',
+          '',
+          `<blockquote>🎟 <b>New Bot Limit:</b> <code>${newTotal}</code> bots\n`
+          + `💵 <b>Paid from Wallet:</b> <code>${escapeHtml(formatMoney(result.amountMinor, 'INR'))}</code>\n`
+          + `💰 <b>Remaining Wallet:</b> <code>${escapeHtml(formatMoney(result.availableAfterMinor, 'INR'))}</code></blockquote>`,
+          '',
+          '👇 Tap below to connect your new Delivery Bot right now.',
+        ].join('\n'),
+        {
+          inline_keyboard: [
+            [{ text: '➕ Add Delivery Bot Now', callback_data: 'cc:prompt:delivery_bot_add' }],
+            [
+              { text: '🤖 My Delivery Bots', callback_data: 'cc:bots' },
+              { text: '🎛 Main Menu', callback_data: 'cc:home' },
+            ],
+          ],
+        },
+        true,
+        true,
+        { parse_mode: 'HTML' },
+      );
+    } catch (error) {
+      await safeAnswer(ctx, error.message, true);
+      return showSlotUnlockScreen(ctx, true);
+    }
+  });
+
+  bot.action('cc:slot_pay_stars', async (ctx) => {
+    if (isOwnerAdmin(ctx)) return safeAnswer(ctx, 'Owners already have unlimited slots.', true);
+    try {
+      await safeAnswer(ctx);
+      await sendStarsInvoice(
+        bot,
+        pool,
+        ctx,
+        'bot_slot',
+        {},
+        'Extra Delivery Bot Slot',
+        'Unlock +1 additional custom Delivery Bot slot in FileStore',
+        config.mainBotToken,
+      );
+    } catch (error) {
+      await ctx.reply('❌ Telegram Stars slot checkout is unavailable right now: ' + error.message);
+    }
+  });
+
+  bot.action('cc:slot_pay_upi', async (ctx) => {
+    if (isOwnerAdmin(ctx)) return safeAnswer(ctx, 'Owners already have unlimited slots.', true);
+    try {
+      const slotSettings = await getBotSlotSettings(pool);
+      const checkout = await createFamPayCheckout(pool, config, {
+        userId: Number(ctx.from.id),
+        purpose: 'bot_slot',
+        target: {},
+        baseAmountMinor: slotSettings.priceMinor,
+        currency: slotSettings.currency || 'INR',
+        label: 'Extra Bot Slot',
+      });
+      await safeAnswer(ctx);
+      const caption = [
+        '📲 <b>Pay via UPI to Unlock +1 Bot Slot</b>',
+        '━━━━━━━━━━━━━━━━━━',
+        '',
+        `<blockquote>💵 <b>Exact Amount:</b> <code>₹${escapeHtml(checkout.amountDisplay)}</code>\n`
+        + `🏦 <b>UPI ID:</b> <code>${escapeHtml(checkout.upiId)}</code>\n`
+        + `🔖 <b>Ref:</b> <code>${escapeHtml(checkout.txnRef)}</code></blockquote>`,
+        '',
+        '⚡ <i>Scan QR or pay the exact amount above, then tap <b>Verify Payment</b>.</i>',
+      ].join('\n');
+      const markup = {
+        inline_keyboard: [
+          [{ text: '✅ I Have Paid · Verify Payment', callback_data: `cc:slot_check:${checkout.session.id}` }],
+          [
+            { text: '✖ Cancel', callback_data: `cc:slot_cancel:${checkout.session.id}` },
+            { text: '← Back', callback_data: 'cc:slot_unlock' },
+          ],
+        ],
+      };
+      if (checkout.qrBuffer) {
+        await ctx.replyWithPhoto({ source: checkout.qrBuffer }, { caption, parse_mode: 'HTML', reply_markup: markup });
+      } else {
+        await ctx.reply(caption, { parse_mode: 'HTML', reply_markup: markup });
+      }
+    } catch (error) {
+      await safeAnswer(ctx, error.message, true);
+    }
+  });
+
+  bot.action(/^cc:slot_check:(\d+)$/, async (ctx) => {
+    if (isOwnerAdmin(ctx)) return safeAnswer(ctx, 'Owners already have unlimited slots.', true);
+    const sessionId = Number(ctx.match[1]);
+    try {
+      const result = await verifyFamPaySession(pool, config, sessionId, { userId: Number(ctx.from.id) });
+      if (result.status === 'verified' || result.status === 'already_applied') {
+        await safeAnswer(ctx, 'Payment verified! +1 Bot Slot unlocked! 🔓', true);
+        return ctx.reply(
+          '✅ <b>Payment Verified!</b>\n━━━━━━━━━━━━━━━━━━\n\n🔓 <b>+1 Delivery Bot slot</b> has been added to your account.',
+          {
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '➕ Add Delivery Bot Now', callback_data: 'cc:prompt:delivery_bot_add' }],
+                [
+                  { text: '🤖 My Delivery Bots', callback_data: 'cc:bots' },
+                  { text: '🎛 Main Menu', callback_data: 'cc:home' },
+                ],
+              ],
+            },
+          },
+        );
+      }
+      if (result.status === 'expired') {
+        await safeAnswer(ctx, 'This payment QR has expired. Please generate a new one.', true);
+        return;
+      }
+      await safeAnswer(ctx, 'Payment not detected yet. Wait a few seconds after paying and tap Verify again.', true);
+    } catch (error) {
+      await safeAnswer(ctx, error.message || 'Verification failed.', true);
+    }
+  });
+
+  bot.action(/^cc:slot_cancel:(\d+)$/, async (ctx) => {
+    const sessionId = Number(ctx.match[1]);
+    await cancelFamPaySession(pool, sessionId, Number(ctx.from.id)).catch(() => false);
+    await safeAnswer(ctx, 'Checkout cancelled.');
+    await showSlotUnlockScreen(ctx, false);
+  });
+
+  bot.action(/^cc:bot_replace:(\d+)$/, async (ctx) => {
+    const botId = Number(ctx.match[1]);
+    const ownerId = getOwnerScope(ctx);
+    const botRow = await findOwnedBotRow(botId, ownerId);
+    if (!botRow) {
+      await safeAnswer(ctx, 'Delivery Bot not found.', true);
+      return showBots(ctx, true);
+    }
+    const cfg = setPrompt(ctx.from.id, 'bot_replace', {
+      back: `cc:bot:${botRow.id}`,
+      meta: { botId: botRow.id },
+    });
+    await safeAnswer(ctx);
+    return renderView(
+      ctx,
+      `✏️ Replace Delivery Bot @${botRow.username}\n━━━━━━━━━━━━━━━━━━\n${cfg.prompt}`,
+      { inline_keyboard: [[{ text: '✖ Cancel', callback_data: 'cc:cancel_prompt' }]] },
+      true,
+    );
+  });
+
   bot.action(/^cc:bot:(\d+)$/, async (ctx) => { await safeAnswer(ctx); await showBotDetail(ctx, Number(ctx.match[1]), true); });
   bot.action(/^cc:bot_rm:(\d+)$/, async (ctx) => { await safeAnswer(ctx); await showBotDetail(ctx, Number(ctx.match[1]), true, true); });
 
@@ -3304,29 +3829,47 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     try {
       if (draft.kind === 'owner') {
         if (!isOwnerAdmin(ctx)) throw new Error('Owner permission required.');
-        const bots = await deliveryManager.list(draft.ownerTelegramId);
-        if (!bots.some((b) => Number(b.id) === draft.deliveryBotId && b.is_enabled)) throw new Error('Selected creator bot is no longer enabled.');
+        const scopeOwner = draft.allowPlatformBot ? null : draft.ownerTelegramId;
+        const bots = await deliveryManager.list(scopeOwner);
+        if (!bots.some((b) => Number(b.id) === Number(draft.deliveryBotId) && b.is_enabled)) {
+          throw new Error('Selected delivery bot is no longer enabled.');
+        }
       } else {
         if (isOwnerAdmin(ctx)) throw new Error('Creator permission required.');
         const bots = await deliveryManager.list(Number(ctx.from.id));
-        if (!bots.some((b) => Number(b.id) === draft.deliveryBotId && b.is_enabled)) throw new Error('Your delivery bot is no longer enabled.');
+        if (!bots.some((b) => Number(b.id) === Number(draft.deliveryBotId) && b.is_enabled)) {
+          throw new Error('Your delivery bot is no longer enabled.');
+        }
       }
       const created = await createCreatorBroadcast(pool, { ...draft, createdBy: ctx.from.id });
       clearBroadcastDraft(ctx.from.id);
       await safeAnswer(ctx, 'Broadcast queued!');
-      const history = draft.kind === 'owner' ? 'cc:owner_broadcast' : 'cc:broadcast_history';
+      const history = draft.kind === 'owner' ? 'cc:owner_broadcast_history' : 'cc:broadcast_history';
+      const detailCb = draft.kind === 'owner'
+        ? `cc:owner_broadcast_detail:${created.id}`
+        : `cc:broadcast_detail:${created.id}`;
       const canEditText = Boolean(ctx.callbackQuery?.message?.text);
       if (!canEditText) await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
       return renderView(
         ctx,
         '✅ <b>Broadcast queued</b>\n━━━━━━━━━━━━━━━━━━\n📋 Campaign #' + created.id + '\n👥 Recipients: ' + created.totalRecipients,
-        { inline_keyboard: [[{ text: '📋 Campaigns', callback_data: history }]] },
+        {
+          inline_keyboard: [
+            [{ text: '📊 Campaign Status', callback_data: detailCb }],
+            [{ text: '📋 Campaigns', callback_data: history }],
+          ],
+        },
         canEditText,
         true,
         { parse_mode: 'HTML' },
       );
     } catch (e) {
-      await safeAnswer(ctx, e.message, true);
+      await safeAnswer(ctx, String(e.message || 'Could not queue broadcast.').slice(0, 190), true);
+      const backCb = draft.kind === 'owner' ? 'cc:owner_broadcast' : 'cc:broadcast';
+      await ctx.reply(
+        `❌ <b>Could not queue broadcast</b>\n${escapeHtml(e.message || 'Unknown error.')}`,
+        { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '← Broadcast Menu', callback_data: backCb }]] } },
+      ).catch(() => {});
     }
   }
   bot.action('cc:broadcast_confirm', confirmBroadcastDraft);
@@ -3341,7 +3884,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
   });
   async function showBroadcastPreview(ctx, draft) {
     setBroadcastDraft(ctx.from.id, draft);
-    const content = draft.caption || draft.messageText || '(media attachment)';
+    const content = draft.caption || draft.messageText || '';
     const keyboard = [...(draft.buttons || []), [{ text: '✅ Confirm & Queue', callback_data: 'cc:broadcast_confirm' }], [{ text: '✖ Cancel', callback_data: 'cc:broadcast_cancel_draft' }]];
     if (draft.mediaType) {
       const method = { photo: 'replyWithPhoto', video: 'replyWithVideo', document: 'replyWithDocument', animation: 'replyWithAnimation' }[draft.mediaType];
@@ -3351,25 +3894,124 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     return renderView(ctx, '👀 <b>Broadcast Preview</b>\n━━━━━━━━━━━━━━━━━━\nText message\n\n' + escapeHtml(content.slice(0, 1800)) + '\n\n👥 Audience snapshot will be taken when you confirm.\n\nConfirm to queue this campaign?', { inline_keyboard: keyboard }, false, true, { parse_mode: 'HTML' });
   }
 
-  // Platform owner broadcast: select creator, then their own delivery bot
+  // Platform owner broadcast: select creator (or platform bot), then their delivery bot
   bot.action('cc:owner_broadcast', async (ctx) => {
     if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
     await safeAnswer(ctx);
-    const creators = await pool.query('SELECT owner_telegram_id, COUNT(*)::int AS bots FROM delivery_bots WHERE owner_telegram_id IS NOT NULL AND is_enabled=TRUE GROUP BY owner_telegram_id ORDER BY owner_telegram_id');
-    const kb = creators.rows.map((c) => [{ text: '👤 Creator ' + c.owner_telegram_id + ' · ' + c.bots + ' bot(s)', callback_data: 'cc:owner_broadcast:creator:' + c.owner_telegram_id }]);
+    const [creators, platformRes] = await Promise.all([
+      pool.query(
+        `SELECT d.owner_telegram_id,
+                u.username,
+                u.first_name,
+                COUNT(DISTINCT d.id)::int AS bots,
+                COALESCE(COUNT(DISTINCT a.telegram_user_id), 0)::int AS total_users
+         FROM delivery_bots d
+         LEFT JOIN users u ON u.telegram_id = d.owner_telegram_id
+         LEFT JOIN delivery_bot_user_activity a ON a.delivery_bot_id = d.id
+         WHERE d.owner_telegram_id IS NOT NULL AND d.is_enabled = TRUE
+         GROUP BY d.owner_telegram_id, u.username, u.first_name
+         ORDER BY total_users DESC, d.owner_telegram_id ASC`,
+      ),
+      pool.query(
+        `SELECT COUNT(DISTINCT d.id)::int AS bots,
+                COALESCE(COUNT(DISTINCT a.telegram_user_id), 0)::int AS total_users
+         FROM delivery_bots d
+         LEFT JOIN delivery_bot_user_activity a ON a.delivery_bot_id = d.id
+         WHERE d.owner_telegram_id IS NULL AND d.is_enabled = TRUE`,
+      ).catch(() => ({ rows: [{ bots: 0, total_users: 0 }] })),
+    ]);
+    const kb = creators.rows.map((c) => {
+      const label = c.username
+        ? `@${c.username}`
+        : (c.first_name ? `${String(c.first_name).slice(0, 18)} (${c.owner_telegram_id})` : `Creator ${c.owner_telegram_id}`);
+      return [{
+        text: `👤 ${label} · ${c.bots} bot · ${c.total_users} users`,
+        callback_data: 'cc:owner_broadcast:creator:' + c.owner_telegram_id,
+      }];
+    });
+    const platformBots = Number(platformRes.rows[0]?.bots || 0);
+    if (platformBots > 0) {
+      kb.push([{
+        text: `🌐 Platform Bots · ${platformBots} bot · ${Number(platformRes.rows[0]?.total_users || 0)} users`,
+        callback_data: 'cc:owner_broadcast:platform',
+      }]);
+    }
     kb.push([{ text: '📋 My Campaign History', callback_data: 'cc:owner_broadcast_history' }]);
     kb.push([{ text: '← Main Menu', callback_data: 'cc:home' }]);
-    return renderView(ctx, '👑 <b>Owner Broadcast</b>\n━━━━━━━━━━━━━━━━━━\nChoose a creator to broadcast on their behalf. The audience is restricted to their delivery bot.', { inline_keyboard: kb }, true, true, { parse_mode: 'HTML' });
+    const intro = kb.length <= 2
+      ? '👑 <b>Owner Broadcast</b>\n━━━━━━━━━━━━━━━━━━\n<i>No enabled creator or platform delivery bots found yet.</i>'
+      : '👑 <b>Owner Broadcast</b>\n━━━━━━━━━━━━━━━━━━\nChoose a creator (or platform bot) to broadcast on their behalf. Audience is scoped to the chosen delivery bot.';
+    return renderView(ctx, intro, { inline_keyboard: kb }, true, true, { parse_mode: 'HTML' });
   });
   bot.action('cc:owner_broadcast_history', async (ctx) => {
     if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
     await safeAnswer(ctx);
-    const rows = await listOwnerCreatedBroadcasts(pool, ctx.from.id, 20);
+    const rows = await listOwnerCreatedBroadcasts(pool, ctx.from.id, 15);
     const icons = { pending: '⏳', processing: '🚀', paused: '⏸', completed: '✅', cancelled: '🛑', failed: '⚠️' };
     const body = rows.length
-      ? rows.map((r) => `${icons[r.status] ?? '📋'} #${r.id} · Creator ${r.owner_telegram_id} · ${escapeHtml(r.status)}\n👥 ${r.total_recipients} · 📤 ${r.sent_count} · ⚠️ ${r.failed_count}`).join('\n\n')
+      ? rows.map((r) => `${icons[r.status] ?? '📋'} #${r.id} · ${r.bot_username ? '@' + escapeHtml(r.bot_username) : 'Bot #' + r.delivery_bot_id} · Creator ${r.owner_telegram_id} · <b>${escapeHtml(r.status)}</b>\n👥 ${r.total_recipients} · 📤 ${r.sent_count} · ⚠️ ${r.failed_count}`).join('\n\n')
       : 'No owner-created campaigns yet.';
-    return renderView(ctx, '📋 <b>Owner Campaign History</b>\n━━━━━━━━━━━━━━━━━━\n\n' + body, { inline_keyboard: [[{ text: '← Owner Broadcast', callback_data: 'cc:owner_broadcast' }, { text: 'Main Menu', callback_data: 'cc:home' }]] }, true, true, { parse_mode: 'HTML' });
+    const kb = rows.slice(0, 8).map((r) => [{
+      text: `📋 #${r.id} · ${r.bot_username ? '@' + r.bot_username : 'Bot #' + r.delivery_bot_id} · ${r.status}`,
+      callback_data: 'cc:owner_broadcast_detail:' + r.id,
+    }]);
+    kb.push([{ text: '← Owner Broadcast', callback_data: 'cc:owner_broadcast' }, { text: 'Main Menu', callback_data: 'cc:home' }]);
+    return renderView(ctx, '📋 <b>Owner Campaign History</b>\n━━━━━━━━━━━━━━━━━━\n\n' + body, { inline_keyboard: kb }, true, true, { parse_mode: 'HTML' });
+  });
+  bot.action(/^cc:owner_broadcast_detail:(\d+)$/, async (ctx) => {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    const id = Number(ctx.match[1]);
+    const b = await getCreatorBroadcast(pool, null, id);
+    if (!b) return safeAnswer(ctx, 'Broadcast not found.', true);
+    await safeAnswer(ctx);
+    const pct = b.total_recipients ? Math.floor(Number(b.sent_count) * 100 / Number(b.total_recipients)) : 0;
+    const msg = `📋 <b>Broadcast #${b.id}</b>\n━━━━━━━━━━━━━━━━━━\n🤖 Bot: <b>${b.bot_username ? '@' + escapeHtml(b.bot_username) : 'Bot #' + b.delivery_bot_id}</b>\n👤 Creator ID: <code>${b.owner_telegram_id}</code>\nStatus: <b>${escapeHtml(b.status)}</b>\n👥 Total: ${b.total_recipients}\n📤 Sent: ${b.sent_count} (${pct}%)\n⚠️ Failed: ${b.failed_count}\n⏳ Pending: ${b.pending_count}` + (b.last_error ? `\n\nLast error: ${escapeHtml(String(b.last_error).slice(0, 300))}` : '');
+    const kb = [];
+    if (['processing', 'pending'].includes(b.status)) kb.push([{ text: '⏸ Pause', callback_data: 'cc:owner_broadcast_manage:paused:' + id }]);
+    if (b.status === 'paused') kb.push([{ text: '▶ Resume', callback_data: 'cc:owner_broadcast_manage:pending:' + id }]);
+    if (['processing', 'pending', 'paused'].includes(b.status)) kb.push([{ text: '🛑 Cancel', callback_data: 'cc:owner_broadcast_manage:cancelled:' + id }]);
+    if (['completed', 'failed', 'paused'].includes(b.status) && Number(b.failed_count) > 0) kb.push([{ text: '🔁 Retry Failed', callback_data: 'cc:owner_broadcast_retry:' + id }]);
+    kb.push([{ text: '↻ Refresh', callback_data: 'cc:owner_broadcast_detail:' + id }, { text: '← History', callback_data: 'cc:owner_broadcast_history' }]);
+    return renderView(ctx, msg, { inline_keyboard: kb }, true, true, { parse_mode: 'HTML' });
+  });
+  bot.action(/^cc:owner_broadcast_manage:(paused|pending|cancelled):(\d+)$/, async (ctx) => {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    const status = ctx.match[1], id = Number(ctx.match[2]);
+    const changed = await setCreatorBroadcastStatus(pool, null, id, status);
+    await safeAnswer(ctx, changed ? 'Broadcast updated.' : 'Broadcast could not be updated.', !changed);
+    return bot.telegram.editMessageReplyMarkup(ctx.chat.id, ctx.callbackQuery.message.message_id, undefined, {
+      inline_keyboard: [[{ text: '↻ Refresh Details', callback_data: 'cc:owner_broadcast_detail:' + id }], [{ text: '← History', callback_data: 'cc:owner_broadcast_history' }]],
+    }).catch(() => {});
+  });
+  bot.action(/^cc:owner_broadcast_retry:(\d+)$/, async (ctx) => {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    const id = Number(ctx.match[1]);
+    try {
+      const n = await retryCreatorBroadcast(pool, null, id);
+      await safeAnswer(ctx, 'Retry queued for ' + n + ' failed recipient(s).');
+    } catch (e) {
+      await safeAnswer(ctx, e.message || 'Retry failed.', true);
+    }
+    return renderView(ctx, '🔁 Retry requested for Broadcast #' + id, { inline_keyboard: [[{ text: '📋 Details', callback_data: 'cc:owner_broadcast_detail:' + id }, { text: 'History', callback_data: 'cc:owner_broadcast_history' }]] }, true, true);
+  });
+  bot.action('cc:owner_broadcast:platform', async (ctx) => {
+    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
+    await safeAnswer(ctx);
+    const bots = await deliveryManager.list(null);
+    const kb = [];
+    for (const b of bots.filter((b) => b.is_enabled)) {
+      const count = await pool.query('SELECT COUNT(*)::int AS count FROM delivery_bot_user_activity WHERE delivery_bot_id=$1', [b.id]);
+      const statusDot = b.runtime_status === 'running' ? '🟢' : '⚠️';
+      kb.push([{
+        text: `${statusDot} @${b.username} · ${Number(count.rows[0]?.count || 0)} users`,
+        callback_data: 'cc:owner_broadcast:bot:0:' + b.id,
+      }]);
+    }
+    kb.push([{ text: '← Back', callback_data: 'cc:owner_broadcast' }]);
+    const msg = kb.length <= 1
+      ? '🌐 <b>Platform Delivery Bots</b>\nNo enabled platform delivery bots found.'
+      : '🌐 <b>Platform Delivery Bots</b>\nSelect a delivery bot to broadcast to its tracked subscribers.';
+    return renderView(ctx, msg, { inline_keyboard: kb }, true, true, { parse_mode: 'HTML' });
   });
   bot.action(/^cc:owner_broadcast:creator:(\d+)$/, async (ctx) => {
     if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
@@ -3377,25 +4019,48 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     await safeAnswer(ctx);
     const bots = await deliveryManager.list(creatorId);
     const kb = [];
-    for (const b of bots.filter((b) => b.is_enabled && b.runtime_status === 'running')) {
+    for (const b of bots.filter((b) => b.is_enabled)) {
       const count = await pool.query('SELECT COUNT(*)::int AS count FROM delivery_bot_user_activity WHERE delivery_bot_id=$1', [b.id]);
-      kb.push([{ text: '🤖 @' + b.username + ' · ' + Number(count.rows[0]?.count || 0) + ' users', callback_data: 'cc:owner_broadcast:bot:' + creatorId + ':' + b.id }]);
+      const statusDot = b.runtime_status === 'running' ? '🟢' : '⚠️';
+      kb.push([{
+        text: `${statusDot} @${b.username} · ${Number(count.rows[0]?.count || 0)} users`,
+        callback_data: 'cc:owner_broadcast:bot:' + creatorId + ':' + b.id,
+      }]);
     }
     kb.push([{ text: '← Creators', callback_data: 'cc:owner_broadcast' }]);
-    return renderView(ctx, '👑 <b>Broadcast for Creator ' + creatorId + '</b>\nSelect their running delivery bot and audience.', { inline_keyboard: kb }, true, true, { parse_mode: 'HTML' });
+    const msg = kb.length <= 1
+      ? `👑 <b>Broadcast for Creator ${creatorId}</b>\nNo enabled delivery bots found for this creator.`
+      : `👑 <b>Broadcast for Creator ${creatorId}</b>\nSelect their delivery bot to message its tracked audience.`;
+    return renderView(ctx, msg, { inline_keyboard: kb }, true, true, { parse_mode: 'HTML' });
   });
   bot.action(/^cc:owner_broadcast:bot:(\d+):(\d+)$/, async (ctx) => {
     if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
     const creatorId = Number(ctx.match[1]), botId = Number(ctx.match[2]);
-    const bots = await deliveryManager.list(creatorId);
-    const selected = bots.find((b) => Number(b.id) === botId && b.is_enabled && b.runtime_status === 'running');
-    if (!selected) { await safeAnswer(ctx, 'Selected creator bot is no longer active.', true); return; }
+    const isPlatformBot = creatorId === 0;
+    const bots = await deliveryManager.list(isPlatformBot ? null : creatorId);
+    const selected = bots.find((b) => Number(b.id) === botId && b.is_enabled);
+    if (!selected) { await safeAnswer(ctx, 'Selected delivery bot is disabled or not found.', true); return; }
     const count = await pool.query('SELECT COUNT(*)::int AS count FROM delivery_bot_user_activity WHERE delivery_bot_id=$1', [botId]);
-    setPrompt(ctx.from.id, 'owner_broadcast', { back: 'cc:owner_broadcast:creator:' + creatorId, meta: { creatorId, botId } });
+    const audienceCount = Number(count.rows[0]?.count || 0);
+    if (audienceCount === 0) {
+      await safeAnswer(ctx, 'No tracked users on @' + selected.username + ' yet.', true);
+      return;
+    }
+    clearShortenerDraft(ctx.from.id);
+    shareLinksUi.clearSession(ctx.from.id);
+    paidLinksUi.clearSession(ctx.from.id);
+    walletUi.clearSession(ctx.from.id);
+    setPrompt(ctx.from.id, 'owner_broadcast', {
+      back: isPlatformBot ? 'cc:owner_broadcast:platform' : 'cc:owner_broadcast:creator:' + creatorId,
+      meta: { creatorId: isPlatformBot ? Number(ctx.from.id) : creatorId, botId, allowPlatformBot: isPlatformBot },
+    });
     await safeAnswer(ctx);
+    const titleLine = isPlatformBot
+      ? '✏️ <b>Broadcast via Platform Bot</b>'
+      : `✏️ <b>Broadcast on behalf of Creator ${creatorId}</b>`;
     return renderView(
       ctx,
-      '✏️ <b>Broadcast on behalf of Creator ' + creatorId + '</b>\n━━━━━━━━━━━━━━━━━━\n🤖 @' + escapeHtml(selected.username) + '\n👥 Audience: ' + Number(count.rows[0]?.count || 0) + '\n\nSend text, or attach a photo, video, document, or GIF with an optional caption. Add URL buttons on separate lines: Button: Label | https://example.com',
+      titleLine + '\n━━━━━━━━━━━━━━━━━━\n🤖 @' + escapeHtml(selected.username) + '\n👥 Audience: ' + audienceCount + '\n\nSend text, or attach a photo, video, document, or GIF with an optional caption. Add URL buttons on separate lines:\n<code>Button: Label | https://example.com</code>',
       { inline_keyboard: [[{ text: '✖ Cancel', callback_data: 'cc:cancel_prompt' }]] },
       true,
       true,
@@ -3427,6 +4092,10 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     if (isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
     const bots = await deliveryManager.list(Number(ctx.from.id));
     if (!pickCreatorBroadcastBot(bots)) { await safeAnswer(ctx, 'No active delivery bot is running.', true); return; }
+    clearShortenerDraft(ctx.from.id);
+    shareLinksUi.clearSession(ctx.from.id);
+    paidLinksUi.clearSession(ctx.from.id);
+    walletUi.clearSession(ctx.from.id);
     const cfg = setPrompt(ctx.from.id, 'creator_broadcast', { back: 'cc:broadcast' });
     await safeAnswer(ctx);
     return renderView(ctx, '✏️ <b>New Broadcast</b>\n━━━━━━━━━━━━━━━━━━\n' + escapeHtml(cfg.prompt), { inline_keyboard: [[{ text: '✖ Cancel', callback_data: 'cc:cancel_prompt' }]] }, true, true, { parse_mode: 'HTML' });
@@ -3499,11 +4168,23 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
           '2️⃣ Then send the -100... channel ID, @username, or t.me link — OR simply forward any post from your channel right here.',
         ].join('\n');
       } else if (action === 'delivery_bot_add' && !isOwnerAdmin(ctx)) {
-        const storageRows = await listStorageChannels(pool, Number(ctx.from.id)).catch(() => []);
+        const creatorId = Number(ctx.from.id);
+        const [bots, storageRows, slots] = await Promise.all([
+          deliveryManager.list(creatorId),
+          listStorageChannels(pool, creatorId).catch(() => []),
+          getCreatorSlotsSnapshot(creatorId, false),
+        ]);
+        const usedSlots = Math.max(slots.usedSlots, bots.length);
+        const remainingSlots = Math.max(0, slots.totalAllowed - usedSlots);
+        if (remainingSlots <= 0) {
+          clearPrompt(ctx.from.id);
+          await safeAnswer(ctx, 'Delivery Bot slot limit reached.', true);
+          return showSlotUnlockScreen(ctx, true, { limitReached: true });
+        }
         const hasOwnStorage = storageRows.some((c) => c.is_enabled);
         promptText = hasOwnStorage
-          ? `${cfg.prompt}\n\n🛡️ Reminder: Make sure your new Delivery Bot is also added as an Administrator in your own Storage Channel(s) — otherwise it will not work.`
-          : `${cfg.prompt}\n\n⚠️ IMPORTANT REQUIREMENT:\nYou MUST add your own Storage Channel (and make both this Main Bot and your Delivery Bot Administrators in it) — otherwise your Delivery Bot will NOT work!`;
+          ? `${cfg.prompt}\n\n🎟 Slot: ${usedSlots}/${slots.totalAllowed} used (${remainingSlots} available)\n🛡️ Reminder: Make sure your new Delivery Bot is also added as an Administrator in your own Storage Channel(s) — otherwise it will not work.`
+          : `${cfg.prompt}\n\n🎟 Slot: ${usedSlots}/${slots.totalAllowed} used (${remainingSlots} available)\n⚠️ IMPORTANT REQUIREMENT:\nYou MUST add your own Storage Channel (and make both this Main Bot and your Delivery Bot Administrators in it) — otherwise your Delivery Bot will NOT work!`;
         if (!hasOwnStorage) {
           inlineKeyboard.push([{ text: '🗄 Add Storage Channel First', callback_data: 'cc:prompt:storage_add' }]);
         }
@@ -3594,12 +4275,14 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
     else return next();
     clearPrompt(ctx.from.id);
     try {
-      let creatorId, botId;
+      let creatorId, botId, allowPlatformBot = false;
       if (active.action === 'owner_broadcast') {
         if (!isOwnerAdmin(ctx)) throw new Error('Owner permission required.');
-        creatorId = Number(active.meta?.creatorId); botId = Number(active.meta?.botId);
-        const bots = await deliveryManager.list(creatorId);
-        if (!bots.some(b => Number(b.id) === botId && b.is_enabled)) throw new Error('Selected creator bot is disabled or no longer owned by them.');
+        creatorId = Number(active.meta?.creatorId);
+        botId = Number(active.meta?.botId);
+        allowPlatformBot = Boolean(active.meta?.allowPlatformBot);
+        const bots = await deliveryManager.list(allowPlatformBot ? null : creatorId);
+        if (!bots.some(b => Number(b.id) === botId && b.is_enabled)) throw new Error('Selected delivery bot is disabled or no longer available.');
       } else {
         if (isOwnerAdmin(ctx)) throw new Error('Creator broadcasts must be sent from a creator account.');
         creatorId = Number(ctx.from.id);
@@ -3608,8 +4291,17 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
         if (!activeBot) throw new Error('No active delivery bot is running.');
         botId = Number(activeBot.id);
       }
-      const parsed=parseBroadcastContent(m.caption??'');
-      return showBroadcastPreview(ctx,{kind:active.action==='owner_broadcast'?'owner':'creator',ownerTelegramId:creatorId,deliveryBotId:botId,mediaType,mediaFileId,caption:parsed.body,buttons:parsed.buttons});
+      const parsed = parseBroadcastContent(m.caption ?? '');
+      return showBroadcastPreview(ctx, {
+        kind: active.action === 'owner_broadcast' ? 'owner' : 'creator',
+        ownerTelegramId: creatorId,
+        deliveryBotId: botId,
+        allowPlatformBot,
+        mediaType,
+        mediaFileId,
+        caption: parsed.body,
+        buttons: parsed.buttons,
+      });
     } catch (error) {
       return ctx.reply('❌ Could not queue media broadcast: ' + error.message, { reply_markup: { inline_keyboard: [[{ text: '↻ Try Again', callback_data: active.back || 'cc:broadcast' }]] } });
     }
@@ -3661,13 +4353,22 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
       switch (active.action) {
         case 'owner_broadcast': {
           if (!isOwnerAdmin(ctx)) throw new Error('Owner permission required.');
-          const creatorId=Number(active.meta?.creatorId),botId=Number(active.meta?.botId);
-          if(!Number.isSafeInteger(creatorId)||!Number.isSafeInteger(botId))throw new Error('Missing creator or delivery bot selection.');
-          const bots=await deliveryManager.list(creatorId);
-          if(!bots.some(b=>Number(b.id)===botId&&b.is_enabled))throw new Error('Selected creator bot is disabled or no longer owned by them.');
-          const parsed=parseBroadcastContent(text);
-          if(!parsed.body)throw new Error('Enter announcement text before adding buttons.');
-          return showBroadcastPreview(ctx,{kind:'owner',ownerTelegramId:creatorId,deliveryBotId:botId,messageText:parsed.body,buttons:parsed.buttons});
+          const creatorId = Number(active.meta?.creatorId);
+          const botId = Number(active.meta?.botId);
+          const allowPlatformBot = Boolean(active.meta?.allowPlatformBot);
+          if (!Number.isSafeInteger(creatorId) || !Number.isSafeInteger(botId)) throw new Error('Missing creator or delivery bot selection.');
+          const bots = await deliveryManager.list(allowPlatformBot ? null : creatorId);
+          if (!bots.some((b) => Number(b.id) === botId && b.is_enabled)) throw new Error('Selected delivery bot is disabled or no longer available.');
+          const parsed = parseBroadcastContent(text);
+          if (!parsed.body) throw new Error('Enter announcement text before adding buttons.');
+          return showBroadcastPreview(ctx, {
+            kind: 'owner',
+            ownerTelegramId: creatorId,
+            deliveryBotId: botId,
+            allowPlatformBot,
+            messageText: parsed.body,
+            buttons: parsed.buttons,
+          });
         }
         case 'creator_broadcast': {
           if (isOwnerAdmin(ctx)) throw new Error('Creator broadcasts must be sent from a creator account.');
@@ -3720,6 +4421,42 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
           }
           return ctx.reply(
             `🤖 Delivery Bot Connected!\n━━━━━━━━━━━━━━━━━━\n🆔 Record #${record.id}\n🤖 Bot: @${record.username}\n🏷 Role: ${record.role}\n⚡ Runtime: ${record.runtime_status}${extraNotice}`,
+            { reply_markup: replyMarkup },
+          );
+        }
+        case 'bot_replace': {
+          try { await ctx.deleteMessage(); } catch {}
+          const botId = Number(active.meta?.botId);
+          if (!Number.isSafeInteger(botId) || botId <= 0) throw new Error('Missing Delivery Bot ID.');
+          const existing = await findOwnedBotRow(botId, ownerId);
+          if (!existing) throw new Error('Delivery Bot not found.');
+          const replaced = await deliveryManager.replaceToken(botId, text.replace(/\s+/g, ''), ctx.from.id, ownerId);
+          const checks = replaced.checks || [];
+          const failedChecks = checks.filter((c) => c.status !== 'ok' && c.status !== 'force_sub_admin_ok');
+          let extraNotice = '\n✅ All your existing file & share links remain active.';
+          let replyMarkup = {
+            inline_keyboard: [
+              [{ text: '🤖 Bot Details', callback_data: `cc:bot:${replaced.bot.id}` }],
+              ...backKeyboard.inline_keyboard,
+            ],
+          };
+          if (ownerId !== null) {
+            const storageRows = await listStorageChannels(pool, ownerId).catch(() => []);
+            const hasOwnStorage = storageRows.some((c) => c.is_enabled);
+            if (!hasOwnStorage) {
+              extraNotice += `\n\n⚠️ Add your own Storage Channel and make both bots Administrators so @${replaced.bot.username} can deliver files.`;
+              replyMarkup = {
+                inline_keyboard: [
+                  [{ text: '🗄 Add Storage Channel Now', callback_data: 'cc:prompt:storage_add' }],
+                  ...replyMarkup.inline_keyboard,
+                ],
+              };
+            } else if (failedChecks.length > 0) {
+              extraNotice += `\n\n🛡️ Make sure @${replaced.bot.username} is added as Administrator in ${failedChecks.length} channel(s).`;
+            }
+          }
+          return ctx.reply(
+            `🔄 Delivery Bot Replaced!\n━━━━━━━━━━━━━━━━━━\n🆔 Record #${replaced.bot.id}\n🤖 New Bot: @${replaced.bot.username}\n⚡ Runtime: ${replaced.bot.runtime_status}${extraNotice}`,
             { reply_markup: replyMarkup },
           );
         }
@@ -4367,11 +5104,23 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
           return next();
       }
     } catch (error) {
+      if (active.action === 'delivery_bot_add' && error?.code === 'BOT_SLOT_LIMIT_REACHED') {
+        return ctx.reply('🔒 ' + error.message, {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🔓 Unlock +1 Slot', callback_data: 'cc:slot_unlock' }],
+              ...backKeyboard.inline_keyboard,
+            ],
+          },
+        });
+      }
       const retryRow = active.action === 'storage_add'
         ? [[{ text: '↻ Try Again', callback_data: 'cc:prompt:storage_add' }]]
         : active.action === 'delivery_bot_add'
           ? [[{ text: '↻ Try Again', callback_data: 'cc:prompt:delivery_bot_add' }]]
-          : [];
+          : active.action === 'bot_replace' && active.meta?.botId
+            ? [[{ text: '↻ Try Again', callback_data: `cc:bot_replace:${active.meta.botId}` }]]
+            : [];
       return ctx.reply('❌ Action failed: ' + error.message, {
         reply_markup: { inline_keyboard: [...retryRow, ...backKeyboard.inline_keyboard] },
       });

@@ -102,7 +102,15 @@ export function registerDeliveryBotManagerCommands(bot, manager, logger, pool, c
       logger.warn({ error: error.message, adminId: ctx.from.id }, 'Delivery Bot add rejected');
       if (error.code === 'BOT_SLOT_LIMIT_REACHED') {
         await ctx.reply(
-          '🔒 Free Delivery Bot Limit Reached\n━━━━━━━━━━━━━━━━━━\nYou get 1 Delivery Bot slot for free.\n\n• Open the Web Control Panel (/token -> Setup & Delivery Bots) to unlock 🔓 an extra bot slot.\n• Or if your old bot was deleted, use "Change Bot" on the Web Panel to replace its token without using an extra slot.',
+          '🔒 Free Delivery Bot Limit Reached\n━━━━━━━━━━━━━━━━━━\nYou get 1 Delivery Bot slot for free.\n\n• Tap 🔓 Unlock +1 Slot below (or open the Web Control Panel via /token) to add another slot.\n• Or tap 🤖 My Delivery Bots -> Change Bot Token to replace a deleted/old bot without using an extra slot.',
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '🔓 Unlock +1 Slot', callback_data: 'cc:slot_unlock' }],
+                [{ text: '🤖 My Delivery Bots', callback_data: 'cc:bots' }],
+              ],
+            },
+          },
         );
         return;
       }
