@@ -1,5 +1,5 @@
 // Platform-owner delivery-bot administration API routes.
-export async function handleOwnerBotRoutes({ req, res, method, pathname, auth, pool, state, parsedUrl, sendJson, readJsonBody, serializeOwnerBotRow, getDeliveryBotDetailsForOwner, updateDeliveryBotForOwner, saveDeliveryBotStartConfig, serializeStartConfig, cacheDeletePrefix }) {
+export async function handleOwnerBotRoutes({ req, res, method, pathname, auth, pool, state, parsedUrl, sendJson, readJsonBody, serializeOwnerBotRow, listAllDeliveryBotsForOwner, getBotSlotSettings, getDeliveryBotDetailsForOwner, updateDeliveryBotForOwner, saveDeliveryBotStartConfig, serializeStartConfig, cacheDeletePrefix }) {
   const respond = (...args) => { sendJson(...args); return true; };
         if (method === 'GET' && pathname === '/api/panel/owner/bots') {
           const q = parsedUrl.searchParams.get('q') || '';
