@@ -295,6 +295,7 @@ function createBroadcastPool() {
         b.status = 'pending';
         b.completed_at = null;
         b.last_error = null;
+        b.failed_count = Math.max(0, Number(b.failed_count || 0) - Number(params[1] || 0));
       }
       return { rows: [], rowCount: b ? 1 : 0 };
     }
@@ -401,6 +402,7 @@ test('Web Panel API: Owner broadcasts on behalf of creators and platform bots wh
     assert.equal(retryRes.status, 200);
     assert.equal(retryRes.data.retriedCount, 1);
     assert.equal(creatorCampaign.status, 'pending');
+    assert.equal(creatorCampaign.failed_count, 0, 'retry resets the outstanding failed count');
 
     const cancelRes = await api(`/api/panel/broadcasts/${creatorCampaign.id}/cancel`, ownerToken, { method: 'POST' });
     assert.equal(cancelRes.status, 200);
