@@ -71,7 +71,7 @@ test('checkpoint rotation skips unverified providers and counts only eligible pr
     query: async (sql) => {
       if (sql.includes('FROM shortener_providers')) return { rowCount: 3, rows: [
         { id: 10, name: 'Broken verifier', verification_mode: 'unverified' },
-        { id: 11, name: 'Ready A', verification_mode: 'unverified' },
+        { id: 11, name: 'Ready A', verification_mode: 'provider_api' },
         { id: 12, name: 'Ready B', verification_mode: 'provider_api' },
       ] };
       if (sql.includes('FROM user_checkpoint_state')) return { rowCount: 1, rows: [{ last_provider_id: 11, checkpoint_expires_at: new Date(Date.now() - 1000) }] };
@@ -102,7 +102,7 @@ test('active checkpoint grants access until expiry', async () => {
 test('expired checkpoint advances to the next provider in priority order', async () => {
   const pool = {
     query: async (sql) => {
-      if (sql.includes('FROM shortener_providers')) return { rowCount: 2, rows: [{ id: 4, name: 'A', verification_mode: 'provider_api' }, { id: 5, name: 'B', verification_mode: 'callback' }] };
+      if (sql.includes('FROM shortener_providers')) return { rowCount: 2, rows: [{ id: 4, name: 'A', verification_mode: 'provider_api' }, { id: 5, name: 'B', verification_mode: 'unverified' }] };
       if (sql.includes('FROM user_checkpoint_state')) return { rowCount: 1, rows: [{ last_provider_id: 4, checkpoint_expires_at: new Date(Date.now() - 60_000) }] };
       throw new Error('Unexpected query');
     },
