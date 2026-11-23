@@ -32,21 +32,22 @@ function isRateLimited(ip) {
 
 function recordAuthFailure(ip) {
   const now = Date.now();
+  const entry = failedAuthAttempts.get(ip);
+  if (entry && entry.resetAt > now) {
+    entry.count += 1;
+    return;
+  }
+
   if (failedAuthAttempts.size >= 1000) {
-    for (const [k, v] of failedAuthAttempts.entries()) {
-      if (v.resetAt <= now) failedAuthAttempts.delete(k);
+    for (const [key, value] of failedAuthAttempts.entries()) {
+      if (value.resetAt <= now) failedAuthAttempts.delete(key);
     }
     if (failedAuthAttempts.size >= 1000) {
       const oldestIp = failedAuthAttempts.keys().next().value;
       if (oldestIp !== undefined) failedAuthAttempts.delete(oldestIp);
     }
   }
-  const entry = failedAuthAttempts.get(ip);
-  if (!entry || entry.resetAt <= now) {
-    failedAuthAttempts.set(ip, { count: 1, resetAt: now + AUTH_WINDOW_MS });
-  } else {
-    entry.count += 1;
-  }
+  failedAuthAttempts.set(ip, { count: 1, resetAt: now + AUTH_WINDOW_MS });
 }
 
 function clearAuthFailures(ip) {
