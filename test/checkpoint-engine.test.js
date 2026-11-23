@@ -48,6 +48,26 @@ test('checkpoint provider remains blocked until a verifier is configured', async
   assert.equal(result.reason, 'provider_verification_not_configured');
 });
 
+test('checkpoint rotation skips unverified providers and counts only eligible providers', async () => {
+  const pool = {
+    query: async (sql) => {
+      if (sql.includes('FROM shortener_providers')) return { rowCount: 3, rows: [
+        { id: 10, name: 'Broken verifier', verification_mode: 'unverified' },
+        { id: 11, name: 'Ready A', verification_mode: 'callback' },
+        { id: 12, name: 'Ready B', verification_mode: 'provider_api' },
+      ] };
+      if (sql.includes('FROM user_checkpoint_state')) return { rowCount: 1, rows: [{ last_provider_id: 11, checkpoint_expires_at: new Date(Date.now() - 1000) }] };
+      throw new Error('Unexpected query');
+    },
+  };
+  const result = await getCheckpointRequirement(pool, 1234);
+  assert.equal(result.blocked, undefined);
+  assert.equal(result.provider.id, 12);
+  assert.deepEqual(result.candidates.map((p) => p.id), [12, 11]);
+  assert.equal(result.step, 2);
+  assert.equal(result.total, 2);
+});
+
 test('active checkpoint grants access until expiry', async () => {
   const pool = {
     query: async (sql) => {
