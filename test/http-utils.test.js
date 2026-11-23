@@ -11,7 +11,7 @@ test('getClientIp uses the rightmost valid forwarded IP and falls back to socket
 test('auth rate-limit map remains bounded and still rate-limits recent IPs', () => {
   const prefix = 'http-utils-cap-test-';
   for (let i = 0; i <= 1000; i += 1) {
-    const ip = `10.${Math.floor(i / 65536)}.${Math.floor((i % 65536) / 256)}.${i % 256`;
+    const ip = `10.${Math.floor(i / 65536)}.${Math.floor((i % 65536) / 256)}.${i % 256}`;
     for (let failure = 0; failure < 20; failure += 1) recordAuthFailure(prefix + ip);
   }
   assert.equal(isRateLimited(prefix + '10.0.0.0'), false);
