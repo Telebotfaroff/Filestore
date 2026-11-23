@@ -1361,7 +1361,7 @@ export async function handlePanelApiRequest(req, res, state, logger) {
     if (await handleBroadcastRoutes({ req, res, method, pathname, auth, pool, state, parsedUrl, sendJson, readJsonBody })) return;
 
         // Creator dashboard directory endpoints are handled by their dedicated module.
-    if (await handleCreatorRoutes({ method, pathname, auth, pool, parsedUrl, sendJson, listPanelUsers, listPanelPremiumMembers })) return;
+    if (await handleCreatorRoutes({ res, method, pathname, auth, pool, parsedUrl, sendJson, listPanelUsers, listPanelPremiumMembers })) return;
 
 // ── Owner-Only Routes (/api/panel/owner/*) ──────────────────────────
     if (pathname.startsWith('/api/panel/owner/')) {
