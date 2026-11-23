@@ -1,4 +1,5 @@
 // Shared HTTP helpers for panel API routes.
+import { gzipSync } from 'node:zlib';
 const MAX_BODY_BYTES = 64 * 1024;
 const AUTH_WINDOW_MS = 5 * 60 * 1000;
 const AUTH_MAX_FAILURES = 20;
