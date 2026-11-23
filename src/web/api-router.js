@@ -606,7 +606,7 @@ export async function handlePanelApiRequest(req, res, state, logger) {
       if (await handleOwnerSettingsRoutes({ req, res, method, pathname, auth, pool, sendJson, readJsonBody, getBotSlotSettings, setBotSlotSettings, listOwnerReferrals, setReferralSettings, getOwnerPlatformFeeSummary, setPlatformFeeSettings, parseMinorAmount })) return;
 
       // Owner delivery-bot management is handled by the dedicated route module.
-      if (await handleOwnerBotRoutes({ req, res, method, pathname, auth, pool, state, parsedUrl, sendJson, readJsonBody, serializeOwnerBotRow, getDeliveryBotDetailsForOwner, updateDeliveryBotForOwner, saveDeliveryBotStartConfig, serializeStartConfig, cacheDeletePrefix })) return;
+      if (await handleOwnerBotRoutes({ req, res, method, pathname, auth, pool, state, parsedUrl, sendJson, readJsonBody, serializeOwnerBotRow, listAllDeliveryBotsForOwner, getBotSlotSettings, getDeliveryBotDetailsForOwner, updateDeliveryBotForOwner, saveDeliveryBotStartConfig, serializeStartConfig, cacheDeletePrefix })) return;
 
       // Owner analytics and dashboard endpoints are handled by the dedicated module.
       if (await handleOwnerDashboardRoutes({ req, res, method, pathname, auth, pool, parsedUrl, sendJson, readJsonBody, getOwnerLinkAnalytics, getAdminDashboardStats, getOperationalHealth, getPaymentReconciliationStats, getPaymentAnalytics, getRecentDeliveryJobs, getAutoDeleteMinutes, listFailedScheduledDeletions, listPaymentMethods, normalizeOwnerStats, setAutoDeleteMinutes, retryFailedDeliveryJob })) return;
