@@ -1,6 +1,6 @@
 # FileStore — Telegram FileStore Bot Platform & Web Control Panel
 
-A full-stack **Node.js (v22+) + PostgreSQL** Telegram FileStore platform featuring a Main Bot, multi-worker Delivery Bots (including creator-owned cloned bots), Paid Links & Batches, Creator VIP Plans, Wallets & UPI Payouts, Configurable Platform Fees, Referrals, Broadcasts, URL Shorteners, Force-Sub Gates, and a Web Control Panel.
+A full-stack **Node.js (v22+) + PostgreSQL** Telegram FileStore platform featuring a Main Bot, multi-worker Delivery Bots  Referrals, Broadcasts, URL Shorteners, Force-Sub Gates, and a Web Control Panel.
 
 ---
 
