@@ -48,6 +48,24 @@ test('checkpoint provider remains blocked until a verifier is configured', async
   assert.equal(result.reason, 'provider_verification_not_configured');
 });
 
+test('callback-only providers cannot unlock checkpoint access', async () => {
+  const pool = {
+    query: async (sql) => {
+      if (sql.includes('FROM shortener_providers')) return { rowCount: 2, rows: [
+        { id: 20, name: 'Callback only', verification_mode: 'callback' },
+        { id: 21, name: 'Unverified', verification_mode: 'unverified' },
+      ] };
+      if (sql.includes('FROM user_checkpoint_state')) return { rowCount: 0, rows: [] };
+      throw new Error('Unexpected query');
+    },
+  };
+  const result = await getCheckpointRequirement(pool, 5678);
+  assert.equal(result.required, true);
+  assert.equal(result.blocked, true);
+  assert.equal(result.reason, 'provider_verification_not_supported');
+  assert.deepEqual(result.candidates, []);
+});
+
 test('checkpoint rotation skips unverified providers and counts only eligible providers', async () => {
   const pool = {
     query: async (sql) => {
