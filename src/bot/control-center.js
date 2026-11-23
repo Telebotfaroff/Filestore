@@ -3123,7 +3123,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
 
   registerCreatorBroadcastActions(bot, { isOwnerAdmin, denyAdminOnly, safeAnswer, deliveryManager, pickCreatorBroadcastBot, pool, escapeHtml, renderView, listCreatorBroadcasts, clearShortenerDraft, shareLinksUi, paidLinksUi, walletUi, setPrompt, getCreatorBroadcast, setCreatorBroadcastStatus, retryCreatorBroadcast });
 
-  registerPromptActions(bot, { OWNER_ONLY_PROMPTS, isOwnerAdmin, denyAdminOnly, setPrompt, deliveryManager, pool, getCreatorSlotsSnapshot, clearPrompt, safeAnswer, showSlotUnlockScreen, renderView, getActivePrompt, getShortenerDraft, clearShortenerDraft });
+  registerPromptActions(bot, { OWNER_ONLY_PROMPTS, isOwnerAdmin, denyAdminOnly, setPrompt, deliveryManager, pool, listStorageChannels, getCreatorSlotsSnapshot, clearPrompt, safeAnswer, showSlotUnlockScreen, renderView, getActivePrompt, getShortenerDraft, clearShortenerDraft });
 
   registerForwardedMessageActions(bot, { getActivePrompt, clearPrompt, getOwnerScope, validateStorageChannel, isOwnerAdmin, pool, saveStorageChannel, deliveryManager, pickCreatorBroadcastBot, parseBroadcastContent, showBroadcastPreview });
 
