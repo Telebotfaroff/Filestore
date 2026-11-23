@@ -1,8 +1,11 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 function getEncryptionKey(encodedKey) {
-  const key = Buffer.from(String(encodedKey ?? '').trim(), 'base64');
-  if (key.length !== 32) throw new Error('TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key');
+  const value = String(encodedKey ?? '').trim();
+  const key = /^[a-f0-9]{64}$/i.test(value)
+    ? Buffer.from(value, 'hex')
+    : Buffer.from(value, 'base64');
+  if (key.length !== 32) throw new Error('TOKEN_ENCRYPTION_KEY must be a 32-byte key encoded as 64 hex characters or base64');
   return key;
 }
 
@@ -43,8 +46,11 @@ export async function resolveTokenEncryptionKey(pool, configuredKey = '') {
     [RUNTIME_KEY_SETTING],
   );
   const existingKey = String(existing.rows[0]?.key ?? '').trim();
-  if (existingKey && Buffer.from(existingKey, 'base64').length === 32) {
-    return existingKey;
+  if (existingKey) {
+    try {
+      getEncryptionKey(existingKey);
+      return existingKey;
+    } catch {}
   }
 
   const generated = randomBytes(32).toString('base64');
