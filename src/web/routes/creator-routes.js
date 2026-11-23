@@ -1,5 +1,5 @@
 // Creator/owner dashboard user directory API routes.
-export async function handleCreatorRoutes({ method, pathname, auth, pool, parsedUrl, sendJson, listPanelUsers, listPanelPremiumMembers }) {
+export async function handleCreatorRoutes({ res, method, pathname, auth, pool, parsedUrl, sendJson, listPanelUsers, listPanelPremiumMembers }) {
   const respond = (...args) => { sendJson(...args); return true; };
       if (method === 'GET' && pathname === '/api/panel/users') {
         const q = parsedUrl.searchParams.get('q') || '';
