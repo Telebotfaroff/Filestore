@@ -1472,7 +1472,7 @@ export async function handlePanelApiRequest(req, res, state, logger) {
     }
 
     // Creator and owner broadcast routes are handled by their dedicated module.
-    if (await handleBroadcastRoutes({ method, pathname, auth, pool, parsedUrl, sendJson, readJsonBody })) return;
+    if (await handleBroadcastRoutes({ req, res, method, pathname, auth, pool, state, parsedUrl, sendJson, readJsonBody })) return;
 
     // Dashboard user directory and premium membership directory (tenant-scoped for creators).
     if (method === 'GET' && pathname === '/api/panel/users') {
