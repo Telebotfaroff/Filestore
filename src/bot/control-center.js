@@ -8,6 +8,7 @@ import { registerPaymentMethodActions } from './controllers/payment-method-contr
 import { registerCreatorPlanActions } from './controllers/creator-plan-controller.js';
 import { registerGatewayActions } from './controllers/gateway-controller.js';
 import { registerPaidLinkActions } from './controllers/paid-link-controller.js';
+import { registerAutoDeleteActions } from './controllers/auto-delete-controller.js';
 import {
   createCreatorBroadcast,
   getCreatorBroadcast,
@@ -3028,15 +3029,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
 
   registerPaidLinkActions(bot, { safeAnswer, showPaidLinkDetail, deletePaidFileLink, pool, getOwnerScope, showPaidLinks, getPaidFileLinkByIdOrCode, setPaidFileLinkEnabled, disablePaidFileLink, isOwnerAdmin, denyAdminOnly, confirmPaidFilePurchase, getPaidFileLink, showPaidRequests, showBatchLinkDetail, deletePaidBatchLink, showBatchLinks, getPaidBatchByIdOrCode, setPaidBatchLinkEnabled, disablePaidBatchLink, confirmPaidBatchPurchase, getPaidBatch, showBatchRequests });
 
-  // Auto-delete presets
-  bot.action(/^cc:autodel_set:(\d+)$/, async (ctx) => {
-    if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
-    const minutes = Number(ctx.match[1]);
-    if (minutes > 10080) return safeAnswer(ctx, 'Max 10080 minutes.', true);
-    await setAutoDeleteMinutes(pool, minutes, ctx.from.id);
-    await safeAnswer(ctx, minutes ? `Auto-delete set to ${minutes}m.` : 'Auto-delete turned OFF.');
-    await showAutoDelete(ctx, true);
-  });
+  registerAutoDeleteActions(bot, { isOwnerAdmin, denyAdminOnly, pool, setAutoDeleteMinutes, safeAnswer, showAutoDelete });
 
   function parseBroadcastContent(raw) {
     const lines = String(raw ?? '').split(/\r?\n/), buttons = [], body = [];
