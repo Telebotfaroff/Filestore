@@ -18,6 +18,7 @@ import { registerPaidFileAdminCommands } from '../paid-files/admin-commands.js';
 import { registerPaidBatchAdminCommands } from '../paid-files/batch-admin-commands.js';
 import { registerAutoDeleteCommands } from '../delivery/auto-delete-admin-commands.js';
 import { registerDashboardCommands } from '../admin/dashboard-commands.js';
+import { handleStarsPreCheckout, handleStarsSuccessfulPayment } from '../payments/telegram-stars.js';
 
 export const MAIN_BOT_MENU_COMMANDS = Object.freeze([
   { command: 'start', description: 'Open FileStore Hub & main menu' },
@@ -34,7 +35,9 @@ export function createMainBot(config, logger, pool) {
     }
     if (ctx.from?.id) {
       try {
-        await upsertTelegramUser(pool, ctx.from);
+        const res = await upsertTelegramUser(pool, ctx.from);
+        ctx.state = ctx.state ?? {};
+        ctx.state.isNewTelegramUser = Boolean(res?.isNewUser);
       } catch (error) {
         logger?.warn?.({ userId: ctx.from.id, error: error.message }, 'Main Bot user upsert failed');
       }
@@ -105,6 +108,15 @@ export function createMainBot(config, logger, pool) {
   registerPaymentAdminCommands(adminRouter.adminBot, pool, config, logger);
   registerAutoDeleteCommands(adminRouter.adminBot, pool, logger);
   registerDashboardCommands(adminRouter.adminBot, pool, logger, config);
+
+  bot.on('pre_checkout_query', (ctx) => handleStarsPreCheckout(bot, pool, ctx, config.mainBotToken, logger));
+  bot.on('message', async (ctx, next) => {
+    if (ctx.message?.successful_payment) {
+      await handleStarsSuccessfulPayment(pool, ctx, config.mainBotToken, logger, config.adminIds, bot.telegram);
+      return;
+    }
+    return next();
+  });
 
   adminRouter.registerPromptTextHandler();
   bot.adminRouter = adminRouter;

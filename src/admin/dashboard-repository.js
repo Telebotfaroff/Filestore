@@ -119,15 +119,17 @@ export async function listPaymentTransactions(pool, { limit = 5, offset = 0, sta
   const safeOffset = Math.max(0, Number.isSafeInteger(Number(offset)) ? Number(offset) : 0);
   const safeStatus = PAYMENT_LIST_STATUSES.has(status) ? status : 'all';
   const where = safeStatus === 'all' ? '' : ' WHERE status = $1';
-  const countResult = await pool.query('SELECT COUNT(*)::int AS total FROM payment_transactions' + where, safeStatus === 'all' ? [] : [safeStatus]);
   const queryParams = safeStatus === 'all' ? [safeLimit, safeOffset] : [safeStatus, safeLimit, safeOffset];
   const limitIndex = safeStatus === 'all' ? '$1' : '$2';
   const offsetIndex = safeStatus === 'all' ? '$2' : '$3';
-  const { rows } = await pool.query(
-    'SELECT id, user_telegram_id, method, purpose, amount_minor, currency, status, external_transaction_id, created_at FROM payment_transactions' + where + ' ORDER BY created_at DESC LIMIT ' + limitIndex + ' OFFSET ' + offsetIndex,
-    queryParams,
-  );
-  return { rows, total: Number(countResult.rows[0]?.total ?? 0), limit: safeLimit, offset: safeOffset, status: safeStatus };
+  const [countResult, rowsResult] = await Promise.all([
+    pool.query('SELECT COUNT(*)::int AS total FROM payment_transactions' + where, safeStatus === 'all' ? [] : [safeStatus]),
+    pool.query(
+      'SELECT id, user_telegram_id, method, purpose, amount_minor, currency, status, external_transaction_id, created_at FROM payment_transactions' + where + ' ORDER BY created_at DESC LIMIT ' + limitIndex + ' OFFSET ' + offsetIndex,
+      queryParams,
+    ),
+  ]);
+  return { rows: rowsResult.rows, total: Number(countResult.rows[0]?.total ?? 0), limit: safeLimit, offset: safeOffset, status: safeStatus };
 }
 
 export async function searchPaymentTransactions(pool, searchTerm, limit = 10) {
@@ -136,55 +138,67 @@ export async function searchPaymentTransactions(pool, searchTerm, limit = 10) {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 10, 10));
   const pattern = '%' + term + '%';
   const params = [term, pattern];
-  const countResult = await pool.query(
-    `SELECT COUNT(*)::int AS total FROM payment_transactions
-     WHERE id::text = $1 OR user_telegram_id::text = $1
-        OR external_transaction_id ILIKE $2
-        OR utr ILIKE $2`,
-    params,
-  );
-  const { rows } = await pool.query(
-    `SELECT id, user_telegram_id, method, purpose, amount_minor, currency, status, external_transaction_id, created_at
-     FROM payment_transactions
-     WHERE id::text = $1 OR user_telegram_id::text = $1
-        OR external_transaction_id ILIKE $2
-        OR utr ILIKE $2
-     ORDER BY created_at DESC LIMIT $3`,
-    [...params, safeLimit],
-  );
-  return { rows, total: Number(countResult.rows[0]?.total ?? 0), term, limit: safeLimit };
+  const [countResult, rowsResult] = await Promise.all([
+    pool.query(
+      `SELECT COUNT(*)::int AS total FROM payment_transactions
+       WHERE id::text = $1 OR user_telegram_id::text = $1
+          OR external_transaction_id ILIKE $2
+          OR utr ILIKE $2`,
+      params,
+    ),
+    pool.query(
+      `SELECT id, user_telegram_id, method, purpose, amount_minor, currency, status, external_transaction_id, created_at
+       FROM payment_transactions
+       WHERE id::text = $1 OR user_telegram_id::text = $1
+          OR external_transaction_id ILIKE $2
+          OR utr ILIKE $2
+       ORDER BY created_at DESC LIMIT $3`,
+      [...params, safeLimit],
+    ),
+  ]);
+  return { rows: rowsResult.rows, total: Number(countResult.rows[0]?.total ?? 0), term, limit: safeLimit };
 }
 
 export async function getPaymentAnalytics(pool) {
-  const daily = await pool.query(`SELECT date_trunc('day', created_at)::date AS day, currency,
-      COUNT(*) FILTER (WHERE status = 'applied')::int AS successful_count,
-      COUNT(*) FILTER (WHERE status IN ('failed','rejected','expired'))::int AS unsuccessful_count,
-      COALESCE(SUM(amount_minor) FILTER (WHERE status = 'applied'), 0)::bigint AS successful_minor,
-      COUNT(*)::int AS total_count
-    FROM payment_transactions WHERE created_at >= NOW() - INTERVAL '30 days'
-    GROUP BY 1, 2 ORDER BY 1, 2`);
-  const methods = await pool.query(`SELECT method, currency,
-      COUNT(*) FILTER (WHERE status = 'applied')::int AS successful_count,
-      COUNT(*) FILTER (WHERE status IN ('failed','rejected','expired'))::int AS unsuccessful_count,
-      COALESCE(SUM(amount_minor) FILTER (WHERE status = 'applied'), 0)::bigint AS successful_minor,
-      COUNT(*)::int AS total_count
-    FROM payment_transactions WHERE created_at >= NOW() - INTERVAL '30 days'
-    GROUP BY method, currency ORDER BY method, currency`);
-  const totals = await pool.query(`SELECT currency,
-      COUNT(*) FILTER (WHERE status = 'applied')::int AS successful_count,
-      COUNT(*) FILTER (WHERE status IN ('failed','rejected','expired'))::int AS unsuccessful_count,
-      COUNT(*)::int AS total_count,
-      COALESCE(SUM(amount_minor) FILTER (WHERE status = 'applied'), 0)::bigint AS successful_minor
-    FROM payment_transactions WHERE created_at >= NOW() - INTERVAL '30 days'
-    GROUP BY currency ORDER BY currency`);
-  const premium = await pool.query(`SELECT
-      (SELECT COUNT(*)::int FROM premium_memberships WHERE status = 'active' AND starts_at <= NOW() AND (expires_at IS NULL OR expires_at > NOW())) AS active_members,
-      COUNT(*) FILTER (WHERE status = 'active' AND starts_at <= NOW() AND (expires_at IS NULL OR expires_at > NOW()))::int AS new_members_30d,
-      COUNT(*)::int AS membership_records_30d
-    FROM premium_memberships WHERE created_at >= NOW() - INTERVAL '30 days'`);
-  const users = await pool.query(`SELECT COUNT(DISTINCT user_telegram_id)::int AS paying_users_30d
-    FROM payment_transactions WHERE status = 'applied' AND created_at >= NOW() - INTERVAL '30 days'`);
-  return { daily: daily.rows, methods: methods.rows, totals: totals.rows, premium: premium.rows[0] ?? {}, payingUsers: Number(users.rows[0]?.paying_users_30d ?? 0) };
+  return cached('dashboard:payment-analytics', 15_000, async () => {
+    const [daily, methods, totals, premium, users] = await Promise.all([
+      pool.query(`SELECT date_trunc('day', created_at)::date AS day, currency,
+          COUNT(*) FILTER (WHERE status = 'applied')::int AS successful_count,
+          COUNT(*) FILTER (WHERE status IN ('failed','rejected','expired'))::int AS unsuccessful_count,
+          COALESCE(SUM(amount_minor) FILTER (WHERE status = 'applied'), 0)::bigint AS successful_minor,
+          COUNT(*)::int AS total_count
+        FROM payment_transactions WHERE created_at >= NOW() - INTERVAL '30 days'
+        GROUP BY 1, 2 ORDER BY 1, 2`),
+      pool.query(`SELECT method, currency,
+          COUNT(*) FILTER (WHERE status = 'applied')::int AS successful_count,
+          COUNT(*) FILTER (WHERE status IN ('failed','rejected','expired'))::int AS unsuccessful_count,
+          COALESCE(SUM(amount_minor) FILTER (WHERE status = 'applied'), 0)::bigint AS successful_minor,
+          COUNT(*)::int AS total_count
+        FROM payment_transactions WHERE created_at >= NOW() - INTERVAL '30 days'
+        GROUP BY method, currency ORDER BY method, currency`),
+      pool.query(`SELECT currency,
+          COUNT(*) FILTER (WHERE status = 'applied')::int AS successful_count,
+          COUNT(*) FILTER (WHERE status IN ('failed','rejected','expired'))::int AS unsuccessful_count,
+          COUNT(*)::int AS total_count,
+          COALESCE(SUM(amount_minor) FILTER (WHERE status = 'applied'), 0)::bigint AS successful_minor
+        FROM payment_transactions WHERE created_at >= NOW() - INTERVAL '30 days'
+        GROUP BY currency ORDER BY currency`),
+      pool.query(`SELECT
+          (SELECT COUNT(*)::int FROM premium_memberships WHERE status = 'active' AND starts_at <= NOW() AND (expires_at IS NULL OR expires_at > NOW())) AS active_members,
+          COUNT(*) FILTER (WHERE status = 'active' AND starts_at <= NOW() AND (expires_at IS NULL OR expires_at > NOW()))::int AS new_members_30d,
+          COUNT(*)::int AS membership_records_30d
+        FROM premium_memberships WHERE created_at >= NOW() - INTERVAL '30 days'`),
+      pool.query(`SELECT COUNT(DISTINCT user_telegram_id)::int AS paying_users_30d
+        FROM payment_transactions WHERE status = 'applied' AND created_at >= NOW() - INTERVAL '30 days'`),
+    ]);
+    return {
+      daily: daily.rows,
+      methods: methods.rows,
+      totals: totals.rows,
+      premium: premium.rows[0] ?? {},
+      payingUsers: Number(users.rows[0]?.paying_users_30d ?? 0),
+    };
+  });
 }
 
 export function formatPaymentAnalytics(analytics) {

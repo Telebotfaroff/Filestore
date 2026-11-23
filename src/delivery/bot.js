@@ -25,8 +25,22 @@ import { startFamPayVerificationWorker } from '../payments/fampay-worker.js';
 import { getShareLinkByCode } from '../storage/share-links-repository.js';
 import { escapeHtml, getCommandArgs, inspectBotChannelAccess, safeAnswer } from '../bot/telegram-utils.js';
 import { formatMoney } from '../utils/validation.js';
+import {
+  appendStartCloneNote,
+  buildDeliveryStartCloneMeta,
+  getCachedDeliveryBotStartConfig,
+  normalizeMainBotUsername,
+  sendCustomStartMessage,
+} from './start-message-repository.js';
 
 const HTML = { parse_mode: 'HTML' };
+
+export const DELIVERY_BOT_MENU_COMMANDS = Object.freeze([
+  { command: 'start', description: 'Welcome & overview' },
+  { command: 'premium', description: 'Buy Premium for ad-free access' },
+  { command: 'me', description: 'Account info & Premium status' },
+  { command: 'file', description: 'Display & get your paid files' },
+]);
 
 async function getStarsConfig(pool) {
   const result = await pool.query('SELECT public_config,is_enabled FROM payment_methods WHERE method=$1', ['telegram_stars']);
@@ -183,6 +197,19 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
     includeGlobal: botMeta.includeGlobal !== false,
   };
   const botOwnerScope = botMeta.ownerTelegramId ?? null;
+  let resolvedMainBotUsername = normalizeMainBotUsername(botMeta.mainBotUsername ?? config?.mainBotUsername);
+
+  async function resolveMainBotUsername() {
+    if (resolvedMainBotUsername) return resolvedMainBotUsername;
+    if (typeof config?.notifyTelegram?.getMe === 'function') {
+      try {
+        const info = await config.notifyTelegram.getMe();
+        resolvedMainBotUsername = normalizeMainBotUsername(info?.username);
+        if (resolvedMainBotUsername) return resolvedMainBotUsername;
+      } catch {}
+    }
+    return null;
+  }
 
   function resolveCreatorScope(creatorId) {
     const id = Number(creatorId);
@@ -212,10 +239,13 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
     const command = ctx.message?.text?.trim().split(/\s+/)[0]?.split('@')[0] ?? '';
     const cbData = ctx.callbackQuery?.data ?? '';
     const hasPendingUtr = Boolean(ctx.from?.id && ctx.message?.text && !command.startsWith('/') && getUtrPrompt(ctx.from.id));
-    const allowed = ['/start', '/verify', '/get', '/paid', '/batch', '/batch_get', '/premium', '/checkpoint_status', '/access_status', '/cancel', '/help'].includes(command)
+    const allowed = ['/start', '/premium', '/me', '/file', '/verify', '/get', '/paid', '/batch', '/batch_get', '/checkpoint_status', '/access_status', '/cancel', '/help'].includes(command)
       || Boolean(ctx.message?.successful_payment)
       || Boolean(ctx.preCheckoutQuery)
       || hasPendingUtr
+      || cbData === 'fs_me'
+      || cbData === 'fs_file_list'
+      || cbData.startsWith('fs_file_')
       || cbData === 'fs_verify'
       || cbData.startsWith('fs_verify:')
       || cbData.startsWith('fs_premium_')
@@ -225,7 +255,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
       || cbData.startsWith('fs_batch_')
       || cbData.startsWith('fs_fp_');
     if (allowed) return next();
-    if (ctx.chat?.type === 'private') await ctx.reply('🤖 Open a valid FileStore share link, or send /start to see available commands.');
+    if (ctx.chat?.type === 'private') await ctx.reply('🤖 Open a valid FileStore share link, or use /start, /premium, /me, or /file.');
   });
 
   bot.on('pre_checkout_query', (ctx) => handleStarsPreCheckout(bot, pool, ctx, token, logger));
@@ -659,40 +689,84 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
     await upsertTelegramUser(pool, ctx.from);
     const payload = (ctx.startPayload ?? getCommandArgs(ctx)[0] ?? '').trim();
     if (!payload) {
-      if (Array.isArray(config?.adminIds) && config.adminIds.length > 0 && isAdmin(ctx.from.id, config.adminIds)) {
-        await ctx.reply(
+      const adminCaller = Array.isArray(config?.adminIds) && config.adminIds.length > 0 && isAdmin(ctx.from.id, config.adminIds);
+      const mainBotUsername = await resolveMainBotUsername();
+      const customStart = workerScope.deliveryBotId
+        ? await getCachedDeliveryBotStartConfig(pool, workerScope.deliveryBotId)
+        : null;
+      const hasCustomStart = Boolean(
+        customStart && (customStart.start_message || customStart.start_image_url || customStart.start_image_data),
+      );
+      if (hasCustomStart && (!adminCaller || workerScope.ownerTelegramId !== null)) {
+        const sentCustom = await sendCustomStartMessage(
+          ctx,
+          customStart,
+          ctx.botInfo ?? bot.botInfo,
+          logger,
+          mainBotUsername,
+        );
+        if (sentCustom) return;
+      }
+      const { mainBotUsername: cleanMainHandle } = buildDeliveryStartCloneMeta(mainBotUsername);
+      const cloneButtonRow = cleanMainHandle
+        ? [{ text: '🤖 Create Clone', url: `https://t.me/${cleanMainHandle}?start=clone` }]
+        : [];
+      const firstName = escapeHtml(ctx.from?.first_name || ctx.from?.username || 'there');
+
+      if (adminCaller) {
+        const ownerWelcome = appendStartCloneNote(
           [
-            '🤖 <b>FileStore Delivery Bot</b> <i>(Owner Mode)</i>',
+            '🤖 <b>FileStore Delivery Bot</b> · <i>Owner Mode</i>',
             '━━━━━━━━━━━━━━━━━━',
             '',
-            '🛡 <code>/admin</code> — Owner diagnostics menu',
-            '📊 <code>/admin status</code> — Inspect delivery queue stats',
-            '🧪 <code>/admin test</code> — Test storage &amp; force-sub access',
-            '📥 <code>/get &lt;file_code&gt;</code> — Queue a file delivery',
-            '✅ <code>/verify</code> — Check channel subscriptions',
-            '💎 <code>/premium</code> — Test Premium checkout',
-            '🔐 <code>/checkpoint_status</code> — Check verification state',
-            '🔎 <code>/access_status</code> — Full access &amp; Premium status',
+            '⚡ <b>Owner Controls</b>',
+            '<blockquote>🛡 <code>/admin</code> — Diagnostics &amp; queue stats\n'
+            + '💎 <code>/premium</code> — Buy Premium membership\n'
+            + '👤 <code>/me</code> — Account &amp; Premium status\n'
+            + '📁 <code>/file</code> — Your unlocked paid files</blockquote>',
           ].join('\n'),
-          HTML,
+          mainBotUsername,
         );
+        const ownerKeyboard = [
+          [
+            { text: '💎 Buy Premium', callback_data: 'fs_prem_list' },
+            { text: '📁 Paid Files', callback_data: 'fs_file_list' },
+          ],
+          [
+            { text: '👤 My Account', callback_data: 'fs_me' },
+            ...cloneButtonRow,
+          ],
+        ];
+        await ctx.reply(ownerWelcome, { ...HTML, reply_markup: { inline_keyboard: ownerKeyboard } });
       } else {
-        await ctx.reply(
+        const defaultWelcome = appendStartCloneNote(
           [
-            '✨ <b>Welcome to FileStore Delivery!</b>',
+            '✨ <b>Welcome to FileStore Delivery</b>',
             '━━━━━━━━━━━━━━━━━━',
+            `👋 Hey, <b>${firstName}</b>!`,
             '',
-            '📥 Tap any FileStore share link to receive your files instantly.',
+            '<blockquote>📥 <b>Instant Delivery</b>\n'
+            + 'Tap any FileStore share link to unlock &amp; receive your files directly in chat.</blockquote>',
             '',
-            '⚡ <b>Useful Commands</b>',
-            '• <code>/verify</code> — Check required channel subscriptions',
-            '• <code>/get &lt;file_code&gt;</code> — Request a file by code',
-            '• <code>/premium</code> — Upgrade for ad-free instant access 💎',
-            '• <code>/paid &lt;code&gt;</code> or <code>/batch &lt;code&gt;</code> — Unlock paid items',
-            '• <code>/access_status</code> — Check your current access level',
+            '⚡ <b>Commands</b>',
+            '<blockquote>• /start — Welcome screen\n'
+            + '• /premium — Buy Premium for ad-free access 💎\n'
+            + '• /me — Account info &amp; Premium status\n'
+            + '• /file — Display your paid files</blockquote>',
           ].join('\n'),
-          HTML,
+          mainBotUsername,
         );
+        const userKeyboard = [
+          [
+            { text: '💎 Buy Premium', callback_data: 'fs_prem_list' },
+            { text: '📁 Paid Files', callback_data: 'fs_file_list' },
+          ],
+          [
+            { text: '👤 My Account', callback_data: 'fs_me' },
+            ...cloneButtonRow,
+          ],
+        ];
+        await ctx.reply(defaultWelcome, { ...HTML, reply_markup: { inline_keyboard: userKeyboard } });
       }
       return;
     }
@@ -996,6 +1070,350 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
     }
   });
 
+  async function fetchUserUnlockedPaidContent(userId) {
+    const scopeId = botOwnerScope !== null && botOwnerScope !== undefined ? Number(botOwnerScope) : null;
+    const params = scopeId !== null ? [userId, scopeId] : [userId];
+    const fileOwnerFilter = scopeId !== null ? 'AND f.uploaded_by = $2' : '';
+    const batchOwnerFilter = scopeId !== null ? 'AND b.created_by = $2' : '';
+
+    const [filesRes, batchesRes] = await Promise.all([
+      pool.query(
+        `SELECT f.id, f.file_code, f.file_name, f.file_type, f.file_size,
+                MAX(COALESCE(pfp.verified_at, ag.created_at, pfp.created_at)) AS unlocked_at
+         FROM files f
+         LEFT JOIN paid_file_links pfl ON pfl.file_id = f.id
+         LEFT JOIN paid_file_purchases pfp
+           ON pfp.paid_link_id = pfl.id
+          AND pfp.user_telegram_id = $1
+          AND pfp.status IN ('paid', 'delivered')
+         LEFT JOIN access_grants ag
+           ON ag.resource_type = 'file'
+          AND ag.resource_id = f.id
+          AND ag.user_telegram_id = $1
+          AND (ag.expires_at IS NULL OR ag.expires_at > NOW())
+         WHERE f.status = 'active'
+           AND (
+             pfp.id IS NOT NULL
+             OR (ag.id IS NOT NULL AND COALESCE(ag.grant_reason, '') NOT LIKE 'paid_batch_purchase:%')
+           )
+           ${fileOwnerFilter}
+         GROUP BY f.id, f.file_code, f.file_name, f.file_type, f.file_size
+         ORDER BY unlocked_at DESC NULLS LAST, f.id DESC
+         LIMIT 15`,
+        params,
+      ),
+      pool.query(
+        `SELECT b.id, b.public_code, b.title,
+                MAX(COALESCE(pbp.verified_at, pbp.created_at)) AS unlocked_at,
+                (SELECT COUNT(*)::int FROM paid_batch_items i WHERE i.batch_link_id = b.id) AS item_count
+         FROM paid_batch_purchases pbp
+         JOIN paid_batch_links b ON b.id = pbp.batch_link_id
+         WHERE pbp.user_telegram_id = $1
+           AND pbp.status IN ('paid', 'delivered')
+           ${batchOwnerFilter}
+         GROUP BY b.id, b.public_code, b.title
+         ORDER BY unlocked_at DESC NULLS LAST, b.id DESC
+         LIMIT 10`,
+        params,
+      ),
+    ]);
+
+    return {
+      files: filesRes.rows || [],
+      batches: batchesRes.rows || [],
+    };
+  }
+
+  async function renderAccountInfo(ctx, edit = false) {
+    try {
+      await upsertTelegramUser(pool, ctx.from);
+      const scopeId = botOwnerScope !== null && botOwnerScope !== undefined ? Number(botOwnerScope) : null;
+      const [premiumRes, paidContent, forceSub] = await Promise.all([
+        pool.query(
+          `SELECT p.name, m.expires_at, m.owner_telegram_id, u.username AS creator_username
+           FROM premium_memberships m
+           LEFT JOIN premium_plans p ON p.id = m.plan_id
+           LEFT JOIN users u ON u.telegram_id = m.owner_telegram_id
+           WHERE m.user_telegram_id = $1
+             AND m.status = 'active'
+             AND m.starts_at <= NOW()
+             AND (m.expires_at IS NULL OR m.expires_at > NOW())
+           ORDER BY m.owner_telegram_id NULLS FIRST, m.expires_at DESC NULLS FIRST
+           LIMIT 10`,
+          [ctx.from.id],
+        ),
+        fetchUserUnlockedPaidContent(ctx.from.id).catch(() => ({ files: [], batches: [] })),
+        scopeId !== null
+          ? checkForceSubscription(ctx.telegram, pool, ctx.from.id, scopeId)
+          : Promise.resolve({ enabled: false, passed: true, missing: [] }),
+      ]);
+
+      const memberships = premiumRes.rows || [];
+      const platformPrem = memberships.find((r) => r.owner_telegram_id === null || r.owner_telegram_id === undefined);
+      const currentCreatorPrem = scopeId !== null
+        ? memberships.find((r) => Number(r.owner_telegram_id) === scopeId)
+        : null;
+      const otherCreatorPrems = memberships.filter((r) => (
+        r.owner_telegram_id !== null
+        && r.owner_telegram_id !== undefined
+        && (scopeId === null || Number(r.owner_telegram_id) !== scopeId)
+      ));
+
+      const displayName = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(' ').trim() || 'Telegram User';
+      const usernameText = ctx.from.username ? `@${escapeHtml(ctx.from.username)}` : '<i>Not set</i>';
+      const paidCount = (paidContent.files?.length || 0) + (paidContent.batches?.length || 0);
+
+      const lines = [
+        '👤 <b>Your Account</b>',
+        '━━━━━━━━━━━━━━━━━━',
+        '',
+        '🪪 <b>Profile</b>',
+        `<blockquote>• <b>Name:</b> ${escapeHtml(displayName)}\n`
+        + `• <b>Username:</b> ${usernameText}\n`
+        + `• <b>User ID:</b> <code>${ctx.from.id}</code></blockquote>`,
+        '',
+        '💎 <b>Membership &amp; Access</b>',
+      ];
+
+      const accessItems = [];
+      if (scopeId !== null) {
+        if (currentCreatorPrem) {
+          const expLabel = currentCreatorPrem.expires_at
+            ? `until ${escapeHtml(new Date(currentCreatorPrem.expires_at).toLocaleString())}`
+            : 'Permanent';
+          accessItems.push(`• <b>Premium:</b> 🌟 Active (${escapeHtml(currentCreatorPrem.name ?? 'VIP')} · ${expLabel})`);
+        } else {
+          accessItems.push('• <b>Premium:</b> ⚪ Free Plan');
+        }
+        if (platformPrem) {
+          const platExp = platformPrem.expires_at
+            ? `until ${escapeHtml(new Date(platformPrem.expires_at).toLocaleString())}`
+            : 'Permanent';
+          accessItems.push(`• <b>Platform VIP:</b> 🌟 Active (${platExp})`);
+        }
+      } else {
+        accessItems.push(
+          '• <b>Premium:</b> ' + (platformPrem
+            ? '🌟 Active' + (platformPrem.expires_at
+              ? ` (${escapeHtml(platformPrem.name ?? 'VIP')} · until ${escapeHtml(new Date(platformPrem.expires_at).toLocaleString())})`
+              : ` (${escapeHtml(platformPrem.name ?? 'VIP')} · Permanent)`)
+            : '⚪ Free Plan'),
+        );
+      }
+
+      if (otherCreatorPrems.length) {
+        for (const cp of otherCreatorPrems) {
+          const ownerLabel = cp.creator_username ? `@${escapeHtml(cp.creator_username)}` : `Creator #${escapeHtml(cp.owner_telegram_id)}`;
+          const expLabel = cp.expires_at ? `until ${escapeHtml(new Date(cp.expires_at).toLocaleString())}` : 'Permanent';
+          accessItems.push(`• <b>VIP (${ownerLabel}):</b> ${escapeHtml(cp.name ?? 'Premium')} — ${expLabel}`);
+        }
+      }
+
+      if (scopeId !== null && forceSub.enabled) {
+        accessItems.push(`• <b>Channels:</b> ${forceSub.passed ? '✅ Joined' : `🔒 Join ${forceSub.missing.length} channel(s)`}`);
+      }
+      accessItems.push(`• <b>Paid Files Unlocked:</b> <code>${paidCount}</code>`);
+      lines.push(`<blockquote>${accessItems.join('\n')}</blockquote>`);
+
+      const kb = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('💎 Buy Premium', 'fs_prem_list'),
+          Markup.button.callback('📁 My Paid Files', 'fs_file_list'),
+        ],
+      ]);
+      const payload = { ...HTML, ...kb };
+      if (edit && ctx.editMessageText) {
+        try { return await ctx.editMessageText(lines.join('\n'), payload); } catch {}
+      }
+      return await ctx.reply(lines.join('\n'), payload);
+    } catch (error) {
+      logger.warn({ userId: ctx.from?.id, error: error.message }, 'Account info lookup failed');
+      return ctx.reply('⚠️ Account info is temporarily unavailable. Try again shortly.');
+    }
+  }
+
+  async function renderUserPaidFiles(ctx, edit = false) {
+    try {
+      await upsertTelegramUser(pool, ctx.from);
+      const { files, batches } = await fetchUserUnlockedPaidContent(ctx.from.id);
+      if (!files.length && !batches.length) {
+        const emptyText = [
+          '📁 <b>Your Paid Files</b>',
+          '━━━━━━━━━━━━━━━━━━',
+          '',
+          '<blockquote><i>You have not unlocked any paid files yet.</i>\n'
+          + 'Open any paid share link or upgrade with /premium to unlock VIP content.</blockquote>',
+        ].join('\n');
+        const emptyKb = Markup.inlineKeyboard([
+          [
+            Markup.button.callback('💎 Buy Premium', 'fs_prem_list'),
+            Markup.button.callback('👤 My Account', 'fs_me'),
+          ],
+        ]);
+        const payload = { ...HTML, ...emptyKb };
+        if (edit && ctx.editMessageText) {
+          try { return await ctx.editMessageText(emptyText, payload); } catch {}
+        }
+        return await ctx.reply(emptyText, payload);
+      }
+
+      const lines = [
+        '📁 <b>Your Paid Files</b>',
+        '━━━━━━━━━━━━━━━━━━',
+      ];
+      const buttons = [];
+
+      if (batches.length) {
+        lines.push('', '📚 <b>Paid Batches</b>');
+        const batchLines = batches.map((b) => {
+          const title = String(b.title || `Batch ${b.public_code}`);
+          const count = Number(b.item_count || 0);
+          buttons.push([Markup.button.callback(`📦 ${title.slice(0, 36)} (${count})`, `fs_file_batch:${b.id}`)]);
+          return `• <b>${escapeHtml(title)}</b> · <code>${count} file${count === 1 ? '' : 's'}</code>`;
+        });
+        lines.push(`<blockquote>${batchLines.join('\n')}</blockquote>`);
+      }
+
+      if (files.length) {
+        lines.push('', '📄 <b>Paid Files</b>');
+        const fileLines = files.map((f) => {
+          const name = String(f.file_name || f.file_code);
+          buttons.push([Markup.button.callback(`📥 ${name.slice(0, 42)}`, `fs_file_get:${f.id}`)]);
+          return `• <b>${escapeHtml(name)}</b> · <code>${escapeHtml(f.file_code)}</code>`;
+        });
+        lines.push(`<blockquote>${fileLines.join('\n')}</blockquote>`);
+      }
+
+      lines.push('', '👇 <i>Tap an unlocked item below to receive it now:</i>');
+
+      buttons.push([
+        Markup.button.callback('👤 My Account', 'fs_me'),
+        Markup.button.callback('💎 Buy Premium', 'fs_prem_list'),
+      ]);
+
+      const payload = { ...HTML, ...Markup.inlineKeyboard(buttons) };
+      if (edit && ctx.editMessageText) {
+        try { return await ctx.editMessageText(lines.join('\n'), payload); } catch {}
+      }
+      return await ctx.reply(lines.join('\n'), payload);
+    } catch (error) {
+      logger.warn({ userId: ctx.from?.id, error: error.message }, 'Paid files listing failed');
+      return ctx.reply('⚠️ Could not load your paid files right now.');
+    }
+  }
+
+  bot.command('me', async (ctx) => renderAccountInfo(ctx, false));
+
+  bot.action('fs_me', async (ctx) => {
+    await safeAnswer(ctx);
+    return renderAccountInfo(ctx, true);
+  });
+
+  bot.command('file', async (ctx) => renderUserPaidFiles(ctx, false));
+
+  bot.action('fs_file_list', async (ctx) => {
+    await safeAnswer(ctx);
+    return renderUserPaidFiles(ctx, true);
+  });
+
+  bot.action(/^fs_file_get:(\d+)$/, async (ctx) => {
+    const fileId = Number(ctx.match[1]);
+    try {
+      await ctx.answerCbQuery('Preparing your file… 📥');
+      await upsertTelegramUser(pool, ctx.from);
+      const scopeId = botOwnerScope !== null && botOwnerScope !== undefined ? Number(botOwnerScope) : null;
+
+      const fileRes = await pool.query(
+        `SELECT f.id, f.file_code, f.file_name, f.uploaded_by, f.status,
+                sm.telegram_message_id, sc.telegram_chat_id AS storage_chat_id, sc.is_enabled AS storage_channel_enabled
+         FROM files f
+         LEFT JOIN storage_messages sm ON sm.file_id = f.id AND sm.is_primary = TRUE
+         LEFT JOIN storage_channels sc ON sc.id = sm.storage_channel_id
+         WHERE f.id = $1 AND f.status = 'active'
+         LIMIT 1`,
+        [fileId],
+      );
+      const file = fileRes.rows[0];
+      if (!file || (scopeId !== null && Number(file.uploaded_by) !== scopeId)) {
+        return ctx.reply('⚠️ This file is no longer available on this bot.');
+      }
+
+      const entitled = await hasPaidFileEntitlement(pool, ctx.from.id, file.id);
+      const purchaseRes = entitled
+        ? { rowCount: 1 }
+        : await pool.query(
+            `SELECT 1 FROM paid_file_purchases pfp
+             JOIN paid_file_links pfl ON pfl.id = pfp.paid_link_id
+             WHERE pfp.user_telegram_id = $1 AND pfl.file_id = $2 AND pfp.status IN ('paid', 'delivered')
+             LIMIT 1`,
+            [ctx.from.id, file.id],
+          );
+      if (!entitled && !purchaseRes.rowCount) {
+        return ctx.reply('🔒 You do not have unlocked access to this file.');
+      }
+
+      const creatorOwnerScope = resolveCreatorScope(file.uploaded_by);
+      const forceSub = await enforceForceSub(ctx, ctx.telegram, pool, ctx.from.id, logger, 'Then tap Verify and try /file again.', creatorOwnerScope);
+      if (!forceSub.passed) return;
+
+      if (!file.telegram_message_id || !file.storage_chat_id || !file.storage_channel_enabled) {
+        return ctx.reply('⚠️ This file currently has no usable storage message.');
+      }
+      const jobId = await createSingleDeliveryJob(pool, ctx.from.id, file.id, ctx.from.id, workerScope.deliveryBotId);
+      return ctx.reply(
+        `🚀 <b>Delivery queued.</b>\n━━━━━━━━━━━━━━━━━━\n\n📄 <b>File:</b> ${escapeHtml(file.file_name)}\n🆔 <b>Job ID: ${jobId}</b>`,
+        HTML,
+      );
+    } catch (error) {
+      logger.warn({ userId: ctx.from?.id, fileId, error: error.message }, 'Paid file delivery trigger failed');
+      return ctx.reply('❌ Could not deliver this file right now.');
+    }
+  });
+
+  bot.action(/^fs_file_batch:(\d+)$/, async (ctx) => {
+    const batchId = Number(ctx.match[1]);
+    try {
+      await ctx.answerCbQuery('Preparing your batch… 📦');
+      await upsertTelegramUser(pool, ctx.from);
+      const scopeId = botOwnerScope !== null && botOwnerScope !== undefined ? Number(botOwnerScope) : null;
+
+      const batchRes = await pool.query(
+        `SELECT b.id, b.public_code, b.title, b.created_by
+         FROM paid_batch_purchases pbp
+         JOIN paid_batch_links b ON b.id = pbp.batch_link_id
+         WHERE b.id = $1
+           AND pbp.user_telegram_id = $2
+           AND pbp.status IN ('paid', 'delivered')
+         LIMIT 1`,
+        [batchId, ctx.from.id],
+      );
+      const batch = batchRes.rows[0];
+      if (!batch || (scopeId !== null && Number(batch.created_by) !== scopeId)) {
+        return ctx.reply('🔒 You do not have unlocked access to this paid batch on this bot.');
+      }
+
+      const creatorOwnerScope = resolveCreatorScope(batch.created_by);
+      const forceSub = await enforceForceSub(ctx, ctx.telegram, pool, ctx.from.id, logger, 'Then tap Verify and try /file again.', creatorOwnerScope);
+      if (!forceSub.passed) return;
+
+      const items = await getBatchItems(pool, batch.public_code);
+      if (!items.length) return ctx.reply('📭 This batch has no active files.');
+      for (const item of items) {
+        if (!item.telegram_message_id || !item.storage_chat_id || !item.storage_channel_enabled) {
+          return ctx.reply('⚠️ One or more files in this batch currently have no usable storage message.');
+        }
+      }
+      const jobId = await createBatchDeliveryJob(pool, ctx.from.id, items.map((i) => i.id), ctx.from.id, workerScope.deliveryBotId);
+      return ctx.reply(
+        `📦 <b>Batch delivery queued.</b>\n━━━━━━━━━━━━━━━━━━\n\n📚 <b>Collection:</b> ${escapeHtml(batch.title)}\n📄 <b>Files:</b> ${items.length}\n🆔 <b>Job ID: ${jobId}</b>`,
+        HTML,
+      );
+    } catch (error) {
+      logger.warn({ userId: ctx.from?.id, batchId, error: error.message }, 'Paid batch delivery trigger failed');
+      return ctx.reply('❌ Could not deliver this batch right now.');
+    }
+  });
+
   bot.command('checkpoint_status', async (ctx) => {
     try {
       await upsertTelegramUser(pool, ctx.from);
@@ -1006,7 +1424,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
       if (requirement.reason === 'no_active_providers') return ctx.reply('🟢 No active checkpoint providers. Checkpoints are not currently required.');
       if (requirement.blocked) return ctx.reply(`⚠️ Checkpoint provider <b>${escapeHtml(requirement.provider?.name ?? 'unknown')}</b> is unverified. Admin needs to configure verification mode.`, HTML);
       return ctx.reply(
-        `🔐 <b>Checkpoint Required</b>\n━━━━━━━━━━━━━━━━━━\n\n🌐 <b>Provider:</b> ${escapeHtml(requirement.provider.name)} (${requirement.step}/${requirement.total})\n\n👉 <i>Open a file link or run <code>/get &lt;file_code&gt;</code> to receive your verification link.</i>`,
+        `🔐 <b>Checkpoint Required</b>\n━━━━━━━━━━━━━━━━━━\n\n🌐 <b>Provider:</b> ${escapeHtml(requirement.provider.name)} (${requirement.step}/${requirement.total})\n\n👉 <i>Open a file link to complete verification.</i>`,
         HTML,
       );
     } catch (error) {
@@ -1015,46 +1433,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
     }
   });
 
-  bot.command('access_status', async (ctx) => {
-    try {
-      await upsertTelegramUser(pool, ctx.from);
-      const forceSub = await checkForceSubscription(ctx.telegram, pool, ctx.from.id);
-      const premium = await pool.query(
-        `SELECT p.name, m.expires_at, m.owner_telegram_id, u.username AS creator_username
-         FROM premium_memberships m
-         LEFT JOIN premium_plans p ON p.id = m.plan_id
-         LEFT JOIN users u ON u.telegram_id = m.owner_telegram_id
-         WHERE m.user_telegram_id = $1 AND m.status = 'active' AND m.starts_at <= NOW() AND (m.expires_at IS NULL OR m.expires_at > NOW())
-         ORDER BY m.owner_telegram_id NULLS FIRST, m.expires_at DESC NULLS FIRST LIMIT 10`,
-        [ctx.from.id],
-      );
-      const checkpointSetting = await pool.query("SELECT value FROM app_settings WHERE key = 'checkpoint_enabled' LIMIT 1");
-      const checkpointEnabled = checkpointSetting.rowCount && checkpointSetting.rows[0].value === true;
-      const checkpoint = checkpointEnabled ? await getCheckpointRequirement(pool, ctx.from.id) : { reason: 'checkpoint_disabled' };
-      const platformPrem = premium.rows.find((r) => r.owner_telegram_id === null || r.owner_telegram_id === undefined);
-      const creatorPrems = premium.rows.filter((r) => r.owner_telegram_id !== null && r.owner_telegram_id !== undefined);
-      const lines = [
-        '🔎 <b>Your Access Status</b>',
-        '━━━━━━━━━━━━━━━━━━',
-        '',
-        '📢 <b>Force-Sub:</b> ' + (forceSub.passed ? '✅ Passed' : `🔒 Required (${forceSub.missing.length} channel(s))`),
-        '💎 <b>Platform Premium:</b> ' + (platformPrem ? '🌟 Active' + (platformPrem.expires_at ? ' until ' + escapeHtml(new Date(platformPrem.expires_at).toLocaleString()) : ' (permanent)') : '⚪ Inactive'),
-      ];
-      if (creatorPrems.length) {
-        lines.push('✨ <b>Creator Premium Memberships:</b>');
-        for (const cp of creatorPrems) {
-          const ownerLabel = cp.creator_username ? `@${escapeHtml(cp.creator_username)}` : `Creator #${escapeHtml(cp.owner_telegram_id)}`;
-          const expLabel = cp.expires_at ? `until ${escapeHtml(new Date(cp.expires_at).toLocaleString())}` : 'permanent';
-          lines.push(`• 💎 <b>${escapeHtml(cp.name ?? 'Premium')}</b> (${ownerLabel}) — ${expLabel}`);
-        }
-      }
-      lines.push('🔐 <b>Checkpoint:</b> ' + (checkpoint.reason === 'checkpoint_disabled' ? '🟢 Off' : checkpoint.reason === 'checkpoint_active' ? '✅ Active until ' + escapeHtml(new Date(checkpoint.expiresAt).toLocaleString()) : checkpoint.reason === 'no_active_providers' ? '🟢 No provider available' : checkpoint.blocked ? '⚠️ Unavailable (provider unverified)' : `⏳ Required (${escapeHtml(checkpoint.provider?.name ?? 'shortener')} · tap a file link to verify)`));
-      return ctx.reply(lines.join('\n'), HTML);
-    } catch (error) {
-      logger.warn({ userId: ctx.from.id, error: error.message }, 'Access status failed');
-      return ctx.reply('⚠️ Access status unavailable. Try again later.');
-    }
-  });
+  bot.command('access_status', async (ctx) => renderAccountInfo(ctx, false));
 
   const isDeliveryOwner = (ctx) => Array.isArray(config?.adminIds) && config.adminIds.length > 0 && isAdmin(ctx.from?.id, config.adminIds);
 
@@ -1191,8 +1570,29 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
     logger.error({ updateId: ctx.update?.update_id, error: error.message }, 'Delivery Bot handler error');
   });
 
+  function ensureBroadcastWorker(overrideDeliveryBotId) {
+    if (overrideDeliveryBotId !== undefined) workerScope.deliveryBotId = overrideDeliveryBotId;
+    if (broadcastWorker || !workerScope.deliveryBotId) return;
+    const resolveSourceTelegram = () => (
+      typeof botMeta.sourceTelegram === 'function'
+        ? botMeta.sourceTelegram()
+        : (botMeta.sourceTelegram ?? config.notifyTelegram ?? null)
+    );
+    broadcastWorker = createCreatorBroadcastWorker(
+      bot.telegram,
+      pool,
+      logger,
+      workerScope.deliveryBotId,
+      resolveSourceTelegram,
+    );
+    broadcastWorker.start();
+  }
+
   return {
     bot,
+    startBroadcastWorker(deliveryBotId) {
+      ensureBroadcastWorker(deliveryBotId);
+    },
     async startWorker(workerOptions = {}) {
       if (workerOptions.deliveryBotId !== undefined) workerScope.deliveryBotId = workerOptions.deliveryBotId;
       if (workerOptions.includeGlobal !== undefined) workerScope.includeGlobal = workerOptions.includeGlobal;
@@ -1202,10 +1602,7 @@ export function createDeliveryBot(config, logger, pool, token = config.deliveryB
       if (worker) return;
       worker = createDeliveryWorker(bot, pool, logger, identity, workerScope);
       worker.start();
-      if (workerScope.deliveryBotId && workerScope.ownerTelegramId) {
-        broadcastWorker = createCreatorBroadcastWorker(bot.telegram, pool, logger, workerScope.deliveryBotId);
-        broadcastWorker.start();
-      }
+      ensureBroadcastWorker();
       autoDeleteWorker = createAutoDeleteWorker(bot, pool, logger, identity);
       autoDeleteWorker.start();
       famPayWorker = startFamPayVerificationWorker(pool, config, logger, bot.telegram, me.id);

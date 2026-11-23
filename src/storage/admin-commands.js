@@ -26,7 +26,7 @@ export function registerStorageAdminCommands(bot, pool, logger, config = null) {
     try {
       const { ownerId } = getScope(ctx);
       const rows = await listStorageChannels(pool, ownerId);
-      if (!rows.length) return ctx.reply('🗄 No storage channels configured yet.\n💡 Add one with /storage_add <channel_id or @username>.');
+      if (!rows.length) return ctx.reply('🗄 No storage channels configured yet.\n💡 Make this Main Bot an administrator in your channel (with Post Messages permission), then run /storage_add <channel_id or @username> — or add via Control Center and forward any channel post.');
       const lines = rows.map((row) => {
         const state = row.is_enabled ? '🟢 Enabled' : '⚪ Disabled';
         const primary = row.role === 'primary' ? '⭐ PRIMARY' : '📦 Backup';
@@ -42,7 +42,11 @@ export function registerStorageAdminCommands(bot, pool, logger, config = null) {
   bot.command('storage_add', async (ctx) => {
     try {
       const input = getCommandArgText(ctx);
-      if (!input) return ctx.reply('ℹ️ Usage: /storage_add <channel_id or @username>');
+      if (!input) {
+        return ctx.reply(
+          'ℹ️ Usage: /storage_add <-100channel_id, @username, or t.me link>\n\n⚠️ First add this Main Bot as an administrator in your channel (with Post Messages permission). You can also add a channel in /start → My Storage Channel by forwarding any post from the channel.',
+        );
+      }
       const { admin, ownerId } = getScope(ctx);
       const parsed = parseStorageIdentifier(input);
       const chat = await validateStorageChannel(ctx, parsed, { requireUserAdmin: !admin });
@@ -50,7 +54,7 @@ export function registerStorageAdminCommands(bot, pool, logger, config = null) {
       await ctx.reply(`✅ Storage Channel Saved & Tested!\n━━━━━━━━━━━━━━━━━━\n📢 ${saved.title ?? 'Channel'}\n🆔 ID: ${saved.telegram_chat_id}\n⚡ Status: ${saved.is_enabled ? '🟢 Enabled' : '⚪ Disabled'}`);
     } catch (error) {
       logger.warn({ error: error.message }, 'Storage channel add rejected');
-      await ctx.reply('❌ Could not add channel: ' + error.message);
+      await ctx.reply('❌ Could not add channel:\n' + error.message);
     }
   });
 

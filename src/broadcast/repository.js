@@ -1,29 +1,255 @@
 import { wakeDeliveryWorkers } from '../delivery/wake.js';
 
-export async function createCreatorBroadcast(pool,{ownerTelegramId,deliveryBotId,createdBy,messageText='',mediaType=null,mediaFileId=null,caption='',buttons=[]}) {
- const owner=Number(ownerTelegramId),botId=Number(deliveryBotId),actor=Number(createdBy),text=String(messageText??'').trim(),media=String(mediaFileId??'').trim(),mediaKind=mediaType?String(mediaType):null,mediaCaption=String(caption??'').trim();
- if(![owner,botId,actor].every(n=>Number.isSafeInteger(n)&&n>0))throw new Error('Invalid creator, bot, or sender ID.');
- if(!text&&!media)throw new Error('Broadcast must contain text or supported media.');
- if(text.length>4000||mediaCaption.length>1024)throw new Error('Broadcast text or caption is too long.');
- if(media&&!['photo','video','document','animation'].includes(mediaKind))throw new Error('Unsupported broadcast media type.');
- const client=await pool.connect();try{await client.query('BEGIN');
- const bot=await client.query('SELECT id FROM delivery_bots WHERE id=$1 AND owner_telegram_id=$2 AND is_enabled=TRUE LIMIT 1',[botId,owner]);if(!bot.rowCount)throw new Error('Creator delivery bot not found or disabled.');
- const count=await client.query('SELECT COUNT(*)::int AS total FROM delivery_bot_user_activity WHERE delivery_bot_id=$1',[botId]);if(!count.rows[0].total)throw new Error('No tracked users for this delivery bot.');
- const ins=await client.query('INSERT INTO creator_broadcasts(owner_telegram_id,delivery_bot_id,created_by,message_text,media_type,media_file_id,caption,buttons,total_recipients) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9) RETURNING id',[owner,botId,actor,text||mediaCaption,mediaKind,media||null,mediaCaption,JSON.stringify(buttons),count.rows[0].total]);const id=ins.rows[0].id;
- await client.query('INSERT INTO creator_broadcast_recipients(broadcast_id,telegram_user_id) SELECT $1,telegram_user_id FROM delivery_bot_user_activity WHERE delivery_bot_id=$2 ON CONFLICT DO NOTHING',[id,botId]);await client.query('COMMIT');wakeDeliveryWorkers('broadcast-created');return {id,totalRecipients:count.rows[0].total};
- }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
-}
-export async function getCreatorBroadcast(pool,owner,id){const {rows}=await pool.query('SELECT b.*, (SELECT COUNT(*)::int FROM creator_broadcast_recipients r WHERE r.broadcast_id=b.id AND r.status=\'pending\') AS pending_count FROM creator_broadcasts b WHERE b.owner_telegram_id=$1 AND b.id=$2',[Number(owner),Number(id)]);return rows[0]??null;}
-export async function listCreatorBroadcasts(pool,owner,limit=10){const {rows}=await pool.query('SELECT id,delivery_bot_id,status,total_recipients,sent_count,failed_count,created_at,started_at,completed_at,last_error FROM creator_broadcasts WHERE owner_telegram_id=$1 ORDER BY id DESC LIMIT $2',[Number(owner),Math.min(50,Math.max(1,Number(limit)||10))]);return rows;}
-export async function claimCreatorBroadcast(pool,botId){const {rows}=await pool.query("UPDATE creator_broadcasts SET status='processing',started_at=COALESCE(started_at,NOW()) WHERE id=(SELECT id FROM creator_broadcasts WHERE status='pending' AND delivery_bot_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,delivery_bot_id,owner_telegram_id,message_text,media_type,media_file_id,caption,buttons",[Number(botId)]);return rows[0]??null;}
-export async function claimBroadcastRecipients(pool,id,limit=20){const {rows}=await pool.query("WITH picked AS (SELECT telegram_user_id FROM creator_broadcast_recipients WHERE broadcast_id=$1 AND status='pending' ORDER BY telegram_user_id LIMIT $2 FOR UPDATE SKIP LOCKED) UPDATE creator_broadcast_recipients r SET status='sending' FROM picked p WHERE r.broadcast_id=$1 AND r.telegram_user_id=p.telegram_user_id RETURNING r.telegram_user_id",[id,Math.min(50,Math.max(1,Number(limit)||20))]);return rows;}
-export async function retryCreatorBroadcast(pool,owner,id){const c=await pool.connect();try{await c.query('BEGIN');const b=await c.query("SELECT id FROM creator_broadcasts WHERE id=$1 AND owner_telegram_id=$2 AND status IN ('failed','completed','paused') FOR UPDATE",[Number(id),Number(owner)]);if(!b.rowCount)throw new Error('Broadcast not found or not retryable.');const r=await c.query("UPDATE creator_broadcast_recipients SET status='pending',error_code=NULL WHERE broadcast_id=$1 AND status='failed'",[Number(id)]);if(r.rowCount===0)throw new Error('No failed recipients to retry.');await c.query("UPDATE creator_broadcasts SET status='pending',completed_at=NULL,last_error=NULL WHERE id=$1",[Number(id)]);await c.query('COMMIT');wakeDeliveryWorkers('broadcast-retry');return r.rowCount;}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}}
-export async function markBroadcastRecipient(pool,id,uid,status,err=null){if(!['sent','failed','skipped'].includes(status))throw new Error('Invalid recipient state');const c=await pool.connect();try{await c.query('BEGIN');const r=await c.query("UPDATE creator_broadcast_recipients SET status=$3,attempts=attempts+1,error_code=$4,sent_at=CASE WHEN $3='sent' THEN NOW() ELSE sent_at END WHERE broadcast_id=$1 AND telegram_user_id=$2 AND status='sending' RETURNING status",[id,uid,status,err]);if(r.rowCount)await c.query("UPDATE creator_broadcasts SET sent_count=sent_count+CASE WHEN $2='sent' THEN 1 ELSE 0 END,failed_count=failed_count+CASE WHEN $2='failed' THEN 1 ELSE 0 END WHERE id=$1",[id,status]);await c.query('COMMIT');return r.rowCount>0;}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}}
-export async function getBroadcastState(pool,id){const {rows}=await pool.query('SELECT status FROM creator_broadcasts WHERE id=$1',[id]);return rows[0]?.status??'cancelled';}
-export async function finalizeCreatorBroadcast(pool,id){const {rows}=await pool.query("UPDATE creator_broadcasts b SET status=CASE WHEN EXISTS(SELECT 1 FROM creator_broadcast_recipients r WHERE r.broadcast_id=b.id AND r.status IN ('pending','sending')) THEN 'pending' ELSE 'completed' END,completed_at=CASE WHEN NOT EXISTS(SELECT 1 FROM creator_broadcast_recipients r WHERE r.broadcast_id=b.id AND r.status IN ('pending','sending')) THEN NOW() ELSE NULL END WHERE b.id=$1 AND b.status='processing' RETURNING status",[id]);if(rows[0]?.status==='pending')wakeDeliveryWorkers('broadcast-next-batch');return rows[0]?.status;}
-export async function setCreatorBroadcastStatus(pool,owner,id,status){if(!['paused','pending','cancelled'].includes(status))throw new Error('Unsupported broadcast status');const {rowCount}=await pool.query("UPDATE creator_broadcasts SET status=$3 WHERE id=$1 AND owner_telegram_id=$2 AND status IN ('pending','processing','paused')",[id,Number(owner),status]);if(status==='cancelled')await pool.query("UPDATE creator_broadcast_recipients SET status='skipped' WHERE broadcast_id=$1 AND status='pending'",[id]);if(status==='pending')wakeDeliveryWorkers('broadcast-resumed');return rowCount>0;}
+export async function createCreatorBroadcast(
+  pool,
+  {
+    ownerTelegramId,
+    deliveryBotId,
+    createdBy,
+    messageText = '',
+    mediaType = null,
+    mediaFileId = null,
+    caption = '',
+    buttons = [],
+    allowPlatformBot = false,
+  },
+) {
+  const actor = Number(createdBy);
+  const botId = Number(deliveryBotId);
+  const owner = allowPlatformBot ? (Number(ownerTelegramId) || actor) : Number(ownerTelegramId);
+  const text = String(messageText ?? '').trim();
+  const media = String(mediaFileId ?? '').trim();
+  const mediaKind = mediaType ? String(mediaType) : null;
+  const mediaCaption = String(caption ?? '').trim();
 
-export async function listOwnerCreatedBroadcasts(pool,createdBy,limit=20){
- const {rows}=await pool.query('SELECT id,owner_telegram_id,delivery_bot_id,status,total_recipients,sent_count,failed_count,created_at,completed_at FROM creator_broadcasts WHERE created_by=$1 ORDER BY id DESC LIMIT $2',[Number(createdBy),Math.min(50,Math.max(1,Number(limit)||20))]);
- return rows;
+  if (![owner, botId, actor].every((n) => Number.isSafeInteger(n) && n > 0)) {
+    throw new Error('Invalid creator, bot, or sender ID.');
+  }
+  if (!text && !media) {
+    throw new Error('Broadcast must contain text or supported media.');
+  }
+  if (text.length > 4000 || mediaCaption.length > 1024) {
+    throw new Error('Broadcast text or caption is too long.');
+  }
+  if (media && !['photo', 'video', 'document', 'animation'].includes(mediaKind)) {
+    throw new Error('Unsupported broadcast media type.');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const bot = allowPlatformBot
+      ? await client.query(
+          'SELECT id FROM delivery_bots WHERE id=$1 AND owner_telegram_id IS NULL AND is_enabled=TRUE LIMIT 1',
+          [botId],
+        )
+      : await client.query(
+          'SELECT id FROM delivery_bots WHERE id=$1 AND owner_telegram_id=$2 AND is_enabled=TRUE LIMIT 1',
+          [botId, owner],
+        );
+    if (!bot.rowCount) {
+      throw new Error(
+        allowPlatformBot
+          ? 'Platform delivery bot not found or disabled.'
+          : 'Creator delivery bot not found or disabled.',
+      );
+    }
+
+    const count = await client.query(
+      'SELECT COUNT(*)::int AS total FROM delivery_bot_user_activity WHERE delivery_bot_id=$1',
+      [botId],
+    );
+    if (!count.rows[0].total) {
+      throw new Error('No tracked users for this delivery bot yet. Users are added once they start the bot.');
+    }
+
+    const ins = await client.query(
+      'INSERT INTO creator_broadcasts(owner_telegram_id,delivery_bot_id,created_by,message_text,media_type,media_file_id,caption,buttons,total_recipients) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9) RETURNING id',
+      [owner, botId, actor, text || mediaCaption, mediaKind, media || null, mediaCaption, JSON.stringify(buttons), count.rows[0].total],
+    );
+    const id = ins.rows[0].id;
+
+    await client.query(
+      'INSERT INTO creator_broadcast_recipients(broadcast_id,telegram_user_id) SELECT $1,telegram_user_id FROM delivery_bot_user_activity WHERE delivery_bot_id=$2 ON CONFLICT DO NOTHING',
+      [id, botId],
+    );
+    await client.query('COMMIT');
+    wakeDeliveryWorkers('broadcast-created');
+    return { id, totalRecipients: count.rows[0].total };
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getCreatorBroadcast(pool, owner, id) {
+  if (owner === null || owner === undefined) {
+    const { rows } = await pool.query(
+      `SELECT b.*, d.username AS bot_username,
+              (SELECT COUNT(*)::int FROM creator_broadcast_recipients r WHERE r.broadcast_id=b.id AND r.status='pending') AS pending_count
+       FROM creator_broadcasts b
+       LEFT JOIN delivery_bots d ON d.id = b.delivery_bot_id
+       WHERE b.id=$1`,
+      [Number(id)],
+    );
+    return rows[0] ?? null;
+  }
+  const { rows } = await pool.query(
+    `SELECT b.*, (SELECT COUNT(*)::int FROM creator_broadcast_recipients r WHERE r.broadcast_id=b.id AND r.status='pending') AS pending_count
+     FROM creator_broadcasts b
+     WHERE b.owner_telegram_id=$1 AND b.id=$2`,
+    [Number(owner), Number(id)],
+  );
+  return rows[0] ?? null;
+}
+
+export async function listCreatorBroadcasts(pool, owner, limit = 10) {
+  const { rows } = await pool.query(
+    'SELECT id,delivery_bot_id,status,total_recipients,sent_count,failed_count,created_at,started_at,completed_at,last_error FROM creator_broadcasts WHERE owner_telegram_id=$1 ORDER BY id DESC LIMIT $2',
+    [Number(owner), Math.min(50, Math.max(1, Number(limit) || 10))],
+  );
+  return rows;
+}
+
+export async function listAllBroadcastsForOwner(pool, limit = 30) {
+  const { rows } = await pool.query(
+    `SELECT b.id, b.owner_telegram_id, b.delivery_bot_id, b.created_by, b.status,
+            b.total_recipients, b.sent_count, b.failed_count,
+            b.created_at, b.started_at, b.completed_at, b.last_error,
+            d.username AS bot_username,
+            d.owner_telegram_id AS bot_owner_telegram_id,
+            u.username AS owner_username,
+            u.first_name AS owner_first_name
+     FROM creator_broadcasts b
+     LEFT JOIN delivery_bots d ON d.id = b.delivery_bot_id
+     LEFT JOIN users u ON u.telegram_id = b.owner_telegram_id
+     ORDER BY b.id DESC
+     LIMIT $1`,
+    [Math.min(100, Math.max(1, Number(limit) || 30))],
+  );
+  return rows;
+}
+
+export async function claimCreatorBroadcast(pool, botId) {
+  const { rows } = await pool.query(
+    "UPDATE creator_broadcasts SET status='processing',started_at=COALESCE(started_at,NOW()) WHERE id=(SELECT id FROM creator_broadcasts WHERE status='pending' AND delivery_bot_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,delivery_bot_id,owner_telegram_id,message_text,media_type,media_file_id,caption,buttons",
+    [Number(botId)],
+  );
+  return rows[0] ?? null;
+}
+
+export async function claimBroadcastRecipients(pool, id, limit = 20) {
+  const { rows } = await pool.query(
+    "WITH picked AS (SELECT telegram_user_id FROM creator_broadcast_recipients WHERE broadcast_id=$1 AND status='pending' ORDER BY telegram_user_id LIMIT $2 FOR UPDATE SKIP LOCKED) UPDATE creator_broadcast_recipients r SET status='sending' FROM picked p WHERE r.broadcast_id=$1 AND r.telegram_user_id=p.telegram_user_id RETURNING r.telegram_user_id",
+    [id, Math.min(50, Math.max(1, Number(limit) || 20))],
+  );
+  return rows;
+}
+
+export async function retryCreatorBroadcast(pool, owner, id) {
+  const c = await pool.connect();
+  try {
+    await c.query('BEGIN');
+    const b = owner === null || owner === undefined
+      ? await c.query(
+          "SELECT id FROM creator_broadcasts WHERE id=$1 AND status IN ('failed','completed','paused') FOR UPDATE",
+          [Number(id)],
+        )
+      : await c.query(
+          "SELECT id FROM creator_broadcasts WHERE id=$1 AND owner_telegram_id=$2 AND status IN ('failed','completed','paused') FOR UPDATE",
+          [Number(id), Number(owner)],
+        );
+    if (!b.rowCount) throw new Error('Broadcast not found or not retryable.');
+    const r = await c.query(
+      "UPDATE creator_broadcast_recipients SET status='pending',error_code=NULL WHERE broadcast_id=$1 AND status='failed'",
+      [Number(id)],
+    );
+    if (r.rowCount === 0) throw new Error('No failed recipients to retry.');
+    await c.query(
+      "UPDATE creator_broadcasts SET status='pending',completed_at=NULL,last_error=NULL WHERE id=$1",
+      [Number(id)],
+    );
+    await c.query('COMMIT');
+    wakeDeliveryWorkers('broadcast-retry');
+    return r.rowCount;
+  } catch (e) {
+    await c.query('ROLLBACK');
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+export async function markBroadcastRecipient(pool, id, uid, status, err = null) {
+  if (!['sent', 'failed', 'skipped'].includes(status)) throw new Error('Invalid recipient state');
+  const c = await pool.connect();
+  try {
+    await c.query('BEGIN');
+    const r = await c.query(
+      "UPDATE creator_broadcast_recipients SET status=$3,attempts=attempts+1,error_code=$4,sent_at=CASE WHEN $3='sent' THEN NOW() ELSE sent_at END WHERE broadcast_id=$1 AND telegram_user_id=$2 AND status='sending' RETURNING status",
+      [id, uid, status, err],
+    );
+    if (r.rowCount) {
+      await c.query(
+        "UPDATE creator_broadcasts SET sent_count=sent_count+CASE WHEN $2='sent' THEN 1 ELSE 0 END,failed_count=failed_count+CASE WHEN $2='failed' THEN 1 ELSE 0 END WHERE id=$1",
+        [id, status],
+      );
+    }
+    await c.query('COMMIT');
+    return r.rowCount > 0;
+  } catch (e) {
+    await c.query('ROLLBACK');
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+export async function getBroadcastState(pool, id) {
+  const { rows } = await pool.query('SELECT status FROM creator_broadcasts WHERE id=$1', [id]);
+  return rows[0]?.status ?? 'cancelled';
+}
+
+export async function finalizeCreatorBroadcast(pool, id) {
+  const { rows } = await pool.query(
+    "UPDATE creator_broadcasts b SET status=CASE WHEN EXISTS(SELECT 1 FROM creator_broadcast_recipients r WHERE r.broadcast_id=b.id AND r.status IN ('pending','sending')) THEN 'pending' ELSE 'completed' END,completed_at=CASE WHEN NOT EXISTS(SELECT 1 FROM creator_broadcast_recipients r WHERE r.broadcast_id=b.id AND r.status IN ('pending','sending')) THEN NOW() ELSE NULL END WHERE b.id=$1 AND b.status='processing' RETURNING status",
+    [id],
+  );
+  if (rows[0]?.status === 'pending') wakeDeliveryWorkers('broadcast-next-batch');
+  return rows[0]?.status;
+}
+
+export async function setCreatorBroadcastStatus(pool, owner, id, status) {
+  if (!['paused', 'pending', 'cancelled'].includes(status)) throw new Error('Unsupported broadcast status');
+  const { rowCount } = owner === null || owner === undefined
+    ? await pool.query(
+        "UPDATE creator_broadcasts SET status=$2 WHERE id=$1 AND status IN ('pending','processing','paused')",
+        [Number(id), status],
+      )
+    : await pool.query(
+        "UPDATE creator_broadcasts SET status=$3 WHERE id=$1 AND owner_telegram_id=$2 AND status IN ('pending','processing','paused')",
+        [Number(id), Number(owner), status],
+      );
+  if (rowCount > 0 && status === 'cancelled') {
+    await pool.query("UPDATE creator_broadcast_recipients SET status='skipped' WHERE broadcast_id=$1 AND status='pending'", [Number(id)]);
+  }
+  if (rowCount > 0 && status === 'pending') wakeDeliveryWorkers('broadcast-resumed');
+  return rowCount > 0;
+}
+
+export async function listOwnerCreatedBroadcasts(pool, createdBy, limit = 20) {
+  const { rows } = await pool.query(
+    `SELECT b.id, b.owner_telegram_id, b.delivery_bot_id, b.status,
+            b.total_recipients, b.sent_count, b.failed_count, b.created_at, b.completed_at,
+            d.username AS bot_username
+     FROM creator_broadcasts b
+     LEFT JOIN delivery_bots d ON d.id = b.delivery_bot_id
+     WHERE b.created_by=$1
+     ORDER BY b.id DESC
+     LIMIT $2`,
+    [Number(createdBy), Math.min(50, Math.max(1, Number(limit) || 20))],
+  );
+  return rows;
 }

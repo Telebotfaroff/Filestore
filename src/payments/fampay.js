@@ -380,6 +380,14 @@ export async function generateUpiQrBuffer(upiUri) {
   });
 }
 
+export async function generateUpiQrDataUrl(upiUri) {
+  return QRCode.toDataURL(upiUri, {
+    width: 380,
+    margin: 2,
+    errorCorrectionLevel: 'M',
+  });
+}
+
 async function findReusableFamPaySession(pool, { userId, purpose, target }) {
   const { rows } = await pool.query(
     `SELECT id, user_telegram_id, method, purpose, plan_id, file_id, batch_link_id, paid_link_id,
@@ -414,7 +422,8 @@ export async function createFamPayCheckout(pool, config, { userId, purpose, targ
   }
 
   const existing = await findReusableFamPaySession(pool, { userId, purpose, target });
-  if (existing && existing.provider_checkout_url && (!existing.metadata?.upiId || existing.metadata.upiId === fpConfig.upiId)) {
+  const sameBaseAmount = existing?.metadata?.baseAmountMinor === undefined || Number(existing.metadata.baseAmountMinor) === baseMinor;
+  if (existing && sameBaseAmount && existing.provider_checkout_url && (!existing.metadata?.upiId || existing.metadata.upiId === fpConfig.upiId)) {
     const qrBuffer = await generateUpiQrBuffer(existing.provider_checkout_url);
     return {
       session: existing,

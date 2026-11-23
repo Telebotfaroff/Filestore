@@ -1,12 +1,19 @@
 import http from 'node:http';
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import { brotliCompress, gzip, constants as zlibConstants } from 'node:zlib';
 import { getOperationalHealth } from './admin/operational-health.js';
 import { handlePanelApiRequest } from './web/api-router.js';
 
+const brotliCompressAsync = promisify(brotliCompress);
+const gzipAsync = promisify(gzip);
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, 'web', 'public');
+const STATIC_CACHE = new Map();
 
 const ASSET_CONTENT_TYPES = Object.freeze({
   '.html': 'text/html; charset=utf-8',
@@ -16,7 +23,34 @@ const ASSET_CONTENT_TYPES = Object.freeze({
   '.svg': 'image/svg+xml',
 });
 
-async function serveStaticFile(res, relativeName, cacheControl = 'no-cache') {
+const COMPRESSIBLE_EXTS = new Set(['.html', '.css', '.js', '.json', '.svg']);
+
+async function loadStaticAsset(resolved) {
+  const fileStat = await stat(resolved);
+  const cachedEntry = STATIC_CACHE.get(resolved);
+  if (cachedEntry && cachedEntry.mtimeMs === fileStat.mtimeMs && cachedEntry.size === fileStat.size) {
+    return cachedEntry;
+  }
+  const raw = await readFile(resolved);
+  const ext = path.extname(resolved).toLowerCase();
+  const contentType = ASSET_CONTENT_TYPES[ext] || 'application/octet-stream';
+  const etag = `"${createHash('sha1').update(raw).digest('base64url').slice(0, 16)}"`;
+  let br = null;
+  let gz = null;
+  if (COMPRESSIBLE_EXTS.has(ext) && raw.length >= 512) {
+    [br, gz] = await Promise.all([
+      brotliCompressAsync(raw, {
+        params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 5 },
+      }).catch(() => null),
+      gzipAsync(raw, { level: 6 }).catch(() => null),
+    ]);
+  }
+  const entry = { mtimeMs: fileStat.mtimeMs, size: fileStat.size, raw, br, gz, etag, contentType };
+  STATIC_CACHE.set(resolved, entry);
+  return entry;
+}
+
+async function serveStaticFile(req, res, relativeName, cacheControl = 'public, max-age=300, must-revalidate') {
   let decoded;
   try {
     decoded = decodeURIComponent(String(relativeName || ''));
@@ -38,15 +72,34 @@ async function serveStaticFile(res, relativeName, cacheControl = 'no-cache') {
     return;
   }
   try {
-    const body = await readFile(resolved);
-    const ext = path.extname(resolved).toLowerCase();
-    res.writeHead(200, {
-      'Content-Type': ASSET_CONTENT_TYPES[ext] || 'application/octet-stream',
+    const asset = await loadStaticAsset(resolved);
+    const baseHeaders = {
+      'Content-Type': asset.contentType,
       'Cache-Control': cacheControl,
+      'ETag': asset.etag,
+      'Vary': 'Accept-Encoding',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
-    });
-    res.end(body);
+    };
+    const ifNoneMatch = String(req.headers['if-none-match'] || '').trim();
+    if (ifNoneMatch && (ifNoneMatch === asset.etag || ifNoneMatch === `W/${asset.etag}`)) {
+      res.writeHead(304, baseHeaders);
+      res.end();
+      return;
+    }
+    const acceptEncoding = String(req.headers['accept-encoding'] || '').toLowerCase();
+    if (asset.br && acceptEncoding.includes('br')) {
+      res.writeHead(200, { ...baseHeaders, 'Content-Encoding': 'br', 'Content-Length': String(asset.br.length) });
+      res.end(asset.br);
+      return;
+    }
+    if (asset.gz && acceptEncoding.includes('gzip')) {
+      res.writeHead(200, { ...baseHeaders, 'Content-Encoding': 'gzip', 'Content-Length': String(asset.gz.length) });
+      res.end(asset.gz);
+      return;
+    }
+    res.writeHead(200, { ...baseHeaders, 'Content-Length': String(asset.raw.length) });
+    res.end(asset.raw);
   } catch {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('Not found');
@@ -123,7 +176,7 @@ export function startHttpServer(state, logger) {
 
     if (req.method === 'GET' && urlPath.startsWith('/assets/')) {
       const assetName = urlPath.slice('/assets/'.length);
-      return serveStaticFile(res, assetName, 'no-cache');
+      return serveStaticFile(req, res, assetName, 'public, max-age=300, must-revalidate');
     }
 
     if (req.method === 'GET' && (urlPath === '/' || urlPath === '/panel')) {
@@ -133,7 +186,7 @@ export function startHttpServer(state, logger) {
         res.end(JSON.stringify(buildSummary()));
         return;
       }
-      return serveStaticFile(res, 'index.html', 'no-store');
+      return serveStaticFile(req, res, 'index.html', 'no-cache');
     }
 
     res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });

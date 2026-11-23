@@ -56,6 +56,7 @@ async function main() {
     pool: null,
     config,
     notifyTelegram: null,
+    deliveryManager: null,
   };
 
   registerShutdown();
@@ -89,6 +90,7 @@ async function main() {
       Object.freeze(effectiveConfig);
       runtimeState.config = effectiveConfig;
       runtimeState.notifyTelegram = mainBot.telegram;
+      runtimeState.deliveryManager = deliveryManager;
       paymentRecoveryWorker = startPaymentRecoveryWorker(pool, logger, mainBot.telegram, 30_000, config.adminIds);
       paymentSessionExpiryWorker = startPaymentSessionExpiryWorker(pool, logger);
 
@@ -101,6 +103,7 @@ async function main() {
       runtimeState.telegram = 'connected';
       runtimeState.telegramError = null;
       runtimeState.botUsername = botInfo?.username ?? null;
+      deliveryManager.setMainBotUsername?.(runtimeState.botUsername);
       logger.info({ nodeEnv: config.nodeEnv, adminCount: config.adminIds.length, username: runtimeState.botUsername }, 'FileStore Main Bot started');
       void mainBot.telegram.setMyCommands([...MAIN_BOT_MENU_COMMANDS]).catch(() => {});
     } catch (error) {

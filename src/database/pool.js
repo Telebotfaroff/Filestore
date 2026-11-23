@@ -26,9 +26,11 @@ export function createDatabasePool(config) {
   try {
     pool = new Pool({
       connectionString: config.databaseUrl,
-      max: 10,
-      idleTimeoutMillis: 30_000,
+      max: 20,
+      idleTimeoutMillis: 60_000,
       connectionTimeoutMillis: 10_000,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10_000,
       application_name: 'filestore',
     });
     pool.on('error', (error) => {

@@ -2,6 +2,7 @@ import { isAdmin } from '../bot/admin-guard.js';
 import { retryFailedDeliveryJob, getRecentDeliveryJobs } from './repository.js';
 import { getCommandArgs } from '../bot/telegram-utils.js';
 import { parsePositiveInt } from '../utils/validation.js';
+import { listStorageChannels } from '../storage/repository.js';
 
 function getRecordId(ctx) {
   return parsePositiveInt(getCommandArgs(ctx)[0], 'Bot record ID');
@@ -58,11 +59,18 @@ export function registerDeliveryBotManagerCommands(bot, manager, logger, pool, c
 
   bot.command('delivery_bots', async (ctx) => {
     try {
-      const { ownerId } = getCallerScope(ctx, config);
+      const { isOwnerAdmin, ownerId } = getCallerScope(ctx, config);
       const rows = await manager.list(ownerId);
-      if (!rows.length) return ctx.reply('🤖 No Delivery Bots registered yet.\n💡 Add one with /delivery_bot_add <token>.');
+      const storageRows = !isOwnerAdmin ? await listStorageChannels(pool, ownerId).catch(() => []) : [];
+      const hasOwnStorage = storageRows.some((c) => c.is_enabled);
+      const storageNotice = !isOwnerAdmin && !hasOwnStorage
+        ? '\n\n⚠️ IMPORTANT: If you use your own Delivery Bot, you MUST add your own Storage Channel (/storage_add) and make both the Main Bot and your Delivery Bot administrators in it — otherwise your Delivery Bot will not work!'
+        : '';
+      if (!rows.length) {
+        return ctx.reply('🤖 No Delivery Bots registered yet.\n💡 Add one with /delivery_bot_add <token>.' + storageNotice);
+      }
       const text = rows.map((row) => `${row.role === 'primary' ? '⭐' : '📦'} #${row.id} · @${row.username}\n🆔 Telegram ID: ${row.telegram_bot_id}\n🏷 Role: ${row.role} · 🔢 Priority: ${row.priority}\n⚡ Enabled: ${row.is_enabled ? '🟢 Yes' : '⚪ No'} · Runtime: ${row.runtime_status}`).join('\n\n');
-      await ctx.reply('🤖 Delivery Bot Manager\n━━━━━━━━━━━━━━━━━━\n' + text);
+      await ctx.reply('🤖 Delivery Bot Manager\n━━━━━━━━━━━━━━━━━━\n' + text + storageNotice);
     } catch (error) {
       logger.error({ error: error.message }, 'Delivery Bot list failed');
       await ctx.reply('❌ Could not load Delivery Bot records.');
@@ -70,15 +78,42 @@ export function registerDeliveryBotManagerCommands(bot, manager, logger, pool, c
   });
 
   bot.command('delivery_bot_add', async (ctx) => {
+    const { isOwnerAdmin, ownerId } = getCallerScope(ctx, config);
     const token = getCommandArgs(ctx).join('').trim();
-    if (!token) return ctx.reply('ℹ️ Send /delivery_bot_add followed by the BotFather token.\n🔒 Your token message will be deleted immediately.');
+    if (!token) {
+      const creatorWarning = !isOwnerAdmin
+        ? '\n\n⚠️ Required: When adding your own Delivery Bot, you MUST also add your own Storage Channel (/storage_add) and make both the Main Bot and your Delivery Bot administrators in it — otherwise your bot will not work.'
+        : '';
+      return ctx.reply('ℹ️ Send /delivery_bot_add followed by the BotFather token.\n🔒 Your token message will be deleted immediately.' + creatorWarning);
+    }
     try { await ctx.deleteMessage(); } catch {}
     try {
-      const { ownerId } = getCallerScope(ctx, config);
       const record = await manager.addToken(token, ctx.from.id, ownerId);
-      await ctx.reply(`✅ Delivery Bot Added!\n━━━━━━━━━━━━━━━━━━\n🆔 Record ID: ${record.id}\n🤖 Bot: @${record.username}\n🏷 Role: ${record.role}\n⚡ Runtime: ${record.runtime_status}`);
+      let storageWarning = '';
+      if (!isOwnerAdmin) {
+        const storageRows = await listStorageChannels(pool, ownerId).catch(() => []);
+        const hasOwnStorage = storageRows.some((c) => c.is_enabled);
+        storageWarning = hasOwnStorage
+          ? `\n\n🛡️ Reminder: Add @${record.username} as an Administrator in your Storage Channel(s) (with permission to post/access messages), otherwise your bot cannot deliver files.`
+          : `\n\n⚠️ ACTION REQUIRED:\nYou MUST add your own Storage Channel (/storage_add) and make both this Main Bot and @${record.username} administrators in it — otherwise your Delivery Bot will NOT work!`;
+      }
+      await ctx.reply(`✅ Delivery Bot Added!\n━━━━━━━━━━━━━━━━━━\n🆔 Record ID: ${record.id}\n🤖 Bot: @${record.username}\n🏷 Role: ${record.role}\n⚡ Runtime: ${record.runtime_status}${storageWarning}`);
     } catch (error) {
       logger.warn({ error: error.message, adminId: ctx.from.id }, 'Delivery Bot add rejected');
+      if (error.code === 'BOT_SLOT_LIMIT_REACHED') {
+        await ctx.reply(
+          '🔒 Free Delivery Bot Limit Reached\n━━━━━━━━━━━━━━━━━━\nYou get 1 Delivery Bot slot for free.\n\n• Tap 🔓 Unlock +1 Slot below (or open the Web Control Panel via /token) to add another slot.\n• Or tap 🤖 My Delivery Bots -> Change Bot Token to replace a deleted/old bot without using an extra slot.',
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '🔓 Unlock +1 Slot', callback_data: 'cc:slot_unlock' }],
+                [{ text: '🤖 My Delivery Bots', callback_data: 'cc:bots' }],
+              ],
+            },
+          },
+        );
+        return;
+      }
       await ctx.reply('❌ Could not add Delivery Bot: ' + error.message);
     }
   });

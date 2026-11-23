@@ -1,4 +1,69 @@
 import { creditCreatorSale } from '../wallet/repository.js';
+import {
+  getPlatformFeeSettings,
+  computePlatformFee,
+  recordPlatformFee,
+  formatFeePercent,
+} from '../wallet/fee-repository.js';
+import { formatMoney } from '../utils/validation.js';
+import { getBotSlotSettings, creditBotSlotPurchase } from '../delivery/slot-repository.js';
+
+function formatFeeCurrency(amountMinor, currency) {
+  return String(currency || 'INR').toUpperCase() === 'XTR'
+    ? `${Number(amountMinor)} ⭐`
+    : formatMoney(amountMinor, currency);
+}
+
+async function settleCreatorSaleWithFee(
+  client,
+  { creatorId, saleType, currency, grossAmountMinor, paymentTransactionId, referenceCode, baseNote, extraMeta = {} },
+) {
+  const feeSettings = await getPlatformFeeSettings(client, { bypassCache: true });
+  const activeBps = feeSettings.enabled
+    ? (saleType === 'premium' ? feeSettings.premiumFeeBps : feeSettings.paidLinkFeeBps)
+    : 0;
+  const split = computePlatformFee(grossAmountMinor, activeBps);
+  const feeNote = split.feeAmountMinor > 0
+    ? `${baseNote} · ${formatFeePercent(split.feeBps)} fee (-${formatFeeCurrency(split.feeAmountMinor, currency)})`
+    : baseNote;
+
+  let credited = { credited: false, duplicate: false };
+  if (split.netAmountMinor > 0) {
+    credited = await creditCreatorSale(client, {
+      creatorId,
+      currency,
+      amountMinor: split.netAmountMinor,
+      paymentTransactionId,
+      referenceCode,
+      note: feeNote,
+    });
+  }
+
+  if (split.feeAmountMinor > 0 && !credited.duplicate) {
+    await recordPlatformFee(client, {
+      paymentTransactionId,
+      creatorId,
+      saleType,
+      referenceCode,
+      currency,
+      grossAmountMinor: split.grossAmountMinor,
+      feeBps: split.feeBps,
+      feeAmountMinor: split.feeAmountMinor,
+      netAmountMinor: split.netAmountMinor,
+    });
+  }
+
+  if (!credited.credited) return null;
+  return {
+    ...credited,
+    grossAmountMinor: split.grossAmountMinor,
+    feeBps: split.feeBps,
+    feePercent: split.feePercent,
+    feeAmountMinor: split.feeAmountMinor,
+    netAmountMinor: split.netAmountMinor,
+    ...extraMeta,
+  };
+}
 
 function priceMatchesTransaction(tx, basePriceMinor, currency) {
   if (tx.method === 'telegram_stars') return true;
@@ -30,7 +95,7 @@ export async function applyVerifiedPayment(pool, transactionId, options = {}) {
     if (tx.status !== 'verified') throw new Error('Only verified transactions can be fulfilled.');
     if (!tx.user_telegram_id || !tx.session_id) throw new Error('Verified transaction missing user or checkout session.');
     const sessionResult = await client.query(
-      'SELECT id, status, user_telegram_id, purpose, plan_id, file_id, batch_link_id, paid_link_id, expected_amount_minor, currency FROM payment_sessions WHERE id=$1 FOR UPDATE',
+      'SELECT id, status, user_telegram_id, purpose, plan_id, file_id, batch_link_id, paid_link_id, expected_amount_minor, currency, metadata FROM payment_sessions WHERE id=$1 FOR UPDATE',
       [tx.session_id],
     );
     if (!sessionResult.rowCount) throw new Error('Payment session not found.');
@@ -81,23 +146,21 @@ export async function applyVerifiedPayment(pool, transactionId, options = {}) {
       }
       if (planOwnerId && !adminSet.has(planOwnerId)) {
         const creditCurrency = tx.method === 'telegram_stars' ? tx.currency : p.currency;
-        const creditAmount = tx.method === 'telegram_stars' ? Number(tx.amount_minor) : Number(p.price_minor);
-        const credited = await creditCreatorSale(client, {
+        const grossAmount = tx.method === 'telegram_stars' ? Number(tx.amount_minor) : Number(p.price_minor);
+        creatorCredit = await settleCreatorSaleWithFee(client, {
           creatorId: planOwnerId,
+          saleType: 'premium',
           currency: creditCurrency,
-          amountMinor: creditAmount,
+          grossAmountMinor: grossAmount,
           paymentTransactionId: tx.id,
           referenceCode: `PLAN#${p.id}`,
-          note: `Premium plan sale (${p.name})`,
-        });
-        if (credited.credited) {
-          creatorCredit = {
-            ...credited,
+          baseNote: `Premium plan sale (${p.name})`,
+          extraMeta: {
             referenceCode: `PLAN#${p.id}`,
             saleType: 'premium_plan',
             planName: p.name,
-          };
-        }
+          },
+        });
       }
     } else if (tx.purpose === 'paid_file') {
       const linkResult = await client.query(
@@ -122,18 +185,17 @@ export async function applyVerifiedPayment(pool, transactionId, options = {}) {
       );
       if (link.created_by && !adminSet.has(Number(link.created_by))) {
         const creditCurrency = tx.method === 'telegram_stars' ? tx.currency : link.currency;
-        const creditAmount = tx.method === 'telegram_stars' ? Number(tx.amount_minor) : Number(link.price_minor);
-        const credited = await creditCreatorSale(client, {
+        const grossAmount = tx.method === 'telegram_stars' ? Number(tx.amount_minor) : Number(link.price_minor);
+        creatorCredit = await settleCreatorSaleWithFee(client, {
           creatorId: link.created_by,
+          saleType: 'paid_file',
           currency: creditCurrency,
-          amountMinor: creditAmount,
+          grossAmountMinor: grossAmount,
           paymentTransactionId: tx.id,
           referenceCode: link.public_code ?? `LINK#${link.id}`,
-          note: `Paid file sale (${link.public_code ?? link.id})`,
+          baseNote: `Paid file sale (${link.public_code ?? link.id})`,
+          extraMeta: { referenceCode: link.public_code ?? null },
         });
-        if (credited.credited) {
-          creatorCredit = { ...credited, referenceCode: link.public_code ?? null };
-        }
       }
       result = { type: 'paid_file', fileId: link.file_id, purchaseId: purchase.rows[0].id };
     } else if (tx.purpose === 'paid_batch') {
@@ -163,20 +225,35 @@ export async function applyVerifiedPayment(pool, transactionId, options = {}) {
       }
       if (batch.created_by && !adminSet.has(Number(batch.created_by))) {
         const creditCurrency = tx.method === 'telegram_stars' ? tx.currency : batch.currency;
-        const creditAmount = tx.method === 'telegram_stars' ? Number(tx.amount_minor) : Number(batch.price_minor);
-        const credited = await creditCreatorSale(client, {
+        const grossAmount = tx.method === 'telegram_stars' ? Number(tx.amount_minor) : Number(batch.price_minor);
+        creatorCredit = await settleCreatorSaleWithFee(client, {
           creatorId: batch.created_by,
+          saleType: 'paid_batch',
           currency: creditCurrency,
-          amountMinor: creditAmount,
+          grossAmountMinor: grossAmount,
           paymentTransactionId: tx.id,
           referenceCode: batch.public_code ?? `BATCH#${batch.id}`,
-          note: `Paid batch sale (${batch.title ?? batch.public_code ?? batch.id})`,
+          baseNote: `Paid batch sale (${batch.title ?? batch.public_code ?? batch.id})`,
+          extraMeta: { referenceCode: batch.public_code ?? null },
         });
-        if (credited.credited) {
-          creatorCredit = { ...credited, referenceCode: batch.public_code ?? null };
-        }
       }
       result = { type: 'paid_batch', batchId: batch.id, purchaseId: purchase.rows[0].id, fileCount: items.rowCount };
+    } else if (tx.purpose === 'bot_slot') {
+      const slotSettings = await getBotSlotSettings(client);
+      const expectedBaseMinor = Number(session.metadata?.baseAmountMinor) > 0
+        ? Number(session.metadata.baseAmountMinor)
+        : Number(slotSettings.priceMinor);
+      if (!priceMatchesTransaction(tx, expectedBaseMinor, slotSettings.currency || 'INR')) {
+        throw new Error('Payment amount does not match extra Delivery Bot slot price.');
+      }
+      const credited = await creditBotSlotPurchase(client, {
+        userId,
+        paymentTransactionId: tx.id,
+        amountMinor: tx.amount_minor,
+        currency: tx.currency,
+        method: tx.method,
+      });
+      result = { type: 'bot_slot', extraSlots: credited.extraSlots, credited: credited.credited };
     } else {
       throw new Error('Unsupported payment purpose.');
     }

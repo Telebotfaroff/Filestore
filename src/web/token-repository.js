@@ -31,6 +31,29 @@ export async function getAccessTokenMetadata(pool, telegramUserId) {
   return rows[0] ?? null;
 }
 
+const TOKEN_VERIFY_TTL_MS = 15_000;
+const LAST_USED_TOUCH_INTERVAL_MS = 60_000;
+const poolTokenCaches = new WeakMap();
+
+function getPoolTokenCache(pool) {
+  if (!pool || typeof pool !== 'object') return null;
+  let map = poolTokenCaches.get(pool);
+  if (!map) {
+    map = new Map();
+    poolTokenCaches.set(pool, map);
+  }
+  return map;
+}
+
+function invalidateUserTokensInPool(pool, telegramUserId) {
+  const map = getPoolTokenCache(pool);
+  if (!map) return;
+  const uid = Number(telegramUserId);
+  for (const [key, entry] of map.entries()) {
+    if (entry.userId === uid) map.delete(key);
+  }
+}
+
 export async function issueOrRegenerateAccessToken(pool, telegramUserId, userMeta = {}) {
   const uid = Number(telegramUserId);
   if (!Number.isSafeInteger(uid) || uid <= 0) {
@@ -62,6 +85,8 @@ export async function issueOrRegenerateAccessToken(pool, telegramUserId, userMet
     [uid, tokenHash, tokenPrefix],
   );
 
+  invalidateUserTokensInPool(pool, uid);
+
   const row = rows[0];
   return {
     token: rawToken,
@@ -79,13 +104,36 @@ export async function revokeAccessToken(pool, telegramUserId) {
     'DELETE FROM web_access_tokens WHERE telegram_user_id = $1',
     [uid],
   );
+  invalidateUserTokensInPool(pool, uid);
   return rowCount > 0;
 }
 
-export async function verifyAccessToken(pool, rawToken, adminIds = []) {
+export async function verifyAccessToken(pool, rawToken, adminIds = [], { bypassCache = false } = {}) {
   if (!isPlausibleAccessToken(rawToken)) return null;
   const candidateHash = hashAccessToken(rawToken);
   if (!candidateHash) return null;
+
+  const cache = !bypassCache ? getPoolTokenCache(pool) : null;
+  const now = Date.now();
+  if (cache) {
+    const hit = cache.get(candidateHash);
+    if (hit && hit.expiresAt > now) {
+      const isOwner = Array.isArray(adminIds) && adminIds.length > 0 && isAdmin(hit.userId, adminIds);
+      if (now - hit.lastTouchAt >= LAST_USED_TOUCH_INTERVAL_MS) {
+        hit.lastTouchAt = now;
+        void pool.query(
+          'UPDATE web_access_tokens SET last_used_at = NOW() WHERE telegram_user_id = $1',
+          [hit.userId],
+        ).catch(() => {});
+      }
+      return {
+        ...hit.record,
+        isOwner,
+        role: isOwner ? 'owner' : 'creator',
+      };
+    }
+    if (hit) cache.delete(candidateHash);
+  }
 
   const { rows } = await pool.query(
     `SELECT t.telegram_user_id, t.token_hash, t.token_prefix, t.created_at, t.rotated_at, t.last_used_at,
@@ -115,7 +163,7 @@ export async function verifyAccessToken(pool, rawToken, adminIds = []) {
     [userId],
   ).catch(() => {});
 
-  return {
+  const record = {
     userId,
     username: row.username ?? null,
     firstName: row.first_name ?? null,
@@ -126,4 +174,16 @@ export async function verifyAccessToken(pool, rawToken, adminIds = []) {
     rotatedAt: row.rotated_at,
     lastUsedAt: row.last_used_at,
   };
+
+  if (cache) {
+    if (cache.size > 250) cache.clear();
+    cache.set(candidateHash, {
+      userId,
+      record,
+      expiresAt: now + TOKEN_VERIFY_TTL_MS,
+      lastTouchAt: now,
+    });
+  }
+
+  return record;
 }

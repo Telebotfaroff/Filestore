@@ -258,10 +258,10 @@ test('evaluateAccess isolates Creator A Premium from Creator B and Platform Owne
   assert.equal(blockOwner.reason, 'checkpoint_required');
 });
 
-test('Main Bot Creator Hub exposes My Premium Plans (cc:cplans) and lets public creators create and share plans safely', async () => {
+test('Main Bot directs creators to Web Setup (/token) while preserving /my_plans command and tenant plan creation', async () => {
   const publicMenu = buildPublicMenuKeyboard();
   const callbacks = publicMenu.inline_keyboard.flat().map((b) => b.callback_data);
-  assert.ok(callbacks.includes('cc:cplans'), 'Public menu should include cc:cplans');
+  assert.ok(callbacks.includes('cc:webtok'), 'Public menu should include cc:webtok for Web Setup');
   assert.ok(!callbacks.includes('cc:plans'), 'Public menu must NOT include owner-only cc:plans');
 
   const actions = new Map();
