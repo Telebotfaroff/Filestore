@@ -131,8 +131,8 @@ export function parseShortenerInput(rawText, existingProviders = []) {
     if (!['json', 'text'].includes(responseFormat)) {
       throw new Error('Response format must be json or text.');
     }
-    if (!['unverified', 'callback', 'provider_api'].includes(verificationMode)) {
-      throw new Error('Verification mode must be unverified, callback, or provider_api.');
+    if (!['unverified', 'provider_api'].includes(verificationMode)) {
+      throw new Error('Verification mode must be unverified or provider_api.');
     }
     return {
       name,
@@ -197,8 +197,8 @@ export function parseShortenerInput(rawText, existingProviders = []) {
     responseFormat: 'json',
     checkpointMinutes,
     priority,
-    verificationMode: 'callback',
-    enabled: true,
+    verificationMode: 'unverified',
+    enabled: false,
   };
 }
 
