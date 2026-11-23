@@ -1,16 +1,22 @@
 // Shared HTTP helpers for panel API routes.
 import { gzipSync } from 'node:zlib';
+import { isIP } from 'node:net';
 const MAX_BODY_BYTES = 64 * 1024;
 const AUTH_WINDOW_MS = 5 * 60 * 1000;
 const AUTH_MAX_FAILURES = 20;
 const failedAuthAttempts = new Map();
 
 function getClientIp(req) {
-  const fwd = req.headers['x-forwarded-for'];
-  if (typeof fwd === 'string' && fwd.trim()) {
-    return fwd.split(',')[0].trim();
+  const forwarded = req.headers?.['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.trim()) {
+    const chain = forwarded.split(',').map((value) => value.trim()).filter(Boolean);
+    // Reverse proxies append the address they observed; prefer the rightmost valid IP.
+    for (let i = chain.length - 1; i >= 0; i -= 1) {
+      if (isIP(chain[i])) return chain[i];
+    }
   }
-  return req.socket?.remoteAddress || 'unknown';
+  const remoteAddress = req.socket?.remoteAddress;
+  return isIP(remoteAddress) ? remoteAddress : 'unknown';
 }
 
 function isRateLimited(ip) {
@@ -26,9 +32,13 @@ function isRateLimited(ip) {
 
 function recordAuthFailure(ip) {
   const now = Date.now();
-  if (failedAuthAttempts.size > 1000) {
+  if (failedAuthAttempts.size >= 1000) {
     for (const [k, v] of failedAuthAttempts.entries()) {
       if (v.resetAt <= now) failedAuthAttempts.delete(k);
+    }
+    if (failedAuthAttempts.size >= 1000) {
+      const oldestIp = failedAuthAttempts.keys().next().value;
+      if (oldestIp !== undefined) failedAuthAttempts.delete(oldestIp);
     }
   }
   const entry = failedAuthAttempts.get(ip);
