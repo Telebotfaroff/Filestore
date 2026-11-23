@@ -5,6 +5,7 @@ import { registerForceSubActions } from './controllers/force-sub-controller.js';
 import { registerShortenerActions } from './controllers/shortener-controller.js';
 import { registerPremiumPlanActions } from './controllers/premium-plan-controller.js';
 import { registerPaymentMethodActions } from './controllers/payment-method-controller.js';
+import { registerCreatorPlanActions } from './controllers/creator-plan-controller.js';
 import {
   createCreatorBroadcast,
   getCreatorBroadcast,
@@ -3019,50 +3020,7 @@ export function registerControlCenter(bot, config, logger, pool, options = {}) {
 
   registerPaymentMethodActions(bot, { isOwnerAdmin, denyAdminOnly, pool, safeAnswer, setPrompt, renderView });
 
-  // Creator-scoped Premium plan actions
-  bot.action(/^cc:cplan:(\d+)$/, async (ctx) => {
-    await safeAnswer(ctx);
-    await showCreatorPlanDetail(ctx, Number(ctx.match[1]), true, false);
-  });
-
-  bot.action(/^cc:cplan_rm:(\d+)$/, async (ctx) => {
-    await safeAnswer(ctx);
-    await showCreatorPlanDetail(ctx, Number(ctx.match[1]), true, true);
-  });
-
-  bot.action(/^cc:cplan_(en|dis):(\d+)$/, async (ctx) => {
-    const enabled = ctx.match[1] === 'en';
-    const id = Number(ctx.match[2]);
-    const ownerScope = getOwnerScope(ctx);
-    const updated = await setPremiumPlanEnabled(pool, id, enabled, ownerScope);
-    if (!updated) return safeAnswer(ctx, 'Plan not found.', true);
-    await safeAnswer(ctx, enabled ? 'Plan enabled.' : 'Plan disabled.');
-    await showCreatorPlanDetail(ctx, id, true, false);
-  });
-
-  bot.action(/^cc:cplan_rm_ok:(\d+)$/, async (ctx) => {
-    const id = Number(ctx.match[1]);
-    const ownerScope = getOwnerScope(ctx);
-    const deleted = await removePremiumPlan(pool, id, ownerScope);
-    if (!deleted) return safeAnswer(ctx, 'Plan not found.', true);
-    await safeAnswer(ctx, 'Plan deleted.');
-    await showCreatorPlans(ctx, true);
-  });
-
-  bot.action(/^cc:cplan_stars:(\d+)$/, async (ctx) => {
-    const planId = Number(ctx.match[1]);
-    const ownerScope = getOwnerScope(ctx);
-    const plan = await getPremiumPlanById(pool, planId, ownerScope);
-    if (!plan) return safeAnswer(ctx, 'Plan not found.', true);
-    setPrompt(ctx.from.id, 'cplan_stars_single', { back: `cc:cplan:${planId}`, meta: { planId } });
-    await safeAnswer(ctx);
-    return renderView(
-      ctx,
-      `⭐ Set Telegram Stars Price\n━━━━━━━━━━━━━━━━━━\n👑 Plan #${plan.id}: ${plan.name}\n\n✏️ Send the integer Stars price (e.g. 50), or 0 to remove:`,
-      { inline_keyboard: [[{ text: '✖ Cancel', callback_data: 'cc:cancel_prompt' }]] },
-      true,
-    );
-  });
+  registerCreatorPlanActions(bot, { safeAnswer, showCreatorPlanDetail, getOwnerScope, setPremiumPlanEnabled, pool, removePremiumPlan, showCreatorPlans, getPremiumPlanById, setPrompt, renderView });
 
   bot.action('cc:pay_en_stars', async (ctx) => {
     if (!isOwnerAdmin(ctx)) return denyAdminOnly(ctx);
