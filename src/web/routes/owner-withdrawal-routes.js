@@ -1,5 +1,5 @@
 // Platform-owner withdrawal administration API routes.
-export async function handleOwnerWithdrawalRoutes({ req, res, method, pathname, auth, pool, state, sendJson, readJsonBody, listWithdrawalRequests, approveWithdrawalPaid, rejectWithdrawalRefund, notifyWithdrawalOutcome, logger }) {
+export async function handleOwnerWithdrawalRoutes({ req, res, method, pathname, auth, pool, state, parsedUrl, sendJson, readJsonBody, listWithdrawalRequests, approveWithdrawalPaid, rejectWithdrawalRefund, notifyWithdrawalOutcome, logger }) {
   const respond = (...args) => { sendJson(...args); return true; };
         if (method === 'GET' && pathname === '/api/panel/owner/withdrawals') {
           const statusParam = parsedUrl.searchParams.get('status') || 'pending';
